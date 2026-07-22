@@ -1,0 +1,17 @@
+[package]
+name = "ashlar"
+version = "0.1.0"
+edition = "2021"
+
+# Zero external dependencies, by policy: the compiler is a single
+# self-contained binary (requirement G1), and every byte of behavior
+# is code we wrote against the reference.
+[dependencies]
+
+[[bin]]
+name = "ashlar"
+path = "src/main.rs"
+
+[lib]
+name = "ashlar"
+path = "src/lib.rs"
