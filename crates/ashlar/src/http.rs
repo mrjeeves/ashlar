@@ -369,8 +369,27 @@ pub fn dispatch(
                 .collect(),
         ),
     );
-    req.insert("user".to_string(), V::None);
+    req.insert("user".to_string(), ev.session_user());
     let req = V::Map(req);
+
+    // A routed view part with no handler serves its page (§9.4): one
+    // fresh instance per page load.
+    let has_handle = ev
+        .composed
+        .get(&part)
+        .map(|cp| cp.props.contains_key("handle"))
+        .unwrap_or(false);
+    let has_view = ev
+        .composed
+        .get(&part)
+        .map(|cp| cp.props.contains_key("view"))
+        .unwrap_or(false);
+    if has_view && !has_handle {
+        let id = ev.new_instance(&part, std::collections::BTreeMap::new())?;
+        let mut m = std::collections::BTreeMap::new();
+        m.insert("__view_instance".to_string(), V::Text(id));
+        return Ok(V::Map(m));
+    }
 
     // The allow guard runs first (§9.6): false ends the request with 403.
     if ev
@@ -393,23 +412,55 @@ pub fn dispatch(
     ev.run_pipe(&part, "handle", reverse, req)
 }
 
+/// The browser side of §9.4, shipped as a constant: connect the socket,
+/// forward events from `data-ash-on` elements, swap patched instances.
+/// The browser runs no program code — only this transport shim.
+const CLIENT_JS: &str = r#"(function(){
+var ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/');
+function send(o){if(ws.readyState===1)ws.send(JSON.stringify(o));}
+function fire(kind,e){var t=e.target.closest('[data-ash-h]');
+ if(!t||t.getAttribute('data-ash-on')!==kind)return;
+ if(kind==='onsubmit')e.preventDefault();
+ var v=(e.target&&'value'in e.target)?e.target.value:null;
+ send({event:{instance:t.closest('[data-ash-instance]').getAttribute('data-ash-instance'),
+  h:t.getAttribute('data-ash-h'),name:kind,value:v}});}
+document.addEventListener('click',function(e){fire('onclick',e)});
+document.addEventListener('input',function(e){fire('oninput',e)});
+document.addEventListener('submit',function(e){fire('onsubmit',e)});
+ws.onmessage=function(m){var d=JSON.parse(m.data);if(!d.patches)return;
+ d.patches.forEach(function(p){
+  var n=document.querySelector('[data-ash-instance="'+p.instance+'"]');
+  if(n)n.outerHTML=p.html;});};
+})();"#;
+
 /// Render a handler's return value as an HTTP response (§9.2).
-pub fn render_response(v: &V) -> (u16, String, Vec<u8>, Vec<(String, String)>) {
+pub fn render_response(
+    ev: &mut Evaluator,
+    v: &V,
+) -> Result<(u16, String, Vec<u8>, Vec<(String, String)>), Fault> {
     if let V::Map(m) = v {
         if let Some(target) = m.get("__redirect") {
-            return (
+            return Ok((
                 302,
                 "text/plain".to_string(),
                 Vec::new(),
                 vec![("location".to_string(), to_text(target))],
+            ));
+        }
+        if let Some(V::Text(id)) = m.get("__view_instance") {
+            let inner = render_instance(ev, id)?;
+            let html = format!(
+                "<!doctype html>\n<html><head><meta charset=\"utf-8\"></head><body>{}<script>{}</script></body></html>",
+                inner, CLIENT_JS
             );
+            return Ok((200, "text/html".to_string(), html.into_bytes(), vec![]));
         }
         if m.contains_key("__el") {
-            let html = format!("<!doctype html>\n{}", render_el(v));
-            return (200, "text/html".to_string(), html.into_bytes(), vec![]);
+            let html = format!("<!doctype html>\n{}", render_el(ev, v, "")?);
+            return Ok((200, "text/html".to_string(), html.into_bytes(), vec![]));
         }
     }
-    match v {
+    Ok(match v {
         V::Text(s) => (200, "text/plain".to_string(), s.clone().into_bytes(), vec![]),
         other => (
             200,
@@ -417,18 +468,58 @@ pub fn render_response(v: &V) -> (u16, String, Vec<u8>, Vec<(String, String)>) {
             to_json(other).into_bytes(),
             vec![],
         ),
-    }
+    })
 }
 
-fn render_el(v: &V) -> String {
+/// Render one live instance: clear its handler registry, run `view`,
+/// wrap the result with its instance marker (§9.4).
+pub fn render_instance(ev: &mut Evaluator, id: &str) -> Result<String, Fault> {
+    let stale: Vec<(String, String)> = ev
+        .handlers
+        .keys()
+        .filter(|(i, _)| i == id)
+        .cloned()
+        .collect();
+    for k in stale {
+        ev.handlers.remove(&k);
+    }
+    let v = ev.call_instance_prop(id, "view", vec![])?;
+    let inner = render_el(ev, &v, id)?;
+    Ok(format!(
+        "<div data-ash-instance=\"{}\">{}</div>",
+        html_escape(id),
+        inner
+    ))
+}
+
+/// Render an element tree. Function-valued attrs register as event
+/// handlers scoped to `instance`; nested view instances recurse.
+fn render_el(ev: &mut Evaluator, v: &V, instance: &str) -> Result<String, Fault> {
     match v {
+        V::Map(m) if m.contains_key("__view_instance") => {
+            if let Some(V::Text(id)) = m.get("__view_instance") {
+                let id = id.clone();
+                render_instance(ev, &id)
+            } else {
+                Ok(String::new())
+            }
+        }
         V::Map(m) if m.contains_key("__el") => {
             let tag = m.get("__el").map(to_text).unwrap_or_default();
             let mut out = format!("<{}", tag);
             if let Some(V::Map(attrs)) = m.get("attrs") {
                 for (k, val) in attrs {
                     match val {
-                        V::Fn(_) => out.push_str(&format!(" data-on=\"{}\"", k)),
+                        V::Fn(_) => {
+                            let hid = format!("h{}", ev.handlers.len() + 1);
+                            ev.handlers
+                                .insert((instance.to_string(), hid.clone()), val.clone());
+                            out.push_str(&format!(
+                                " data-ash-on=\"{}\" data-ash-h=\"{}\"",
+                                html_escape(k),
+                                hid
+                            ));
+                        }
                         other => out.push_str(&format!(
                             " {}=\"{}\"",
                             k,
@@ -440,14 +531,61 @@ fn render_el(v: &V) -> String {
             out.push('>');
             if let Some(V::List(children)) = m.get("children") {
                 for c in children {
-                    out.push_str(&render_el(c));
+                    out.push_str(&render_el(ev, c, instance)?);
                 }
             }
             out.push_str(&format!("</{}>", tag));
-            out
+            Ok(out)
         }
-        other => html_escape(&to_text(other)),
+        other => Ok(html_escape(&to_text(other))),
     }
+}
+
+/// Run one browser event (§9.4): find the handler, run it in its
+/// instance, re-render every instance whose state changed.
+pub fn dispatch_event(
+    ev: &mut Evaluator,
+    instance: &str,
+    hid: &str,
+    name: &str,
+    value: V,
+) -> Result<Vec<(String, String)>, Fault> {
+    let Some(f) = ev.handlers.get(&(instance.to_string(), hid.to_string())).cloned() else {
+        return Err(Fault {
+            status: 404,
+            message: format!("no handler `{}` on instance `{}`.", hid, instance),
+        });
+    };
+    let arity = match &f {
+        V::Fn(fv) => fv.params.len(),
+        _ => 0,
+    };
+    let args = if arity == 0 {
+        vec![]
+    } else {
+        let mut data = std::collections::BTreeMap::new();
+        data.insert("value".to_string(), value);
+        let mut event = std::collections::BTreeMap::new();
+        event.insert("name".to_string(), V::Text(name.to_string()));
+        event.insert("data".to_string(), V::Map(data));
+        vec![V::Map(event)]
+    };
+    ev.dirty_instances.clear();
+    ev.call_with_instance(f, args, Some(instance.to_string()))?;
+    let mut dirty: Vec<String> = std::mem::take(&mut ev.dirty_instances);
+    if !dirty.contains(&instance.to_string()) {
+        // The event's own instance re-renders even on a no-op, so the
+        // client always converges with server state.
+        dirty.push(instance.to_string());
+    }
+    let mut patches = Vec::new();
+    for id in dirty {
+        if ev.instances.contains_key(&id) {
+            let html = render_instance(ev, &id)?;
+            patches.push((id, html));
+        }
+    }
+    Ok(patches)
 }
 
 fn html_escape(s: &str) -> String {
@@ -502,7 +640,17 @@ pub fn serve(
             if let Ok(text) = std::fs::read_to_string(&state_path) {
                 if let Some(V::Map(m)) = from_json(&text) {
                     for (k, v) in m {
-                        if ev.state.stored_keys.iter().any(|s| s == &k) {
+                        if k == "__users" {
+                            if let V::Map(users) = v {
+                                for (email, u) in users {
+                                    if let V::Map(u) = u {
+                                        let id = u.get("id").map(to_text).unwrap_or_default();
+                                        let hash = u.get("hash").map(to_text).unwrap_or_default();
+                                        ev.users.insert(email, (id, hash));
+                                    }
+                                }
+                            }
+                        } else if ev.state.stored_keys.iter().any(|s| s == &k) {
                             ev.state.values.insert(k, v);
                         }
                     }
@@ -576,7 +724,7 @@ pub fn serve(
             match listener.as_ref().unwrap().accept() {
                 Ok((mut conn, _)) => {
                     let _ = conn.set_nonblocking(false);
-                    handle_conn(&mut ev, &mut conn);
+                    handle_conn(&mut ev, &root, &mut conn);
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     std::thread::sleep(std::time::Duration::from_millis(5));
@@ -591,6 +739,15 @@ pub fn serve(
                         eprintln!("task {} failed: {}", part, f);
                     }
                     *due = now + std::time::Duration::from_millis(*ms);
+                }
+            }
+            // Drain spawned tasks (§9.7): they run between requests.
+            while let Some(f) = {
+                let next = if ev.spawn_queue.is_empty() { None } else { Some(ev.spawn_queue.remove(0)) };
+                next
+            } {
+                if let Err(fault) = ev.call(f, vec![]) {
+                    eprintln!("spawned task failed: {}", fault);
                 }
             }
             // Flush stored state.
@@ -662,12 +819,93 @@ fn flush_state(path: &std::path::Path, ev: &Evaluator) {
             m.insert(k.clone(), v.clone());
         }
     }
+    // Accounts persist alongside stored values (§9.6).
+    let mut users = BTreeMap::new();
+    for (email, (id, hash)) in &ev.users {
+        let mut u = BTreeMap::new();
+        u.insert("id".to_string(), V::Text(id.clone()));
+        u.insert("hash".to_string(), V::Text(hash.clone()));
+        users.insert(email.clone(), V::Map(u));
+    }
+    m.insert("__users".to_string(), V::Map(users));
     let _ = std::fs::write(path, to_json(&V::Map(m)));
+}
+
+/// Static file parts (§9.8): route is a prefix; `files` names a
+/// directory under `assets/`.
+fn try_serve_files(
+    ev: &mut Evaluator,
+    root: &std::path::Path,
+    path: &str,
+    conn: &mut TcpStream,
+) -> bool {
+    for (full, cp) in ev.composed.iter() {
+        let (Some(route_prop), Some(files_prop)) = (cp.props.get("route"), cp.props.get("files"))
+        else {
+            continue;
+        };
+        let text_of = |prop: &crate::resolved::ComposedProp| -> Option<String> {
+            match &prop.value {
+                MergedValue::Single(r) => ev.program.files[r.file_idx].ast.parts[r.part_idx]
+                    .props[r.prop_idx]
+                    .value
+                    .as_ref()
+                    .and_then(|e| match &e.expr {
+                        crate::ast::Expr::Text(t) => Some(t.clone()),
+                        _ => None,
+                    }),
+                MergedValue::Literal(e) => match &e.expr {
+                    crate::ast::Expr::Text(t) => Some(t.clone()),
+                    _ => None,
+                },
+                _ => None,
+            }
+        };
+        let (Some(prefix), Some(dir)) = (text_of(route_prop), text_of(files_prop)) else {
+            continue;
+        };
+        let Some(rest) = path.strip_prefix(prefix.trim_end_matches('/')) else {
+            continue;
+        };
+        let rest = rest.trim_start_matches('/');
+        if rest.is_empty() || rest.split('/').any(|s| s == "..") {
+            write_response(conn, 404, "text/plain", &[], b"not found");
+            return true;
+        }
+        let file = root.join("assets").join(&dir).join(rest);
+        match std::fs::read(&file) {
+            Ok(bytes) => {
+                let ct = match file.extension().and_then(|e| e.to_str()) {
+                    Some("html") => "text/html",
+                    Some("css") => "text/css",
+                    Some("js") => "text/javascript",
+                    Some("json") => "application/json",
+                    Some("png") => "image/png",
+                    Some("svg") => "image/svg+xml",
+                    _ => "application/octet-stream",
+                };
+                write_response(conn, 200, ct, &[], &bytes);
+            }
+            Err(_) => write_response(conn, 404, "text/plain", &[], b"not found"),
+        }
+        let _ = full;
+        return true;
+    }
+    false
+}
+
+fn session_from_headers(headers: &BTreeMap<String, String>) -> Option<String> {
+    headers.get("cookie").and_then(|c| {
+        c.split(';').find_map(|kv| {
+            let kv = kv.trim();
+            kv.strip_prefix("ashsession=").map(|v| v.to_string())
+        })
+    })
 }
 
 /// Serve one connection: plain HTTP, or a WebSocket session speaking
 /// `{path, data}` envelopes to the same routes (§9.2, G2).
-fn handle_conn(ev: &mut Evaluator, conn: &mut TcpStream) {
+fn handle_conn(ev: &mut Evaluator, root: &std::path::Path, conn: &mut TcpStream) {
     let Some(req) = read_request(conn) else { return };
 
     if req
@@ -683,8 +921,44 @@ fn handle_conn(ev: &mut Evaluator, conn: &mut TcpStream) {
             accept
         );
         let _ = conn.write_all(head.as_bytes());
+        ev.current_session = session_from_headers(&req.headers);
         while let Some(text) = ws_read_text(conn) {
             let envelope = from_json(&text).unwrap_or(V::None);
+            // Browser event envelope (§9.4): run the handler, patch.
+            if let V::Map(m) = &envelope {
+                if let Some(V::Map(e)) = m.get("event") {
+                    let instance = e.get("instance").map(to_text).unwrap_or_default();
+                    let hid = e.get("h").map(to_text).unwrap_or_default();
+                    let name = e.get("name").map(to_text).unwrap_or_default();
+                    let value = e.get("value").cloned().unwrap_or(V::None);
+                    let reply = match dispatch_event(ev, &instance, &hid, &name, value) {
+                        Ok(patches) => {
+                            let list = V::List(
+                                patches
+                                    .into_iter()
+                                    .map(|(id, html)| {
+                                        let mut p = BTreeMap::new();
+                                        p.insert("instance".to_string(), V::Text(id));
+                                        p.insert("html".to_string(), V::Text(html));
+                                        V::Map(p)
+                                    })
+                                    .collect(),
+                            );
+                            let mut m = BTreeMap::new();
+                            m.insert("patches".to_string(), list);
+                            V::Map(m)
+                        }
+                        Err(f) => {
+                            let mut m = BTreeMap::new();
+                            m.insert("status".to_string(), V::Number(f.status as f64));
+                            m.insert("error".to_string(), V::Text(f.message));
+                            V::Map(m)
+                        }
+                    };
+                    ws_write_text(conn, &to_json(&reply));
+                    continue;
+                }
+            }
             let (path, data, method) = match &envelope {
                 V::Map(m) => (
                     m.get("path").map(to_text).unwrap_or_default(),
@@ -712,6 +986,11 @@ fn handle_conn(ev: &mut Evaluator, conn: &mut TcpStream) {
         return;
     }
 
+    // Static files (§9.8) match by route prefix before dynamic dispatch.
+    if req.method == "GET" && try_serve_files(ev, root, &req.path, conn) {
+        return;
+    }
+
     let data = if req.body.is_empty() {
         V::None
     } else {
@@ -720,11 +999,26 @@ fn handle_conn(ev: &mut Evaluator, conn: &mut TcpStream) {
             .and_then(|s| from_json(&s))
             .unwrap_or(V::None)
     };
+    // Session context in, cookie intent out (§9.6).
+    ev.current_session = session_from_headers(&req.headers);
+    ev.pending_cookie = None;
     match dispatch(ev, &req.method, &req.path, data, &req.headers) {
-        Ok(v) => {
-            let (status, ct, body, extra) = render_response(&v);
-            write_response(conn, status, &ct, &extra, &body);
-        }
+        Ok(v) => match render_response(ev, &v) {
+            Ok((status, ct, body, mut extra)) => {
+                if let Some(tok) = ev.pending_cookie.take() {
+                    let cookie = if tok.is_empty() {
+                        "ashsession=; Path=/; Max-Age=0".to_string()
+                    } else {
+                        format!("ashsession={}; Path=/; HttpOnly", tok)
+                    };
+                    extra.push(("set-cookie".to_string(), cookie));
+                }
+                write_response(conn, status, &ct, &extra, &body);
+            }
+            Err(f) => {
+                write_response(conn, f.status, "text/plain", &[], f.message.as_bytes());
+            }
+        },
         Err(f) => {
             let body = format!(
                 "{{\"error\":{}}}",

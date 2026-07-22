@@ -314,3 +314,227 @@ part ticker {
     stop.store(true, Ordering::Relaxed);
     join.join().unwrap();
 }
+
+// ---------------------------------------------------------------------------
+// Views, auth, files, spawn (the §9.4/§9.6/§9.7/§9.8 conformance set).
+// ---------------------------------------------------------------------------
+
+fn http_req_full(port: u16, method: &str, path: &str, body: Option<&str>, cookie: Option<&str>) -> (u16, String, String) {
+    let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let body = body.unwrap_or("");
+    let cookie_line = cookie.map(|c| format!("cookie: ashsession={}\r\n", c)).unwrap_or_default();
+    let req = format!(
+        "{} {} HTTP/1.1\r\nhost: t\r\n{}content-length: {}\r\n\r\n{}",
+        method, path, cookie_line, body.len(), body
+    );
+    s.write_all(req.as_bytes()).unwrap();
+    let mut buf = String::new();
+    s.read_to_string(&mut buf).unwrap();
+    let status: u16 = buf.split_whitespace().nth(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+    let mut parts = buf.splitn(2, "\r\n\r\n");
+    let head = parts.next().unwrap_or("").to_string();
+    let body = parts.next().unwrap_or("").to_string();
+    (status, head, body)
+}
+
+/// Extract `attr="value"` from HTML.
+fn attr_of(html: &str, attr: &str) -> Option<String> {
+    let key = format!("{}=\"", attr);
+    let i = html.find(&key)? + key.len();
+    let j = html[i..].find('"')? + i;
+    Some(html[i..j].to_string())
+}
+
+#[test]
+fn t_g4_view_round_trip_over_socket() {
+    // covers: G4 (reactive state + views), reference 9.4
+    let app = r#"space ui
+
+part Server {
+  port = 0
+}
+
+part page {
+  route = "/"
+  state n: number = 0
+  view = () => el("button", { onclick: bump }, ["clicks: " + text(n)])
+  bump = () => { n = n + 1 }
+}
+"#;
+    let root = fixture("views", &[("app.ash", app)]);
+    let (port, stop, join) = start(root);
+
+    // The page renders server-side with the transport shim embedded.
+    let (status, _, html) = http_req_full(port, "GET", "/", None, None);
+    assert_eq!(status, 200);
+    assert!(html.contains("clicks: 0"), "{}", html);
+    assert!(html.contains("data-ash-on=\"onclick\""), "{}", html);
+    assert!(html.contains("new WebSocket"), "client shim missing: {}", html);
+    let instance = attr_of(&html, "data-ash-instance").unwrap();
+    let hid = attr_of(&html, "data-ash-h").unwrap();
+
+    // Two click events over the socket: per-instance state advances and
+    // each reply patches the instance's HTML in place.
+    let e1 = format!(
+        "{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onclick\"}}}}",
+        instance, hid
+    );
+    let r1 = ws_roundtrip(port, &e1);
+    assert!(r1.contains("clicks: 1"), "{}", r1);
+    // The re-render registered a fresh handler id; extract it from the patch.
+    let html1 = r1.replace("\\\"", "\"");
+    let hid2 = attr_of(&html1, "data-ash-h").unwrap();
+    let e2 = format!(
+        "{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onclick\"}}}}",
+        instance, hid2
+    );
+    let r2 = ws_roundtrip(port, &e2);
+    assert!(r2.contains("clicks: 2"), "state must be per-instance and persistent: {}", r2);
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}
+
+#[test]
+fn t_g4_auth_sessions_end_to_end() {
+    // covers: G4 (auth), reference 9.6
+    let app = r#"space auth
+
+part Server {
+  port = 0
+}
+
+part join {
+  route = "/signup"
+  handle pipe = (req: std.Request) => signup(text(req.data.email), text(req.data.password))
+}
+
+part enter {
+  route = "/login"
+  handle pipe = (req: std.Request) => login(text(req.data.email), text(req.data.password))
+}
+
+part me {
+  route = "/me"
+  allow = (req: std.Request) => req.user != none
+  handle pipe = (req: std.Request) => req.user
+}
+
+part leave {
+  route = "/logout"
+  handle pipe = (req: std.Request) => logout()
+}
+"#;
+    let root = fixture("auth", &[("app.ash", app)]);
+    let (port, stop, join) = start(root);
+
+    // No session: the guard rejects.
+    let (status, _, _) = http_req_full(port, "GET", "/me", None, None);
+    assert_eq!(status, 403);
+
+    // Signup opens a session via cookie.
+    let (status, head, body) =
+        http_req_full(port, "POST", "/signup", Some("{\"email\":\"a@b.c\",\"password\":\"pw\"}"), None);
+    assert_eq!(status, 200, "{}", body);
+    assert!(body.contains("a@b.c"));
+    let cookie_line = head.lines().find(|l| l.to_lowercase().starts_with("set-cookie")).unwrap();
+    let token = cookie_line.split("ashsession=").nth(1).unwrap().split(';').next().unwrap().to_string();
+    assert!(!token.is_empty());
+
+    // The session carries identity.
+    let (status, _, body) = http_req_full(port, "GET", "/me", None, Some(&token));
+    assert_eq!(status, 200);
+    assert!(body.contains("a@b.c"), "{}", body);
+
+    // Duplicate signup: 409. Bad login: 401. Good login: 200.
+    let (status, _, _) =
+        http_req_full(port, "POST", "/signup", Some("{\"email\":\"a@b.c\",\"password\":\"x\"}"), None);
+    assert_eq!(status, 409);
+    let (status, _, _) =
+        http_req_full(port, "POST", "/login", Some("{\"email\":\"a@b.c\",\"password\":\"wrong\"}"), None);
+    assert_eq!(status, 401);
+    let (status, _, _) =
+        http_req_full(port, "POST", "/login", Some("{\"email\":\"a@b.c\",\"password\":\"pw\"}"), None);
+    assert_eq!(status, 200);
+
+    // Logout ends the session.
+    let (status, head, _) = http_req_full(port, "POST", "/logout", None, Some(&token));
+    assert_eq!(status, 200);
+    assert!(head.to_lowercase().contains("max-age=0"));
+    let (status, _, _) = http_req_full(port, "GET", "/me", None, Some(&token));
+    assert_eq!(status, 403);
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}
+
+#[test]
+fn t_g4_static_files_with_traversal_guard() {
+    // covers: G4 (file serving), reference 9.8
+    let app = r#"space site
+
+part Server {
+  port = 0
+}
+
+part static {
+  route = "/static"
+  files = "public"
+}
+"#;
+    let root = fixture("files", &[("app.ash", app)]);
+    std::fs::create_dir_all(root.join("assets/public")).unwrap();
+    std::fs::write(root.join("assets/public/hello.txt"), "hi from disk").unwrap();
+    std::fs::write(root.join("secret.txt"), "no").unwrap();
+    let (port, stop, join) = start(root);
+
+    let (status, body) = http_get(port, "/static/hello.txt");
+    assert_eq!(status, 200);
+    assert_eq!(body, "hi from disk");
+    let (status, _) = http_get(port, "/static/nope.txt");
+    assert_eq!(status, 404);
+    let (status, _) = http_get(port, "/static/../../secret.txt");
+    assert_eq!(status, 404, "path traversal must be rejected");
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}
+
+#[test]
+fn t_g4_spawn_runs_between_requests() {
+    // covers: G4 (background tasks), reference 9.7
+    let app = r#"space bg
+
+part Server {
+  port = 0
+}
+
+part work {
+  route = "/go"
+  state done: bool = false
+  handle pipe = (req: std.Request) => {
+    spawn(() => finish())
+    return done
+  }
+  finish = () => { done = true }
+}
+
+part status {
+  route = "/done"
+  handle pipe = (req: std.Request) => bg.work.done
+}
+"#;
+    let root = fixture("spawn", &[("app.ash", app)]);
+    let (port, stop, join) = start(root);
+
+    // The spawning request returns before the task runs.
+    let (_, body) = http_get(port, "/go");
+    assert_eq!(body, "false");
+    // The task drains between requests.
+    std::thread::sleep(std::time::Duration::from_millis(100));
+    let (_, body) = http_get(port, "/done");
+    assert_eq!(body, "true");
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}
