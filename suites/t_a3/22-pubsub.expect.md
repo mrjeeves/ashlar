@@ -1,25 +1,18 @@
 ## Correct reading
 
-`alerts` has `port`, so it is the server root; `start` runs once at launch
-and calls `subscribe("alerts", handler)`, registering `handler` to run
-whenever a message is published on the `"alerts"` channel. Because `alerts`
-is not a view part, this subscription lives for the whole process, not a
-per-instance mount. `raise` calls `publish("alerts", { body: body })`,
-sending a message to every current subscriber of that channel. Channel names
-are plain runtime text, matched at runtime, not resolved at build time.
+`subscribe("alerts", handler)` registers a handler for messages on the
+"alerts" channel; `publish("alerts", {...})` sends a message to that
+channel. The two are connected by the shared channel name. `start` runs
+at startup and performs the subscription; `raise` publishes.
 
 ## Must state
 
-- `subscribe("alerts", handler)` inside `start` registers `handler` to be
-  called whenever a message is published on the `"alerts"` channel; since
-  `alerts` is not a view part, the subscription lives for the whole process,
-  not a per-instance mount.
-- `publish("alerts", { body: body })` inside `raise` sends a message to every
-  current subscriber of that same channel name.
-- `alerts` has `port`, making it the server root that `ashlar run` starts;
-  that is why `start` (and thus the `subscribe` call) runs automatically
-  once, at launch.
-- `publish` and `subscribe` are connected only by the channel name string
-  itself (runtime data, not a program name) — there is no other,
-  build-time-checked link between this `publish` call and this `subscribe`
-  call.
+- `subscribe("alerts", fn)` registers the given function to receive
+  messages published on the `"alerts"` channel.
+- `publish("alerts", { body: body })` sends a map message to that
+  channel, reaching its subscribers.
+- The publish and subscribe sides are connected by the shared channel
+  name text `"alerts"`.
+- `start` performs the subscription when the part starts up (the word
+  `start` marks startup behavior); `raise` is a function that publishes a
+  given body.

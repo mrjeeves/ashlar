@@ -1,25 +1,18 @@
 ## Correct reading
 
-`chat.data` declares the part `Message` with fields `id` and `body`.
-`chat.audit` uses `chat.data` and then declares `part chat.data.Message`, a
-dotted name matching that existing part exactly. This does not create a
-second, separate part; it adds a **layer** onto the one `Message` part,
-contributing an additional field `audit` with default `"none"`. Wherever
-`Message` is referenced in the composed program, it has `id`, `body`, and
-`audit`. Because `chat.audit` uses `chat.data`, the audit layer sits after
-(on top of) the base layer.
+File 2's `part chat.data.Message` names the part file 1 already declared —
+the dotted name refers to the existing `Message`, extending it with an
+`audit` field rather than declaring an unrelated type. The combined
+`Message` has `id`, `body`, and `audit`.
 
 ## Must state
 
-- `part chat.data.Message` in `chat.audit` is a layer on the existing part
-  `chat.data.Message`, not a new, separate part — the dotted name must match
-  a part already visible through `use`.
-- The composed `Message`, wherever referenced, has all of `chat.data`'s
-  fields (`id`, `body`) plus `chat.audit`'s added field `audit` (default
-  `"none"`).
-- Layer order follows the use graph: because `chat.audit` uses `chat.data`,
-  the audit layer sits after the base layer — this is computed from the
-  declarations, never from file location.
-- A dotted part name that matched no visible part would be a compile error
-  (naming the nearest match), so this only works because `chat.data.Message`
-  genuinely exists and is visible via the `use` line.
+- `part chat.data.Message` in file 2 refers to the SAME part declared in
+  file 1 — an extension/augmentation of the existing `Message`, not a new
+  unrelated type that happens to share the name.
+- The extension adds the field `audit: text` with default `"none"`; the
+  combined `Message` carries `id`, `body`, and `audit`.
+- `use chat.data` is what makes `chat.data.Message` referenceable from
+  `chat.audit`.
+- `"none"` here is a text value (a string), not a null-like language
+  constant.

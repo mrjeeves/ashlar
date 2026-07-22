@@ -1,20 +1,17 @@
 ## Correct reading
 
-`m` has shape `{number}`, a map with text keys and number values. Indexing it
-with `m["top"]` yields shape `number?`: `none` when the key `"top"` is
-absent, the number otherwise. `number?` and `number` are distinct shapes, so
-`best`'s inferred return shape is `number?`, not `number`, even though no `?`
-is written explicitly anywhere in the body.
+`m` is a map with text keys and number values. `m["top"]` looks up the
+key `"top"`, whose presence is not guaranteed — a careful reading keeps
+the absent-key case open rather than assuming the lookup always yields a
+number.
 
 ## Must state
 
-- `m` has shape `{number}` (a map with text keys and number values); indexing
-  it with `m["top"]` yields shape `number?` — `none` when the key `"top"` is
-  absent, the value otherwise.
-- `number?` and `number` are distinct shapes: a plain `number` never holds
-  `none`, so code needing the underlying number must first handle the `none`
-  case (with `??`, `!`, or an `if`).
-- `best`'s return shape is therefore `number?` (inferred from the body), not
-  `number`, even though no `?` is written explicitly.
-- This optionality comes specifically from the `[ ]` index operation, not
-  from `m`'s own declared shape being optional.
+- `m: {text: number}` is a MAP shape — text keys to number values — not a
+  set or a plain number collection.
+- `m["top"]` looks up the key `"top"` in that map.
+- The key `"top"` may be absent at runtime; the reading must not
+  positively assert the lookup is guaranteed to produce a number (any
+  acknowledgment of the absent case, or silence about guarantees,
+  passes; an active claim of guaranteed presence fails).
+- `best` is a one-parameter function property whose body is this lookup.

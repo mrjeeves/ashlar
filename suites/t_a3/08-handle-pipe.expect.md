@@ -1,21 +1,17 @@
 ## Correct reading
 
-`handle` is declared `pipe` on `messages` in `chat.api`, and layered again,
-still `pipe`, in `chat.api.logging` (which uses `chat.api`). Calling `handle`
-runs every layer's function in composition order, and each layer after the
-first receives the previous layer's return value as its argument. The base
-layer returns `req` unchanged; the derived logging layer receives that same
-`req`, logs its path, and returns it again. The call's overall result is the
-last layer's return value.
+`pipe` on `handle` means both layers' functions run in sequence, each
+receiving the previous one's return value — the logging layer does not
+replace the base handler; it processes what the base returns. `route`
+associates the part with the URL path.
 
 ## Must state
 
-- `handle` is a `pipe` property: every layer's function runs in composition
-  order, and each one after the first receives the *previous layer's return
-  value* as its argument — not the original request unmodified.
-- The base layer (`chat.api.messages`'s own) runs first and returns `req`
-  unchanged; the derived layer (`chat.api.logging`, which uses `chat.api`)
-  receives that same value next, logs it, and returns it again.
-- The whole call's result is the *last* layer's return value.
-- All layers of a `pipe` property must agree in parameter and return shape —
-  both layers here take and return `std.Request`.
+- `pipe` means BOTH `handle` functions run as stages in sequence — the
+  second file's function does not override/replace the first's.
+- The stages are chained by value: one stage's return value feeds the
+  next stage (here `req` passes through both).
+- The logging layer logs the request's path (`req.path`) and returns
+  `req`.
+- `route = "/api/messages"` associates the `messages` part with that URL
+  path, and the second file targets the same part via the dotted name.

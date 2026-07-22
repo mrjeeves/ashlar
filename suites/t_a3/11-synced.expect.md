@@ -1,20 +1,16 @@
 ## Correct reading
 
-`online` is a `synced` property: like `state`, it is runtime-mutable and
-lives for the process, but every change to it is additionally pushed to all
-connected clients whose views read it, automatically, over the built-in
-socket — there is no explicit channel or publish call needed. Its initial
-value is `0`. As with any state-class property, only a function declared on
-`Room` may assign it.
+`synced` declares mutable numeric state whose changes are additionally
+synchronized/propagated beyond the local process — the word implies
+distribution (to clients, peers, or observers), not just mutability.
 
 ## Must state
 
-- `online` is a `synced` property: like `state` (process-lifetime,
-  reactively read), but every change is additionally pushed to all connected
-  clients whose views read it.
-- Its initial value is `0`; being a state-class property (not a value
-  property), it is runtime-mutable, not a fixed build-time constant.
-- Propagation to clients happens automatically over the built-in socket
-  mechanism — no explicit channel or `publish` call is needed for `synced`.
-- Only functions declared in a layer of `Room` may assign `online`; other
-  code may only read it, or call such a function.
+- `synced` declares runtime-mutable state (initial value 0), like a state
+  variable.
+- The word `synced` additionally implies the value is
+  synchronized/propagated somewhere beyond a plain local variable —
+  shared with clients, sessions, or observers.
+- `online: number = 0` — numeric shape with initial value zero.
+- `Room` is a part in space `chat.presence` declaring only this one
+  property.

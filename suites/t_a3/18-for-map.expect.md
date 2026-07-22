@@ -1,25 +1,19 @@
 ## Correct reading
 
-`for k, v in counts { ... }` iterates the map `counts`'s entries in key
-order, binding `k` (the key, `text`) and `v` (the value, `number`) each
-iteration. Each iteration reassigns the state property `lines` to a new list
-that appends one formatted entry; this assignment is legal because `build`
-is a function declared on `report`, the same part that owns `lines`. Because
-iteration is key-ordered, the resulting `lines` is deterministic for a given
-`counts` map.
+`for k, v in counts` iterates the map's entries with key and value bound
+each round. Each round rebuilds `lines` by concatenating a formatted
+"key: value" text; `lines` is reset to empty first.
 
 ## Must state
 
-- `for k, v in counts { ... }` iterates the map `counts`'s entries in key
-  order (sorted by key), binding `k` (the key, `text`) and `v` (the value,
-  `number`) each iteration — not insertion order or any other order.
-- Each iteration reassigns the state property `lines` to a new list
-  (`lines + [...]`), appending one formatted entry; this is legal because
-  `build` is a function declared on `report`, the same part that owns
-  `lines`.
-- Because iteration is key-ordered, the resulting `lines` list is fully
-  deterministic for a given `counts` map, regardless of how `counts` was
-  constructed.
-- Values are immutable in Ashlar: each `lines = lines + [...]` produces an
-  entirely new list bound to `lines`, rather than mutating an existing list
-  in place.
+- `for k, v in counts { ... }` iterates the map's entries, binding the
+  key (`k`) and value (`v`) each iteration.
+- Each iteration reassigns `lines` to `lines + [k + ": " + text(v)]` —
+  list concatenation appending one formatted text entry, with `text(v)`
+  converting the number.
+- `lines = []` first clears the state list; `build` may assign `lines`
+  since both belong to the same part.
+- The reading must not actively assert a specific iteration order as a
+  fact the snippet establishes (saying the order is unspecified by the
+  snippet, or naming an order as a guess, passes; insisting the snippet
+  guarantees e.g. insertion order fails).

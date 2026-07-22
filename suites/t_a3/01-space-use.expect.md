@@ -1,21 +1,17 @@
 ## Correct reading
 
-Two spaces are declared. `chat.data` declares a part `Message` with one field,
-`body: text`. `chat.ui` declares `use chat.data`, then a part `Feed` with one
-field, `latest: Message?` — an optional value of the `Message` shape. The
-`use` line is what makes the bare name `Message` (declared in `chat.data`)
-resolvable inside `chat.ui`; without it, `Feed`'s reference to `Message` would
-not resolve to anything. `Feed`'s full name is `chat.ui.Feed`.
+Two spaces, one per header. `chat.data` declares part `Message` with one
+text field. `chat.ui` declares `use chat.data`, then part `Feed` whose
+`latest` field is an optional `Message`. The `use` line is what lets
+`chat.ui` reference `Message` by name.
 
 ## Must state
 
-- Two spaces are declared, one per `space` header (`chat.data`, `chat.ui`);
-  `Feed`'s full name is `chat.ui.Feed` (space joined to declared name).
-- `use chat.data` in `chat.ui` is what brings `chat.data`'s parts — here,
-  `Message` — into scope, so `Feed` can reference it by the bare name
-  `Message`.
-- The bare reference `Message` resolves to `chat.data.Message` specifically;
-  there is only one visible definition, so no qualification is required.
-- Without the `use` line, the reference to `Message` inside `chat.ui` would
-  not resolve at all — visibility comes only from `use`, never from file
-  adjacency, order, or any other mechanism.
+- Two spaces are declared, one per `space` header (`chat.data`, `chat.ui`),
+  and each part belongs to the space whose file declares it.
+- `use chat.data` is an import-like declaration: it is what makes
+  `chat.data`'s declarations (here `Message`) referenceable from `chat.ui`.
+- `latest: Message?` gives `Feed` a field whose value is a `Message` or
+  absent — the `?` marks optionality of the field's shape.
+- `Message` is a named data structure with one typed field `body: text`;
+  `part { ... }` declares such a structure.

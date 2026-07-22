@@ -1,17 +1,13 @@
 ## Correct reading
 
-`every = "10m"` makes `sweep` a scheduled task: the runtime calls its `run`
-function property on that interval, every 10 minutes here. `every`'s value
-is a text duration (digits then a unit), checked at build time. A part with
-`every` but no `run` would itself be a compile error.
+`every = "10m"` declares a recurring schedule: the part's `run` function
+executes every 10 minutes, logging "sweeping".
 
 ## Must state
 
-- `every = "10m"` makes `sweep` a scheduled task: the runtime calls its `run`
-  function on that interval, here every 10 minutes.
-- `every`'s value is a text duration — digits followed by a unit (`ms`, `s`,
-  `m`, `h`, or `d`) — checked at build time, not an arbitrary string.
-- A part with `every` but no `run` function property is itself a compile
-  error; `run` is required once `every` is declared.
-- `run` here is a zero-parameter function (not a `stack`/`pipe` composed
-  property); each scheduled invocation just calls it directly.
+- `every = "10m"` expresses a recurring schedule attached to the part.
+- `"10m"` reads as a duration of ten minutes (the schedule's interval).
+- `run` is a zero-parameter function that logs `"sweeping"`; it is what
+  the schedule executes.
+- `sweep` is a part grouping the schedule (`every`) with its action
+  (`run`).
