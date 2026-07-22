@@ -636,6 +636,70 @@ impl<'a> Parser<'a> {
             Some(Tok::LBrace) => {
                 self.bump();
                 self.skip_newlines();
+                // `{text: shape}` — the key shape is literally `text`
+                // (ADR-0008 F2: a colon in braces reads as a map, never a
+                // set). The key is not stored in the AST; it cannot vary.
+                match (self.cur().cloned(), self.nth(1).cloned()) {
+                    (Some(Tok::Ident(k)), Some(Tok::Colon)) if k == "text" => {
+                        self.bump();
+                        self.bump();
+                    }
+                    (Some(Tok::Ident(k)), Some(Tok::Colon)) => {
+                        let kspan = self.here_span();
+                        self.diags.push(
+                            Diag::new(
+                                E007_PARSE,
+                                Level::Error,
+                                &self.file,
+                                kspan,
+                                format!("map keys are always `text`, not `{}`.", k),
+                            )
+                            .with_fix(
+                                "Replace the key shape with `text`.".to_string(),
+                                vec![Edit {
+                                    file: self.file.clone(),
+                                    start: kspan.start,
+                                    end: kspan.end,
+                                    text: "text".to_string(),
+                                }],
+                            ),
+                        );
+                        self.bump();
+                        self.bump();
+                    }
+                    // Old set-like form `{shape}`: error, with the fix
+                    // inserting the key — but only when a shape actually
+                    // follows, so the fix always yields compiling source.
+                    (Some(t), _)
+                        if matches!(
+                            t,
+                            Tok::Ident(_) | Tok::LBracket | Tok::LBrace | Tok::LParen
+                        ) =>
+                    {
+                        let here = self.here_span();
+                        self.diags.push(
+                            Diag::new(
+                                E007_PARSE,
+                                Level::Error,
+                                &self.file,
+                                here,
+                                "a map shape is written `{text: <value shape>}`.".to_string(),
+                            )
+                            .with_fix(
+                                "Insert `text: ` after `{`.".to_string(),
+                                vec![Edit {
+                                    file: self.file.clone(),
+                                    start: here.start,
+                                    end: here.start,
+                                    text: "text: ".to_string(),
+                                }],
+                            ),
+                        );
+                        // Recover as if the key had been written.
+                    }
+                    _ => {}
+                }
+                self.skip_newlines();
                 let inner = self.parse_shape()?;
                 self.skip_newlines();
                 if self.eat(&Tok::RBrace).is_none() {
@@ -1508,7 +1572,7 @@ mod tests {
     #[test]
     fn spreads_in_list_and_map() {
         let f = parse_ok(
-            "space u\n\npart b {\n  extend = (base: [text], extra: text) => [...base, extra]\n  merge = (base: {text}, patch: {text}) => { return { ...base, ...patch } }\n}\n",
+            "space u\n\npart b {\n  extend = (base: [text], extra: text) => [...base, extra]\n  merge = (base: {text: text}, patch: {text: text}) => { return { ...base, ...patch } }\n}\n",
         );
         let v0 = f.parts[0].props[0].value.as_ref().unwrap();
         let Expr::FnLit(_, body) = &v0.expr else { panic!() };
@@ -1609,7 +1673,7 @@ mod tests {
     #[test]
     fn for_two_vars_and_assign() {
         let f = parse_ok(
-            "space u\n\npart r {\n  state lines: [text] = []\n  build = (counts: {number}) => {\n    lines = []\n    for k, v in counts {\n      lines = lines + [k + \": \" + text(v)]\n    }\n  }\n}\n",
+            "space u\n\npart r {\n  state lines: [text] = []\n  build = (counts: {text: number}) => {\n    lines = []\n    for k, v in counts {\n      lines = lines + [k + \": \" + text(v)]\n    }\n  }\n}\n",
         );
         let v = f.parts[0].props[1].value.as_ref().unwrap();
         let Expr::FnLit(_, body) = &v.expr else { panic!() };
@@ -1675,6 +1739,32 @@ mod tests {
         let p = &ast.unwrap().parts[0].props[0];
         assert_eq!(p.kind.as_ref().unwrap().kind, MergeKind::Append);
         assert!(!p.kind.as_ref().unwrap().reverse);
+    }
+
+    #[test]
+    fn e007_map_shape_key_rules() {
+        // Old set-like form: error with an insert fix.
+        let (ast, diags) = parse_src("space a\n\npart W {\n  m: {number}\n}\n");
+        assert_eq!(ids(&diags), vec!["E007"]);
+        let fix = diags[0].fix.as_ref().unwrap();
+        assert_eq!(fix.edits.len(), 1);
+        assert_eq!(fix.edits[0].text, "text: ");
+        assert_eq!(fix.edits[0].start, fix.edits[0].end);
+        // Recovery still yields a map-of-number shape.
+        let p = &ast.unwrap().parts[0].props[0];
+        assert!(matches!(&p.shape.as_ref().unwrap().shape, Shape::Map(inner) if matches!(inner.shape, Shape::Number)));
+
+        // Wrong key shape: error with a replace fix.
+        let (_, diags) = parse_src("space a\n\npart W {\n  m: {number: text}\n}\n");
+        assert_eq!(ids(&diags), vec!["E007"]);
+        assert!(diags[0].cause.contains("always `text`"));
+        let fix = diags[0].fix.as_ref().unwrap();
+        assert_eq!(fix.edits[0].text, "text");
+
+        // Correct form parses clean, including nested.
+        let f = parse_ok("space a\n\npart W {\n  m: {text: [text]}\n  n: {text: {text: number}}?\n}\n");
+        let n = &f.parts[0].props[1];
+        assert!(matches!(&n.shape.as_ref().unwrap().shape, Shape::Opt(_)));
     }
 
     #[test]

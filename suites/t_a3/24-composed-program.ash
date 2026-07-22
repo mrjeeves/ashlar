@@ -6,7 +6,7 @@ part Message {
 }
 
 part Store {
-  stored messages: {chat.data.Message} = {}
+  stored messages: {text: chat.data.Message} = {}
   add = (m: chat.data.Message) => {
     messages = put(messages, m.id, m)
   }

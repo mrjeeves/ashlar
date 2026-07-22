@@ -197,7 +197,14 @@ fn compose_property(prop_name: &str, occs: &[Occ]) -> (ComposedProp, Vec<Diag>) 
                 );
                 diags.push(
                     Diag::new(E005_KIND_OMITTED, Level::Error, &later.file, later.prop.name_span, cause)
-                        .with_fix(format!("Restate the declared kind after `{}`.", prop_name), vec![edit]),
+                        .with_fix(
+                            format!(
+                                "Restate the declared kind after `{}`. {}",
+                                prop_name,
+                                kind_teaching(&identity_kind)
+                            ),
+                            vec![edit],
+                        ),
                 );
             } else {
                 let kind_span = later.prop.kind.as_ref().unwrap().span;
@@ -216,7 +223,14 @@ fn compose_property(prop_name: &str, occs: &[Occ]) -> (ComposedProp, Vec<Diag>) 
                 );
                 diags.push(
                     Diag::new(E004_KIND_CHANGED, Level::Error, &later.file, kind_span, cause)
-                        .with_fix(format!("Restate `{}`'s declared kind.", prop_name), vec![edit]),
+                        .with_fix(
+                            format!(
+                                "Restate `{}`'s declared kind. {}",
+                                prop_name,
+                                kind_teaching(&identity_kind)
+                            ),
+                            vec![edit],
+                        ),
                 );
             }
         }
@@ -683,6 +697,21 @@ fn kind_label(opt: &Option<(MergeKind, bool)>) -> String {
     match opt {
         Some(_) => format!("`{}`", kind_text(opt)),
         None => "no kind".to_string(),
+    }
+}
+
+/// One sentence teaching what the identity kind means, appended to the
+/// E004/E005 fix notes (ADR-0008 F1): the first contact with the identity
+/// rule should also state the composition model it protects.
+fn kind_teaching(opt: &Option<(MergeKind, bool)>) -> &'static str {
+    match opt {
+        Some((MergeKind::Stack, _)) | Some((MergeKind::Pipe, _)) => {
+            "Every layer's function runs in order; a layer never replaces a `stack`/`pipe` property, it joins the chain."
+        }
+        Some((MergeKind::Append, _)) | Some((MergeKind::Deep, _)) => {
+            "Layers combine their values; a later layer never replaces this property."
+        }
+        None => "This property has no kind, so the later layer's definition replaces the earlier one's.",
     }
 }
 
