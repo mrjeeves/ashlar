@@ -12,6 +12,7 @@ pub mod ast;
 pub mod check;
 pub mod compose;
 pub mod diag;
+pub mod eval;
 pub mod fixup;
 pub mod fmt;
 pub mod lexer;
