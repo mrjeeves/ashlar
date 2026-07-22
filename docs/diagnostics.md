@@ -34,7 +34,7 @@ Rules for every diagnostic (D1):
 | E018 | A4 | parser | foreign top-level construct: `import`, `from`, `export`, `class`, `function`, `def`, `struct`, `interface`, `enum`, `mod`, `package` | note names the Ashlar construct to use instead (`use` / `part`) |
 | E019 | C4 | composer | stack function with parameters, or pipe function without exactly one | note states the arity rule |
 | E020 | C4 | parser | `reverse` after `append`/`deep`/no kind | edits deleting `reverse` |
-| E021 | — | reserved | route conflict (needs evaluated routes) | — |
+| E021 | A4 | checker | two `route` patterns can match one path (duplicates and capture overlaps alike) | note names both parts; changing a path is the author's choice |
 | E022 | B6 | parser | file does not begin with a `space` header, or `space`/`use` appear after declarations | note: add `space <name>` as the first line (name is the author's choice — no edits) |
 | E023 | A4 | parser | foreign statement construct: `while`, `switch`, `match`, `try`, `catch`, `throw`, `var`, `const`, `elif` | note names the Ashlar construct to use instead (`for`/recursion, `if`, `??`/`none`, `let`) |
 | E024 | E2 | resolver | function literal outside the two legal positions (property value, call argument) | note: name it as a property, or inline it at the call |

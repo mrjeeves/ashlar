@@ -17,13 +17,15 @@ mod cli {
     pub const USAGE: &str = "usage:\n  \
         ashlar check [path] [--human]\n  \
         ashlar fix [path]\n  \
-        ashlar build [path]\n";
+        ashlar build [path]\n  \
+        ashlar fmt [path] [--check]\n";
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum Cmd {
         Check { path: String, human: bool },
         Fix { path: String },
         Build { path: String },
+        Fmt { path: String, check_only: bool },
     }
 
     /// Parse the command and its arguments (everything after the binary
@@ -60,6 +62,24 @@ mod cli {
             "build" => Ok(Cmd::Build {
                 path: one_path(rest)?,
             }),
+            "fmt" => {
+                let mut path: Option<String> = None;
+                let mut check_only = false;
+                for a in rest {
+                    if a == "--check" {
+                        if check_only {
+                            return Err("`--check` given twice".to_string());
+                        }
+                        check_only = true;
+                    } else if let Some(p) = positional(a, &path)? {
+                        path = Some(p);
+                    }
+                }
+                Ok(Cmd::Fmt {
+                    path: path.unwrap_or_else(default_path),
+                    check_only,
+                })
+            }
             other => Err(format!("unknown command `{}`", other)),
         }
     }
@@ -97,6 +117,55 @@ mod cli {
             Cmd::Check { path, human } => run_check(&path, human),
             Cmd::Fix { path } => run_fix(&path),
             Cmd::Build { path } => run_build(&path),
+            Cmd::Fmt { path, check_only } => run_fmt(&path, check_only),
+        }
+    }
+
+    fn run_fmt(path: &str, check_only: bool) -> i32 {
+        let root = Path::new(path);
+        let mut changed = 0usize;
+        let mut broken = 0usize;
+        for file in ashlar::find_ash_files(root) {
+            let rel = file
+                .strip_prefix(root)
+                .unwrap_or(&file)
+                .to_string_lossy()
+                .replace('\\', "/");
+            let src = match std::fs::read_to_string(&file) {
+                Ok(s) => s,
+                Err(e) => {
+                    eprintln!("error reading {}: {}", rel, e);
+                    return 1;
+                }
+            };
+            match ashlar::fmt::format_source(&rel, &src) {
+                Ok(formatted) if formatted != src => {
+                    changed += 1;
+                    if check_only {
+                        println!("would format: {}", rel);
+                    } else {
+                        if let Err(e) = std::fs::write(&file, &formatted) {
+                            eprintln!("error writing {}: {}", rel, e);
+                            return 1;
+                        }
+                        eprintln!("formatted: {}", rel);
+                    }
+                }
+                Ok(_) => {}
+                Err(diags) => {
+                    // Broken files are never rewritten; their diagnostics
+                    // come from `check`, not `fmt`.
+                    broken += 1;
+                    eprintln!("skipping {} ({} diagnostic(s); run `ashlar check`)", rel, diags.len());
+                }
+            }
+        }
+        if check_only && changed > 0 {
+            1
+        } else if broken > 0 {
+            1
+        } else {
+            0
         }
     }
 

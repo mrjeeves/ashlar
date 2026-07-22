@@ -25,8 +25,8 @@
 use crate::ast::{
     self, Expr, FnBody, ListItem, MapItem, PartDecl, SExpr, SShape, Shape, Stmt,
 };
-use crate::diag::{Diag, Edit, Level, E006_SHAPE};
-use crate::resolved::{ComposedPart, Program, STD_FNS, STD_PARTS};
+use crate::diag::{Diag, Edit, Level, E006_SHAPE, E021_ROUTE_CONFLICT};
+use crate::resolved::{ComposedPart, MergedValue, Program, STD_FNS, STD_PARTS};
 use crate::tokens::Span;
 use std::collections::BTreeMap;
 
@@ -61,7 +61,86 @@ pub fn check(
             diags.append(&mut cx.diags);
         }
     }
+    diags.append(&mut check_routes(program, composed));
     diags
+}
+
+/// E021 (reference §9.2): two routes matching one path is a compile error
+/// naming both — exact duplicates and capture overlaps alike, since a
+/// `{name}` segment can match any literal.
+fn check_routes(
+    program: &Program,
+    composed: &BTreeMap<String, ComposedPart>,
+) -> Vec<Diag> {
+    let mut diags = Vec::new();
+    // (part full name, pattern, file, span), in BTreeMap order — sorted by
+    // part name, so the "later" of a conflicting pair is deterministic.
+    let mut routes: Vec<(String, String, String, Span)> = Vec::new();
+    for (full, cp) in composed {
+        let Some(prop) = cp.props.get("route") else { continue };
+        let source = match &prop.value {
+            MergedValue::Single(pr) => program.files[pr.file_idx].ast.parts[pr.part_idx].props
+                [pr.prop_idx]
+                .value
+                .as_ref(),
+            MergedValue::Literal(e) => Some(e),
+            _ => None,
+        };
+        if let Some(e) = source {
+            if let Expr::Text(pattern) = &e.expr {
+                let file = match &prop.value {
+                    MergedValue::Single(pr) => program.files[pr.file_idx].path.clone(),
+                    _ => prop
+                        .defs
+                        .first()
+                        .map(|pr| program.files[pr.file_idx].path.clone())
+                        .unwrap_or_default(),
+                };
+                routes.push((full.clone(), pattern.clone(), file, e.span));
+            }
+        }
+    }
+    for i in 0..routes.len() {
+        for j in (i + 1)..routes.len() {
+            if patterns_overlap(&routes[i].1, &routes[j].1) {
+                let (a, b) = (&routes[i], &routes[j]);
+                diags.push(
+                    Diag::new(
+                        E021_ROUTE_CONFLICT,
+                        Level::Error,
+                        &b.2,
+                        b.3,
+                        format!(
+                            "`{}` and `{}` can match the same path (`{}` and `{}`).",
+                            a.0, b.0, a.1, b.1
+                        ),
+                        )
+                    .with_fix(
+                        "Change one route so no single path matches both.".to_string(),
+                        vec![],
+                    ),
+                );
+            }
+        }
+    }
+    diags
+}
+
+/// Two route patterns overlap when they have the same segment count and
+/// every segment pair can match the same text — equal literals, or either
+/// side a `{capture}`.
+fn patterns_overlap(a: &str, b: &str) -> bool {
+    let seg = |p: &str| -> Vec<String> {
+        p.trim_matches('/').split('/').map(|s| s.to_string()).collect()
+    };
+    let (sa, sb) = (seg(a), seg(b));
+    if sa.len() != sb.len() {
+        return false;
+    }
+    sa.iter().zip(&sb).all(|(x, y)| {
+        let cap = |s: &str| s.starts_with('{') && s.ends_with('}');
+        cap(x) || cap(y) || x == y
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1673,5 +1752,39 @@ mod tests {
         clean(
             "space a\n\npart W {\n  f = (m: {text: number}) => range(m[\"a\"] ?? 0)\n  g = (m: {text: number}) => range(m[\"a\"]!)\n  h = (name: text?) => \"hi \" + (name ?? \"friend\")\n}\n",
         );
+    }
+}
+
+#[cfg(test)]
+mod route_tests {
+    use crate::check_sources;
+
+    fn diags_for(src: &str) -> Vec<&'static str> {
+        let r = check_sources(vec![("t.ash".to_string(), src.to_string())]);
+        r.diags.iter().map(|d| d.id).collect()
+    }
+
+    #[test]
+    fn duplicate_routes_conflict() {
+        let ids = diags_for(
+            "space a\n\npart one {\n  route = \"/api/x\"\n  handle pipe = (req: std.Request) => req.path\n}\n\npart two {\n  route = \"/api/x\"\n  handle pipe = (req: std.Request) => req.path\n}\n",
+        );
+        assert_eq!(ids, vec!["E021"]);
+    }
+
+    #[test]
+    fn capture_overlaps_static() {
+        let ids = diags_for(
+            "space a\n\npart item {\n  route = \"/api/x/{id}\"\n  handle pipe = (req: std.Request) => req.path\n}\n\npart new {\n  route = \"/api/x/new\"\n  handle pipe = (req: std.Request) => req.path\n}\n",
+        );
+        assert_eq!(ids, vec!["E021"]);
+    }
+
+    #[test]
+    fn distinct_routes_do_not_conflict() {
+        let ids = diags_for(
+            "space a\n\npart one {\n  route = \"/api/x\"\n  handle pipe = (req: std.Request) => req.path\n}\n\npart two {\n  route = \"/api/x/{id}\"\n  handle pipe = (req: std.Request) => req.path\n}\n\npart three {\n  route = \"/api/y\"\n  handle pipe = (req: std.Request) => req.path\n}\n",
+        );
+        assert!(ids.is_empty(), "{:?}", ids);
     }
 }

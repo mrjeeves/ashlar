@@ -13,6 +13,7 @@ pub mod check;
 pub mod compose;
 pub mod diag;
 pub mod fixup;
+pub mod fmt;
 pub mod lexer;
 pub mod manifest;
 pub mod parser;

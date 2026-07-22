@@ -57,14 +57,18 @@ migration weight that `rename` on anything else doesn't — T-E should cover
 that case explicitly when this lands, not treat it as a variant of the
 ordinary rename path.
 
-## 4. `ashlar fmt`
+## 4. `ashlar fmt` — DONE 2026-07-22 (moves off this page next revision)
 
-Canonical formatting: two-space indentation, `"` over `'` for text
-literals, and whatever else reference §1 designates as the formatter's job
-rather than the parser's. Currently there is no proof obligation beyond
-"produces the canonical form reference §1 describes" and idempotence
-(formatting already-formatted source changes nothing) — a dedicated test
-suite for `fmt` is itself future work, not yet named.
+Delivered as `crates/ashlar/src/fmt.rs` + the `fmt [--check]` CLI
+command: two-space indent, `"` quotes, one spacing convention, comment
+and blank-line preservation, precedence-faithful re-parenthesization,
+and a refusal to rewrite any file with lex/parse diagnostics. Proof:
+three properties enforced over the whole t_a3 corpus and every reference
+```ash block — formatting preserves the AST (spans aside), formatting is
+idempotent, and comments survive by count — plus targeted tests for
+quotes, spacing, trailing comments, and multiline literals. E021 (route
+conflicts, reference §9.2's "two routes matching one path" rule) also
+landed in this increment, closing the last reserved diagnostic id.
 
 ## 5. F1 incremental-latency benchmark at 1,000 files
 
