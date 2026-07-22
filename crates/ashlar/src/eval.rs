@@ -234,6 +234,15 @@ impl<'a> Evaluator<'a> {
         Ok(acc)
     }
 
+    /// A value property evaluated to a number, if it is one (`port`).
+    pub fn prop_number(&mut self, part: &str, prop: &str) -> Option<f64> {
+        let e = self.prop_value_expr(part, prop)?;
+        match self.eval_in_part(part, &e) {
+            Ok(V::Number(n)) => Some(n),
+            _ => None,
+        }
+    }
+
     pub fn assign_state(&mut self, key: &str, v: V) {
         if self.state.stored_keys.iter().any(|k| k == key) {
             self.state.dirty = true;

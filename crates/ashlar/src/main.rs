@@ -18,7 +18,8 @@ mod cli {
         ashlar check [path] [--human]\n  \
         ashlar fix [path]\n  \
         ashlar build [path]\n  \
-        ashlar fmt [path] [--check]\n";
+        ashlar fmt [path] [--check]\n  \
+        ashlar run [path]\n";
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum Cmd {
@@ -26,6 +27,7 @@ mod cli {
         Fix { path: String },
         Build { path: String },
         Fmt { path: String, check_only: bool },
+        Run { path: String },
     }
 
     /// Parse the command and its arguments (everything after the binary
@@ -60,6 +62,9 @@ mod cli {
                 path: one_path(rest)?,
             }),
             "build" => Ok(Cmd::Build {
+                path: one_path(rest)?,
+            }),
+            "run" => Ok(Cmd::Run {
                 path: one_path(rest)?,
             }),
             "fmt" => {
@@ -118,6 +123,23 @@ mod cli {
             Cmd::Fix { path } => run_fix(&path),
             Cmd::Build { path } => run_build(&path),
             Cmd::Fmt { path, check_only } => run_fmt(&path, check_only),
+            Cmd::Run { path } => run_serve(&path),
+        }
+    }
+
+    fn run_serve(path: &str) -> i32 {
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        match ashlar::http::serve(
+            std::path::PathBuf::from(path),
+            None,
+            |port| eprintln!("serving on http://127.0.0.1:{}", port),
+            stop,
+        ) {
+            Ok(()) => 0,
+            Err(e) => {
+                eprintln!("{}", e);
+                1
+            }
         }
     }
 

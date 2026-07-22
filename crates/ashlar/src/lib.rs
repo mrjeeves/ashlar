@@ -15,6 +15,7 @@ pub mod diag;
 pub mod eval;
 pub mod fixup;
 pub mod fmt;
+pub mod http;
 pub mod lexer;
 pub mod manifest;
 pub mod parser;
