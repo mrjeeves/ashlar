@@ -88,9 +88,22 @@ fn t_b5_no_locations_in_fixtures_or_reference() {
     let root = support::repo_root();
     let mut checked_any = false;
 
+    // The t_a3 corpus models multi-file programs inside one snippet with a
+    // `// file: x.ash` comment line (see suites/t_a3/PROTOCOL.md). That
+    // marker is presentation, not source semantics — a comment binds
+    // nothing — so exactly those lines are exempt; every other line of
+    // every snippet is scanned at full strength.
+    fn strip_file_markers(content: &str) -> String {
+        content
+            .lines()
+            .filter(|l| !l.trim_start().starts_with("// file:"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     for f in support::ash_files_sorted(&root.join("suites/t_a3")) {
         checked_any = true;
-        let content = support::read_text(&f);
+        let content = strip_file_markers(&support::read_text(&f));
         for token in FORBIDDEN {
             assert!(
                 !content.contains(token),

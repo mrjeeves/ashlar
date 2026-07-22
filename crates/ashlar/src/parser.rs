@@ -1317,18 +1317,40 @@ impl<'a> Parser<'a> {
         self.bump(); // `if`
         let cond = self.parse_expr()?;
         let then = self.parse_block()?;
-        let els = if self.eat(&Tok::KwElse).is_some() {
-            if self.at(&Tok::KwIf) {
-                let nested = self.parse_if_stmt()?;
-                Some(vec![nested])
-            } else {
-                Some(self.parse_block()?)
-            }
-        } else {
-            None
-        };
+        let els = self.parse_if_tail()?;
         self.line_end("the `if`");
         Some(Stmt::If(cond, then, els))
+    }
+
+    /// The else-position tail of an `if`: `else`, `else if`, or Python's
+    /// `elif` (E023, recovered as `else if` so the rest still parses).
+    fn parse_if_tail(&mut self) -> Option<Option<Vec<Stmt>>> {
+        if self.eat(&Tok::KwElse).is_some() {
+            if self.at(&Tok::KwIf) {
+                let nested = self.parse_if_stmt()?;
+                return Some(Some(vec![nested]));
+            }
+            return Some(Some(self.parse_block()?));
+        }
+        if matches!(self.cur(), Some(Tok::Ident(w)) if w == "elif") {
+            let span = self.here_span();
+            self.diags.push(
+                Diag::new(
+                    E023_FOREIGN_STMT,
+                    Level::Error,
+                    &self.file,
+                    span,
+                    "`elif` is not an Ashlar statement.".to_string(),
+                )
+                .with_fix("Chain `if` / `else if` instead.".to_string(), vec![]),
+            );
+            self.bump();
+            let cond = self.parse_expr()?;
+            let body = self.parse_block()?;
+            let tail = self.parse_if_tail()?;
+            return Some(Some(vec![Stmt::If(cond, body, tail)]));
+        }
+        Some(None)
     }
 }
 

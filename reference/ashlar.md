@@ -294,11 +294,20 @@ runtime values.
 
 ## 7. Statements and functions
 
-Function literals:
+Function literals take `name: shape` parameters (`()` when there are none)
+and have an expression body or a block body:
 
 ```ash
-(name: shape, ...) => expression
-(name: shape, ...) => { statements }
+space demo
+
+part math {
+  double = (n: number) => n * 2
+  describe = (items: [text]) => {
+    for i in items {
+      log.info(i)
+    }
+  }
+}
 ```
 
 A block body returns with `return expression`, or `return` (yielding `none`),
