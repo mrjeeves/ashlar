@@ -19,7 +19,9 @@ mod cli {
         ashlar fix [path]\n  \
         ashlar build [path]\n  \
         ashlar fmt [path] [--check]\n  \
-        ashlar run [path]\n";
+        ashlar run [path]\n  \
+        ashlar rename <part-or-part.prop> <new-name> [path] [--plan]\n  \
+        ashlar rekind <part.prop> <kind> [path] [--plan]\n";
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum Cmd {
@@ -28,6 +30,8 @@ mod cli {
         Build { path: String },
         Fmt { path: String, check_only: bool },
         Run { path: String },
+        Rename { target: String, new_name: String, path: String, plan_only: bool },
+        Rekind { target: String, kind: String, path: String, plan_only: bool },
     }
 
     /// Parse the command and its arguments (everything after the binary
@@ -64,6 +68,38 @@ mod cli {
             "build" => Ok(Cmd::Build {
                 path: one_path(rest)?,
             }),
+            "rename" | "rekind" => {
+                let mut positionals: Vec<String> = Vec::new();
+                let mut plan_only = false;
+                for a in rest {
+                    if a == "--plan" {
+                        plan_only = true;
+                    } else if a.starts_with("--") {
+                        return Err(format!("unknown flag `{}`", a));
+                    } else {
+                        positionals.push(a.clone());
+                    }
+                }
+                if positionals.len() < 2 || positionals.len() > 3 {
+                    return Err(format!("`{}` takes a target, a new value, and an optional path", name));
+                }
+                let path = positionals.get(2).cloned().unwrap_or_else(default_path);
+                if name == "rename" {
+                    Ok(Cmd::Rename {
+                        target: positionals[0].clone(),
+                        new_name: positionals[1].clone(),
+                        path,
+                        plan_only,
+                    })
+                } else {
+                    Ok(Cmd::Rekind {
+                        target: positionals[0].clone(),
+                        kind: positionals[1].replace('+', " "),
+                        path,
+                        plan_only,
+                    })
+                }
+            }
             "run" => Ok(Cmd::Run {
                 path: one_path(rest)?,
             }),
@@ -124,6 +160,92 @@ mod cli {
             Cmd::Build { path } => run_build(&path),
             Cmd::Fmt { path, check_only } => run_fmt(&path, check_only),
             Cmd::Run { path } => run_serve(&path),
+            Cmd::Rename { target, new_name, path, plan_only } => {
+                run_refactor(&path, plan_only, |srcs| {
+                    // A target matching a part renames the part; otherwise
+                    // the last segment names a property of the prefix part.
+                    let checked = ashlar::check_sources(srcs.to_vec());
+                    if checked.program.parts.contains_key(&target) {
+                        ashlar::refactor::plan_rename_part(srcs, &new_name, &target)
+                    } else if let Some((part, prop)) = target.rsplit_once('.') {
+                        ashlar::refactor::plan_rename_prop(srcs, part, prop, &new_name)
+                    } else {
+                        Err(ashlar::refactor::Refusal(format!(
+                            "`{}` names neither a part nor a part.property.",
+                            target
+                        )))
+                    }
+                })
+            }
+            Cmd::Rekind { target, kind, path, plan_only } => {
+                run_refactor(&path, plan_only, |srcs| match target.rsplit_once('.') {
+                    Some((part, prop)) => ashlar::refactor::plan_rekind(srcs, part, prop, &kind),
+                    None => Err(ashlar::refactor::Refusal(
+                        "rekind takes `<part>.<property>`.".to_string(),
+                    )),
+                })
+            }
+        }
+    }
+
+    /// Shared refactor driver: load sources, plan, report the blast
+    /// radius (E3), then apply-and-verify unless `--plan`.
+    fn run_refactor(
+        path: &str,
+        plan_only: bool,
+        plan_fn: impl FnOnce(&[(String, String)]) -> Result<ashlar::refactor::Plan, ashlar::refactor::Refusal>,
+    ) -> i32 {
+        let root = Path::new(path);
+        let mut sources: Vec<(String, String)> = Vec::new();
+        for file in ashlar::find_ash_files(root) {
+            let rel = file
+                .strip_prefix(root)
+                .unwrap_or(&file)
+                .to_string_lossy()
+                .replace('\\', "/");
+            match std::fs::read_to_string(&file) {
+                Ok(s) => sources.push((rel, s)),
+                Err(e) => {
+                    eprintln!("error reading {}: {}", rel, e);
+                    return 1;
+                }
+            }
+        }
+        let plan = match plan_fn(&sources) {
+            Ok(p) => p,
+            Err(ashlar::refactor::Refusal(reason)) => {
+                eprintln!("refused: {}", reason);
+                return 1;
+            }
+        };
+        eprintln!("{}: {} change(s)", plan.description, plan.changes.len());
+        for c in &plan.changes {
+            eprintln!(
+                "  {}:{}:{}  `{}` -> `{}`",
+                c.file, c.span.start.line, c.span.start.col, c.old, c.new
+            );
+        }
+        if plan_only {
+            return 0;
+        }
+        match ashlar::refactor::execute(&sources, &plan) {
+            Ok(after) => {
+                for (rel, text) in &after {
+                    let orig = sources.iter().find(|(p, _)| p == rel).map(|(_, s)| s);
+                    if orig != Some(text) {
+                        if let Err(e) = std::fs::write(root.join(rel), text) {
+                            eprintln!("error writing {}: {}", rel, e);
+                            return 1;
+                        }
+                        eprintln!("rewrote: {}", rel);
+                    }
+                }
+                0
+            }
+            Err(ashlar::refactor::Refusal(reason)) => {
+                eprintln!("refused: {}", reason);
+                1
+            }
         }
     }
 

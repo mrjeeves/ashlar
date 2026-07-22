@@ -19,6 +19,7 @@ pub mod http;
 pub mod lexer;
 pub mod manifest;
 pub mod parser;
+pub mod refactor;
 pub mod resolve;
 pub mod resolved;
 pub mod tokens;

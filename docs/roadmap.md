@@ -43,26 +43,24 @@ time (declared, checked, manifest-recorded, but a call faults), `spawn`
 running inline rather than backgrounded, and file serving (§9.8). Each
 is runtime depth, not language surface; none blocks the others.
 
-## 3. Refactor commands: rename, rekind, radius
+## 3. Refactor commands — v1 DONE 2026-07-22 (scope below)
 
-Satisfies: **E1** (refactors as commands, not text edits), **E2** (no stale
-reference survives a completed refactor), **E3** (blast radius reported
-before applying), **E4** (atomic reversibility, byte-identical roundtrip),
-**E5** (refusal, not partial application, when radius can't be computed
-fully), **E6** (the command set covers refactoring completely enough that
-hand-editing is never the easier path).
+Delivered as `crates/ashlar/src/refactor.rs` + `ashlar rename` /
+`ashlar rekind` (`--plan` prints the radius without applying). Every
+command computes its complete blast radius first and reports it (E3);
+edits apply to an in-memory copy that is re-checked, and any diagnostic
+rolls the whole refactor back (E4/E5 — nothing partial ever reaches
+disk); T-E proves forward-then-back byte-identity for part renames,
+property renames (including `stack`-returned map keys, which merge onto
+state by name), and rekind. Refusals are total and reasoned: broken
+projects, data-shape fields (constructing literals not yet tracked),
+multi-line dotted chains, unknown targets, and post-verify failures.
 
-Proof: **T-E** — blast-radius correctness against the manifest, absence of
-the prior state after a refactor (exhaustive search per E2), roundtrip
-byte-identity (forward then back), and refusal-on-incomplete-radius as its
-own explicit test case, not just an absence of crashes.
-
-Note per ADR-0007: `stored` properties are keyed by full dotted name at
-persistence time, so `rename` on a `stored` property carries real data
-migration weight that `rename` on anything else doesn't — T-E should cover
-that case explicitly when this lands, not treat it as a variant of the
-ordinary rename path.
-
+Remaining scope (E6 is not yet fully met): data-shape field rename
+awaits literal tracking; `move` (part between spaces) and space rename
+await `use`-graph rewriting; `stored` renames migrate no persisted data
+yet (ADR-0007's note stands — the state file keys by full name, so a
+rename orphans old rows until a migration step exists).
 ## 4. `ashlar fmt` — DONE 2026-07-22 (moves off this page next revision)
 
 Delivered as `crates/ashlar/src/fmt.rs` + the `fmt [--check]` CLI
