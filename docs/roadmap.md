@@ -43,9 +43,22 @@ every instance whose state changed re-renders and patches in place.
 Session auth (§9.6: signup/login/logout with cookies, persisted
 accounts, `req.user`), static file serving with a traversal guard
 (§9.8), and queued `spawn` (§9.7) also landed. T-G is 9 conformance
-tests. Still open: foreign-function binding at run time (a call
-faults), and cross-instance reactivity for `synced` (a change patches
-instances that assigned it, not yet every view that read it).
+tests.
+
+2026-07-22, third pass — the last two runtime residuals are closed, and
+a real architectural flaw found en route is fixed: WebSocket
+connections previously BLOCKED the event loop while open (a real
+browser would have wedged the server). Sockets are now multiplexed on
+the loop with buffered frame parsing; an open connection costs a poll.
+On top of that: read-dependency tracking (each render records the state
+keys it read; any assignment re-renders every reader instance and
+broadcasts patches to every live socket — §9.4's sentence is now
+literally true across clients, T-G-proven with two concurrent
+browsers), and foreign functions bind at run time via `dlopen` of
+`foreign/<space>.so` with a JSON C ABI (`char* name(const char*)`),
+return values shape-checked at the call site with mismatches faulting
+per §9.10 — proven by a C library compiled inside the test. T-G is 12
+conformance tests. The runtime residual list is now empty.
 
 ## 3. Refactor commands — v1 DONE 2026-07-22 (scope below)
 
