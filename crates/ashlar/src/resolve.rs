@@ -682,8 +682,8 @@ impl Resolver {
         fn norm(s: &str) -> String {
             s.to_lowercase().replace(['_', '-'], "")
         }
-        // (scope description, [(display name, file, span)]) checked per group.
-        let mut groups: Vec<(String, Vec<(String, String, Span)>)> = Vec::new();
+        // scope key -> [(display name, file, span)], checked per group.
+        let mut groups: BTreeMap<String, Vec<(String, String, Span)>> = BTreeMap::new();
 
         // Space names, globally. Located at each space's first file header.
         let mut space_group: Vec<(String, String, Span)> = Vec::new();
@@ -698,7 +698,7 @@ impl Resolver {
                 .unwrap_or(Span::point(1, 1));
             space_group.push((name.clone(), first.clone(), span));
         }
-        groups.push(("space".to_string(), space_group));
+        groups.insert("space".to_string(), space_group);
 
         // Part bare names within one space.
         for (full, info) in &self.program.parts {
@@ -706,13 +706,10 @@ impl Resolver {
             let l = &info.layers[0];
             let span = self.program.files[l.file_idx].ast.parts[l.part_idx].name_span;
             let file = self.file_path(l.file_idx);
-            let gi = groups
-                .iter()
-                .position(|(k, _)| k == &format!("part:{}", info.home));
-            match gi {
-                Some(i) => groups[i].1.push((bare, file, span)),
-                None => groups.push((format!("part:{}", info.home), vec![(bare, file, span)])),
-            }
+            groups
+                .entry(format!("part:{}", info.home))
+                .or_default()
+                .push((bare, file, span));
         }
 
         // Property names within one part (across all layers).
@@ -726,7 +723,7 @@ impl Resolver {
                     }
                 }
             }
-            groups.push((format!("prop:{}", full), props));
+            groups.insert(format!("prop:{}", full), props);
         }
 
         // Foreign names within one space.
@@ -734,16 +731,10 @@ impl Resolver {
             let bare = full.rsplit('.').next().unwrap_or(full).to_string();
             let f = &self.program.files[info.file_idx].ast.foreigns[info.foreign_idx];
             let file = self.file_path(info.file_idx);
-            let gi = groups
-                .iter()
-                .position(|(k, _)| k == &format!("foreign:{}", info.space));
-            match gi {
-                Some(i) => groups[i].1.push((bare, file, f.name_span)),
-                None => groups.push((
-                    format!("foreign:{}", info.space),
-                    vec![(bare, file, f.name_span)],
-                )),
-            }
+            groups
+                .entry(format!("foreign:{}", info.space))
+                .or_default()
+                .push((bare, file, f.name_span));
         }
 
         for (_, members) in groups {
@@ -787,8 +778,20 @@ impl Resolver {
                 .push(info.home.clone());
         }
 
-        // Per-space visibility tables, computed once:
-        // (bare -> fulls, all visible fulls, visible foreign fulls).
+        // Per-space visibility tables, computed once. An index from home
+        // space to its parts/foreigns keeps this linear in (spaces ×
+        // closure size), not (spaces × all parts) — the F1-relevant path.
+        let mut parts_by_home: BTreeMap<&str, Vec<&String>> = BTreeMap::new();
+        for (full, info) in &self.program.parts {
+            parts_by_home.entry(info.home.as_str()).or_default().push(full);
+        }
+        let mut foreigns_by_home: BTreeMap<&str, Vec<&String>> = BTreeMap::new();
+        for (full, info) in &self.program.foreigns {
+            foreigns_by_home
+                .entry(info.space.as_str())
+                .or_default()
+                .push(full);
+        }
         type SpaceTables = (
             BTreeMap<String, Vec<String>>,
             BTreeSet<String>,
@@ -800,11 +803,19 @@ impl Resolver {
             let mut fulls: BTreeSet<String> = BTreeSet::new();
             let mut foreign_fulls: BTreeSet<String> = BTreeSet::new();
             let closure = &self.program.spaces[space].closure;
-            for (full, info) in &self.program.parts {
-                if info.home == *space || closure.contains(&info.home) {
+            let visible = std::iter::once(space.as_str())
+                .chain(closure.iter().map(|s| s.as_str()));
+            for home in visible {
+                for full in parts_by_home.get(home).into_iter().flatten() {
                     let b = full.rsplit('.').next().unwrap_or(full).to_string();
-                    bare.entry(b).or_default().push(full.clone());
-                    fulls.insert(full.clone());
+                    bare.entry(b).or_default().push((*full).clone());
+                    fulls.insert((*full).clone());
+                }
+                for full in foreigns_by_home.get(home).into_iter().flatten() {
+                    let b = full.rsplit('.').next().unwrap_or(full).to_string();
+                    bare.entry(b).or_default().push((*full).clone());
+                    fulls.insert((*full).clone());
+                    foreign_fulls.insert((*full).clone());
                 }
             }
             for p in STD_PARTS {
@@ -812,14 +823,6 @@ impl Resolver {
                     .or_default()
                     .push(format!("std.{}", p));
                 fulls.insert(format!("std.{}", p));
-            }
-            for (full, info) in &self.program.foreigns {
-                if info.space == *space || closure.contains(&info.space) {
-                    let b = full.rsplit('.').next().unwrap_or(full).to_string();
-                    bare.entry(b).or_default().push(full.clone());
-                    fulls.insert(full.clone());
-                    foreign_fulls.insert(full.clone());
-                }
             }
             for v in bare.values_mut() {
                 v.sort();

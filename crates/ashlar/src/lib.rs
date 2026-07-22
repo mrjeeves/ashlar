@@ -12,11 +12,14 @@ pub mod ast;
 pub mod check;
 pub mod compose;
 pub mod diag;
+pub mod eval;
 pub mod fixup;
 pub mod fmt;
+pub mod http;
 pub mod lexer;
 pub mod manifest;
 pub mod parser;
+pub mod refactor;
 pub mod resolve;
 pub mod resolved;
 pub mod tokens;
@@ -92,6 +95,70 @@ pub fn check_project(root: &Path) -> CheckResult {
     check_sources(sources)
 }
 
+/// Per-file front-end cache for incremental checking (F1): content hash
+/// -> parsed AST + file-local diagnostics. The global phases (resolve,
+/// compose, check) always rerun — they are cross-file by definition and
+/// cheap next to parsing.
+#[derive(Default)]
+pub struct IncrementalCache {
+    entries: BTreeMap<String, (u64, Option<resolved::FileEntry>, Vec<diag::Diag>)>,
+}
+
+fn fnv1a(s: &str) -> u64 {
+    let mut h: u64 = 0xcbf29ce484222325;
+    for b in s.as_bytes() {
+        h ^= *b as u64;
+        h = h.wrapping_mul(0x100000001b3);
+    }
+    h
+}
+
+/// `check_sources` with a per-file cache: unchanged files skip the lexer
+/// and parser entirely. This is the F1 path — a single-file change in a
+/// large project re-parses one file and re-runs only the global phases.
+pub fn check_sources_incremental(
+    sources: Vec<(String, String)>,
+    cache: &mut IncrementalCache,
+) -> CheckResult {
+    let mut diags: Vec<diag::Diag> = Vec::new();
+    let mut files: Vec<resolved::FileEntry> = Vec::new();
+
+    let live: std::collections::BTreeSet<String> =
+        sources.iter().map(|(p, _)| p.clone()).collect();
+    cache.entries.retain(|p, _| live.contains(p));
+
+    for (path, src) in &sources {
+        let h = fnv1a(src);
+        let hit = cache
+            .entries
+            .get(path)
+            .filter(|(ch, _, _)| *ch == h)
+            .cloned();
+        let (entry, file_diags) = match hit {
+            Some((_, e, d)) => (e, d),
+            None => {
+                let (toks, mut lex_diags) = lexer::lex(path, src);
+                let (file_ast, mut parse_diags) = parser::parse(path, &toks);
+                lex_diags.append(&mut parse_diags);
+                let entry = file_ast.map(|ast| resolved::FileEntry {
+                    path: path.clone(),
+                    ast,
+                });
+                cache
+                    .entries
+                    .insert(path.clone(), (h, entry.clone(), lex_diags.clone()));
+                (entry, lex_diags)
+            }
+        };
+        diags.extend(file_diags);
+        if let Some(e) = entry {
+            files.push(e);
+        }
+    }
+
+    finish_check(files, diags)
+}
+
 /// Check in-memory sources: `(relative path, contents)`. This is the entry
 /// point tests use; `check_project` is a thin wrapper over it.
 pub fn check_sources(sources: Vec<(String, String)>) -> CheckResult {
@@ -111,6 +178,11 @@ pub fn check_sources(sources: Vec<(String, String)>) -> CheckResult {
         }
     }
 
+    finish_check(files, diags)
+}
+
+/// The global phases shared by full and incremental checking.
+fn finish_check(files: Vec<resolved::FileEntry>, mut diags: Vec<diag::Diag>) -> CheckResult {
     let (program, mut resolve_diags) = resolve::resolve(files);
     diags.append(&mut resolve_diags);
 

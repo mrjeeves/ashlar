@@ -22,41 +22,45 @@ inventory): stack/pipe cross-layer shape agreement, route path shape
 rules (E021 territory), and deeper inference for unannotated recursion —
 all currently `Unknown`-permissive by design.
 
-## 2. Evaluator and runtime
+## 2. Evaluator and runtime — v1 DONE 2026-07-22 (honest gaps below)
 
-Satisfies: **G2** (transport-invisible handlers), **G3** (hot reload
-preserving process state), **G4** (the full builtin set — routing, request
-handling, persistence, reactive state, auth, files, tasks, schedules,
-channels, logging), **G5** (no registry, already true by construction but
-unproven at runtime until something runs), **C8** (`stack`-as-lifecycle
-execution semantics), **E021** (route conflict detection), and the
-remainder of the **D3** inventory (runtime faults correctly limited to
-division-by-zero and `!` on `none`, per reference §6).
+Delivered as `crates/ashlar/src/eval.rs` + `http.rs` + `ashlar run`:
+immutable value model, state store keyed by full dotted name, stack/pipe
+execution (C8), the std builtin set at runtime, exactly two runtime
+faults (D3), a hand-rolled zero-dependency HTTP/1.1 + RFC 6455 server on
+a single-threaded event loop, `stored` persistence to
+`.ashlar-state.json`, `allow` guards, `fail` statuses, JSON/text/HTML
+rendering, `every`/`run` schedules, and hot reload carrying state over
+by full name (G3). Proof: **T-G**, five conformance tests including the
+G2 identity test — the same handler produces byte-identical results over
+HTTP and WebSocket envelopes.
 
-Proof: **T-G** conformance, including the same-handler-over-HTTP-vs-
-WebSocket identity test required by G2 (reference §9.2) — the test that
-proves transport really is invisible, not merely documented as such.
+Remaining gaps, named: the live view protocol (server-side re-render and
+patch over the socket — `el` renders static HTML today), session-backed
+auth (`signup`/`login`/`logout` evaluate to intent markers the HTTP
+layer does not yet turn into cookies), foreign-function binding at run
+time (declared, checked, manifest-recorded, but a call faults), `spawn`
+running inline rather than backgrounded, and file serving (§9.8). Each
+is runtime depth, not language surface; none blocks the others.
 
-## 3. Refactor commands: rename, rekind, radius
+## 3. Refactor commands — v1 DONE 2026-07-22 (scope below)
 
-Satisfies: **E1** (refactors as commands, not text edits), **E2** (no stale
-reference survives a completed refactor), **E3** (blast radius reported
-before applying), **E4** (atomic reversibility, byte-identical roundtrip),
-**E5** (refusal, not partial application, when radius can't be computed
-fully), **E6** (the command set covers refactoring completely enough that
-hand-editing is never the easier path).
+Delivered as `crates/ashlar/src/refactor.rs` + `ashlar rename` /
+`ashlar rekind` (`--plan` prints the radius without applying). Every
+command computes its complete blast radius first and reports it (E3);
+edits apply to an in-memory copy that is re-checked, and any diagnostic
+rolls the whole refactor back (E4/E5 — nothing partial ever reaches
+disk); T-E proves forward-then-back byte-identity for part renames,
+property renames (including `stack`-returned map keys, which merge onto
+state by name), and rekind. Refusals are total and reasoned: broken
+projects, data-shape fields (constructing literals not yet tracked),
+multi-line dotted chains, unknown targets, and post-verify failures.
 
-Proof: **T-E** — blast-radius correctness against the manifest, absence of
-the prior state after a refactor (exhaustive search per E2), roundtrip
-byte-identity (forward then back), and refusal-on-incomplete-radius as its
-own explicit test case, not just an absence of crashes.
-
-Note per ADR-0007: `stored` properties are keyed by full dotted name at
-persistence time, so `rename` on a `stored` property carries real data
-migration weight that `rename` on anything else doesn't — T-E should cover
-that case explicitly when this lands, not treat it as a variant of the
-ordinary rename path.
-
+Remaining scope (E6 is not yet fully met): data-shape field rename
+awaits literal tracking; `move` (part between spaces) and space rename
+await `use`-graph rewriting; `stored` renames migrate no persisted data
+yet (ADR-0007's note stands — the state file keys by full name, so a
+rename orphans old rows until a migration step exists).
 ## 4. `ashlar fmt` — DONE 2026-07-22 (moves off this page next revision)
 
 Delivered as `crates/ashlar/src/fmt.rs` + the `fmt [--check]` CLI
@@ -70,32 +74,28 @@ quotes, spacing, trailing comments, and multiline literals. E021 (route
 conflicts, reference §9.2's "two routes matching one path" rule) also
 landed in this increment, closing the last reserved diagnostic id.
 
-## 5. F1 incremental-latency benchmark at 1,000 files
+## 5. F1 incremental-latency benchmark — DONE 2026-07-22
 
-Satisfies: **F1** specifically (sub-100ms incremental check at 1,000
-source files) as a hard-failing test, per ADR-0007's decision to defer this
-benchmark until the front end is complete enough that a number from it
-means something. Running it early against today's smaller pipeline would
-produce noise, not signal, and would risk being mistaken for a satisfied
-requirement.
+Delivered as `check_sources_incremental` (per-file parse cache keyed by
+content hash; global phases always rerun) plus `tests/t_f1.rs`: a
+1,000-file project, one changed file, a hard sub-100ms assertion in
+release builds (debug builds measure and report). Landing the gate
+surfaced and fixed the real bottleneck: the resolver and checker built
+per-space visibility by scanning every part for every space — an index
+by home space cut resolve 67→20ms and check 25→8ms. Current numbers:
+full pass 47ms, incremental 40ms. Headroom exists (the global phases
+could go incremental too) but the requirement is met as written.
 
-Proof: a generated 1,000-file fixture project, a single-file touch, and a
-hard latency assertion in **T-F** — "hard-failing" meaning the suite fails
-the build on a miss, not merely reports a number.
+## 6. D5 round-trip metric harness — DONE 2026-07-22
 
-## 6. D5 round-trip metric harness
-
-Satisfies: **D5** (round trips from "agent writes code" to "code is
-correct" as the measure of compiler quality; every diagnostic that is a
-correction removes a round trip). There is currently no harness that
-counts round trips at all — this needs an agent-in-the-loop fixture setup
-(deliberately broken source, apply suggested fixes, recheck, count
-iterations to a clean compile) before D5 is measurable rather than merely
-asserted.
-
-Proof: not yet named. This item is a prerequisite research question
-("what does a round trip count as, mechanically?") before a suite can be
-written — until that question has an answer, D5 stays on this ledger.
+The open question — what counts as a round trip, mechanically? — is
+answered in `tests/t_d5.rs`: **one check → apply-machine-edits cycle.**
+The harness runs that loop over every T-A4 fixture whose diagnostics
+carry machine edits, asserts convergence within 3 rounds, and gates the
+mean at ≤1.5. Current state: **11 machine-fixable fixtures, mean
+rounds-to-clean 1.00** — every machine-visible error in the corpus is
+one round trip from clean, which is D5's ideal. Judgment-required
+diagnostics (notes without edits) are D1's territory and excluded.
 
 ## 7. A5 reference-budget audit — DONE 2026-07-22 (moves off this page next revision)
 

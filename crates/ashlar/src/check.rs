@@ -267,17 +267,25 @@ struct Tables {
 
 impl Tables {
     fn build(program: &Program, composed: &BTreeMap<String, ComposedPart>) -> Tables {
+        // Home-space index first: linear in (spaces × closure), not
+        // (spaces × parts) — this is on the F1 path.
+        let mut parts_by_home: BTreeMap<&str, Vec<&String>> = BTreeMap::new();
+        for (full, info) in &program.parts {
+            parts_by_home.entry(info.home.as_str()).or_default().push(full);
+        }
         let mut bare: BTreeMap<String, BTreeMap<String, String>> = BTreeMap::new();
         let mut fulls: BTreeMap<String, Vec<String>> = BTreeMap::new();
         for space in program.spaces.keys() {
             let closure = &program.spaces[space].closure;
             let mut b: BTreeMap<String, Vec<String>> = BTreeMap::new();
             let mut f: Vec<String> = Vec::new();
-            for (full, info) in &program.parts {
-                if info.home == *space || closure.contains(&info.home) {
+            let visible = std::iter::once(space.as_str())
+                .chain(closure.iter().map(|s| s.as_str()));
+            for home in visible {
+                for full in parts_by_home.get(home).into_iter().flatten() {
                     let bn = full.rsplit('.').next().unwrap_or(full).to_string();
-                    b.entry(bn).or_default().push(full.clone());
-                    f.push(full.clone());
+                    b.entry(bn).or_default().push((*full).clone());
+                    f.push((*full).clone());
                 }
             }
             for p in STD_PARTS {
