@@ -36,6 +36,8 @@ pub enum V {
     Fn(Rc<FnVal>),
     /// A part singleton, addressed by full name; fields resolve lazily.
     Part(String),
+    /// A foreign function by full name, bound at first call (§9.10).
+    ForeignFn(String),
 }
 
 #[derive(Debug, PartialEq)]
@@ -119,6 +121,16 @@ pub struct Evaluator<'a> {
     /// Functions queued by `spawn`, drained by the serve loop after the
     /// current request completes (§9.7).
     pub spawn_queue: Vec<V>,
+    /// Read dependencies: state key -> instances whose last render read it.
+    /// State keys are `space.Part.prop` (singletons) and
+    /// `instance:<id>.<prop>` (per-instance).
+    pub deps: BTreeMap<String, std::collections::BTreeSet<String>>,
+    /// The instance currently rendering (reads record into `deps`).
+    pub current_render: Option<String>,
+    /// Project root for `foreign/<space>.so` resolution (§9.10).
+    pub foreign_root: Option<std::path::PathBuf>,
+    /// dlopen handles by space, opened lazily.
+    foreign_libs: BTreeMap<String, usize>,
     counter: u64,
 }
 
@@ -138,6 +150,10 @@ impl<'a> Evaluator<'a> {
             current_session: None,
             pending_cookie: None,
             spawn_queue: Vec::new(),
+            deps: BTreeMap::new(),
+            current_render: None,
+            foreign_root: None,
+            foreign_libs: BTreeMap::new(),
             counter: 0,
         };
         ev.init_state();
@@ -344,6 +360,42 @@ impl<'a> Evaluator<'a> {
             self.state.dirty = true;
         }
         self.state.values.insert(key.to_string(), v);
+        self.dirty_readers(key);
+    }
+
+    /// Record a state read during a render (the §9.4 dependency edge).
+    fn record_read(&mut self, key: &str) {
+        if let Some(inst) = &self.current_render {
+            self.deps
+                .entry(key.to_string())
+                .or_default()
+                .insert(inst.clone());
+        }
+    }
+
+    /// Every instance whose last render read `key` re-renders (§9.4:
+    /// "every view that read a changed state property").
+    fn dirty_readers(&mut self, key: &str) {
+        if let Some(readers) = self.deps.get(key) {
+            for r in readers.clone() {
+                if !self.dirty_instances.contains(&r) {
+                    self.dirty_instances.push(r);
+                }
+            }
+        }
+    }
+
+    /// Begin dependency tracking for one instance's render: its old edges
+    /// drop so a render that stopped reading a key stops depending on it.
+    pub fn begin_render(&mut self, id: &str) {
+        for readers in self.deps.values_mut() {
+            readers.remove(id);
+        }
+        self.current_render = Some(id.to_string());
+    }
+
+    pub fn end_render(&mut self) {
+        self.current_render = None;
     }
 
     fn emit_log(&mut self, level: &str, msg: &str, payload: Option<&V>) {
@@ -567,9 +619,12 @@ impl<'a> Evaluator<'a> {
     }
 
     fn eval_nameref(&mut self, env: &mut Env, segs: &[String]) -> R {
-        // Longest-prefix: full part names first.
+        // Longest-prefix: foreign full names, then full part names.
         for k in (2..=segs.len()).rev() {
             let prefix = segs[..k].join(".");
+            if self.program.foreigns.contains_key(&prefix) && k == segs.len() {
+                return Ok(V::ForeignFn(prefix));
+            }
             if self.composed.contains_key(&prefix) {
                 let mut v = V::Part(prefix);
                 for name in &segs[k..] {
@@ -584,10 +639,21 @@ impl<'a> Evaluator<'a> {
             self.instances.get(id).and_then(|inst| {
                 inst.state
                     .get(n)
-                    .or_else(|| inst.fields.get(n))
-                    .cloned()
+                    .map(|v| (v.clone(), true))
+                    .or_else(|| inst.fields.get(n).map(|v| (v.clone(), false)))
             })
         });
+        let instance_hit = match instance_hit {
+            Some((v, is_state)) => {
+                if is_state {
+                    if let Some(id) = env.instance.clone() {
+                        self.record_read(&format!("instance:{}.{}", id, n));
+                    }
+                }
+                Some(v)
+            }
+            None => None,
+        };
         let mut v = if let Some(local) = env.get(n) {
             local.clone()
         } else if let Some(iv) = instance_hit {
@@ -597,6 +663,8 @@ impl<'a> Evaluator<'a> {
             self.field(V::Part(part), n)?
         } else if let Some(full) = self.unique_bare_part(n) {
             V::Part(full)
+        } else if let Some(full) = self.unique_bare_foreign(n) {
+            V::ForeignFn(full)
         } else if n == "log" {
             V::Part("std.log".to_string())
         } else {
@@ -613,6 +681,20 @@ impl<'a> Evaluator<'a> {
             .get(part)
             .map(|cp| cp.props.contains_key(prop))
             .unwrap_or(false)
+    }
+
+    fn unique_bare_foreign(&self, bare: &str) -> Option<String> {
+        let mut hits = self
+            .program
+            .foreigns
+            .keys()
+            .filter(|f| f.rsplit('.').next() == Some(bare));
+        let first = hits.next()?;
+        if hits.next().is_some() {
+            None
+        } else {
+            Some(first.clone())
+        }
     }
 
     fn unique_bare_part(&self, bare: &str) -> Option<String> {
@@ -634,8 +716,9 @@ impl<'a> Evaluator<'a> {
         match base {
             V::Part(full) => {
                 let key = format!("{}.{}", full, name);
-                if let Some(v) = self.state.values.get(&key) {
-                    return Ok(v.clone());
+                if let Some(v) = self.state.values.get(&key).cloned() {
+                    self.record_read(&key);
+                    return Ok(v);
                 }
                 if let Some(e) = self.prop_value_expr(&full, name) {
                     return self.eval_in_part(&full, &e);
@@ -670,6 +753,10 @@ impl<'a> Evaluator<'a> {
     /// Call a function value, overriding the instance context (event
     /// dispatch runs a handler in the instance that rendered it).
     pub fn call_with_instance(&mut self, f: V, args: Vec<V>, instance: Option<String>) -> R {
+        if let V::ForeignFn(full) = &f {
+            let full = full.clone();
+            return self.invoke_foreign(&full, args);
+        }
         let V::Fn(fv) = f else {
             return Err(Fault::new(format!(
                 "internal: {} is not callable.",
@@ -733,8 +820,9 @@ impl<'a> Evaluator<'a> {
                             inst.state.insert(name.clone(), v);
                         }
                         if !self.dirty_instances.contains(&id) {
-                            self.dirty_instances.push(id);
+                            self.dirty_instances.push(id.clone());
                         }
+                        self.dirty_readers(&format!("instance:{}.{}", id, name));
                         return Ok(Flow::Normal);
                     }
                 }
@@ -1099,7 +1187,97 @@ impl<'a> Evaluator<'a> {
     }
 }
 
+// Raw dl bindings (glibc; libdl is part of libc on modern systems). The
+// only unsafe in the codebase, confined to the §9.10 boundary.
+extern "C" {
+    fn dlopen(filename: *const std::os::raw::c_char, flags: std::os::raw::c_int) -> *mut std::os::raw::c_void;
+    fn dlsym(handle: *mut std::os::raw::c_void, symbol: *const std::os::raw::c_char) -> *mut std::os::raw::c_void;
+}
+const RTLD_NOW: std::os::raw::c_int = 2;
+
+type ForeignAbi = unsafe extern "C" fn(*const std::os::raw::c_char) -> *mut std::os::raw::c_char;
+
 impl<'a> Evaluator<'a> {
+    /// Call a foreign function (§9.10): the manifest-recorded binding is
+    /// `foreign/<space>.so` under the project root; the C ABI is
+    /// `char* name(const char* args_json)` — arguments as a JSON array,
+    /// return as JSON, decoded and shape-checked at the call site. A
+    /// mismatch is a runtime fault, exactly as the reference states.
+    fn invoke_foreign(&mut self, full: &str, args: Vec<V>) -> R {
+        let Some(info) = self.program.foreigns.get(full) else {
+            return Err(Fault::new(format!("internal: unknown foreign `{}`.", full)));
+        };
+        let space = info.space.clone();
+        let decl = &self.program.files[info.file_idx].ast.foreigns[info.foreign_idx];
+        let name = decl.name.clone();
+        let ret_shape = decl.ret.clone();
+        if args.len() != decl.params.len() {
+            return Err(Fault::new(format!(
+                "foreign `{}` takes {} argument(s), got {}.",
+                full,
+                decl.params.len(),
+                args.len()
+            )));
+        }
+
+        let handle = match self.foreign_libs.get(&space) {
+            Some(h) => *h,
+            None => {
+                let Some(root) = &self.foreign_root else {
+                    return Err(Fault::new(format!(
+                        "foreign `{}` is not bound (no project root for foreign libraries).",
+                        full
+                    )));
+                };
+                let path = root.join("foreign").join(format!("{}.so", space));
+                let c_path = std::ffi::CString::new(path.to_string_lossy().as_bytes())
+                    .map_err(|_| Fault::new("internal: bad library path.".to_string()))?;
+                let h = unsafe { dlopen(c_path.as_ptr(), RTLD_NOW) };
+                if h.is_null() {
+                    return Err(Fault::new(format!(
+                        "foreign library `foreign/{}.so` could not be loaded.",
+                        space
+                    )));
+                }
+                self.foreign_libs.insert(space.clone(), h as usize);
+                h as usize
+            }
+        };
+
+        let c_name = std::ffi::CString::new(name.as_bytes())
+            .map_err(|_| Fault::new("internal: bad symbol name.".to_string()))?;
+        let sym = unsafe { dlsym(handle as *mut std::os::raw::c_void, c_name.as_ptr()) };
+        if sym.is_null() {
+            return Err(Fault::new(format!(
+                "foreign `{}` has no symbol `{}` in `foreign/{}.so`.",
+                full, name, space
+            )));
+        }
+        let f: ForeignAbi = unsafe { std::mem::transmute(sym) };
+
+        let args_json = to_json(&V::List(args));
+        let c_args = std::ffi::CString::new(args_json)
+            .map_err(|_| Fault::new("internal: argument encoding.".to_string()))?;
+        let out = unsafe { f(c_args.as_ptr()) };
+        if out.is_null() {
+            return Err(Fault::new(format!("foreign `{}` returned nothing.", full)));
+        }
+        let text = unsafe { std::ffi::CStr::from_ptr(out) }
+            .to_string_lossy()
+            .to_string();
+        let value = from_json(&text).ok_or_else(|| {
+            Fault::new(format!("foreign `{}` returned malformed JSON.", full))
+        })?;
+        if !value_fits_shape(&value, &ret_shape) {
+            return Err(Fault::new(format!(
+                "foreign `{}` returned a value that does not fit `{}`.",
+                full,
+                shape_name(&ret_shape)
+            )));
+        }
+        Ok(value)
+    }
+
     fn open_session(&mut self, user_id: &str) {
         let token = self.fresh_id("s");
         self.sessions.insert(token.clone(), user_id.to_string());
@@ -1161,6 +1339,41 @@ fn kind_of(v: &V) -> &'static str {
         V::Map(_) => "a map",
         V::Fn(_) => "a function",
         V::Part(_) => "a part",
+        V::ForeignFn(_) => "a foreign function",
+    }
+}
+
+/// Runtime shape check for values crossing the foreign boundary (§9.10).
+/// `data` admits every JSON-decodable value; part shapes check as maps.
+fn value_fits_shape(v: &V, sh: &crate::ast::SShape) -> bool {
+    use crate::ast::Shape;
+    match (&sh.shape, v) {
+        (Shape::Data, _) => !matches!(v, V::Fn(_) | V::Part(_) | V::ForeignFn(_)),
+        (Shape::Text, V::Text(_)) => true,
+        (Shape::Number, V::Number(_)) => true,
+        (Shape::Bool, V::Bool(_)) => true,
+        (Shape::Opt(_), V::None) => true,
+        (Shape::Opt(i), v) => value_fits_shape(v, i),
+        (Shape::List(i), V::List(xs)) => xs.iter().all(|x| value_fits_shape(x, i)),
+        (Shape::Map(i), V::Map(m)) => m.values().all(|x| value_fits_shape(x, i)),
+        (Shape::Part(_), V::Map(_)) => true, // field-level checking is the checker's future work
+        (Shape::Fn(..), _) => false,         // functions cannot cross the boundary
+        _ => false,
+    }
+}
+
+fn shape_name(sh: &crate::ast::SShape) -> String {
+    use crate::ast::Shape;
+    match &sh.shape {
+        Shape::Text => "text".into(),
+        Shape::Number => "number".into(),
+        Shape::Bool => "bool".into(),
+        Shape::Data => "data".into(),
+        Shape::List(i) => format!("[{}]", shape_name(i)),
+        Shape::Map(i) => format!("{{text: {}}}", shape_name(i)),
+        Shape::Opt(i) => format!("{}?", shape_name(i)),
+        Shape::Part(n) => n.join("."),
+        Shape::Fn(..) => "a function shape".into(),
     }
 }
 
@@ -1180,7 +1393,7 @@ pub fn to_text(v: &V) -> String {
         V::Text(s) => s.clone(),
         V::None => "none".to_string(),
         V::Number(_) | V::Bool(_) | V::List(_) | V::Map(_) => to_json(v),
-        V::Fn(_) => "<function>".to_string(),
+        V::Fn(_) | V::ForeignFn(_) => "<function>".to_string(),
         V::Part(p) => p.clone(),
     }
 }
@@ -1243,7 +1456,7 @@ pub fn to_json(v: &V) -> String {
                 .collect();
             format!("{{{}}}", inner.join(","))
         }
-        V::Fn(_) => "null".to_string(),
+        V::Fn(_) | V::ForeignFn(_) => "null".to_string(),
         V::Part(p) => {
             let mut out = String::new();
             crate::diag::push_json_str(&mut out, p);

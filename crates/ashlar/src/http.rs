@@ -263,6 +263,60 @@ pub fn ws_read_text(stream: &mut TcpStream) -> Option<String> {
     }
 }
 
+/// Parse one complete frame out of a connection buffer, if present.
+/// Returns (opcode, payload) and drains the consumed bytes.
+pub fn ws_frame_from_buf(buf: &mut Vec<u8>) -> Option<(u8, Vec<u8>)> {
+    if buf.len() < 2 {
+        return None;
+    }
+    let opcode = buf[0] & 0x0F;
+    let masked = buf[1] & 0x80 != 0;
+    let mut len = (buf[1] & 0x7F) as u64;
+    let mut off = 2usize;
+    if len == 126 {
+        if buf.len() < off + 2 {
+            return None;
+        }
+        len = u16::from_be_bytes([buf[off], buf[off + 1]]) as u64;
+        off += 2;
+    } else if len == 127 {
+        if buf.len() < off + 8 {
+            return None;
+        }
+        let mut b = [0u8; 8];
+        b.copy_from_slice(&buf[off..off + 8]);
+        len = u64::from_be_bytes(b);
+        off += 8;
+    }
+    if len > 1 << 20 {
+        // Oversized frame: poison the connection by consuming everything.
+        buf.clear();
+        return Some((8, Vec::new()));
+    }
+    let mask = if masked {
+        if buf.len() < off + 4 {
+            return None;
+        }
+        let m = [buf[off], buf[off + 1], buf[off + 2], buf[off + 3]];
+        off += 4;
+        Some(m)
+    } else {
+        None
+    };
+    let total = off + len as usize;
+    if buf.len() < total {
+        return None;
+    }
+    let mut payload = buf[off..total].to_vec();
+    if let Some(m) = mask {
+        for (i, b) in payload.iter_mut().enumerate() {
+            *b ^= m[i % 4];
+        }
+    }
+    buf.drain(..total);
+    Some((opcode, payload))
+}
+
 pub fn ws_write_text(stream: &mut TcpStream, text: &str) {
     ws_write_frame(stream, 1, text.as_bytes());
 }
@@ -483,7 +537,10 @@ pub fn render_instance(ev: &mut Evaluator, id: &str) -> Result<String, Fault> {
     for k in stale {
         ev.handlers.remove(&k);
     }
-    let v = ev.call_instance_prop(id, "view", vec![])?;
+    ev.begin_render(id);
+    let v = ev.call_instance_prop(id, "view", vec![]);
+    ev.end_render();
+    let v = v?;
     let inner = render_el(ev, &v, id)?;
     Ok(format!(
         "<div data-ash-instance=\"{}\">{}</div>",
@@ -632,6 +689,7 @@ pub fn serve(
             .ok_or_else(|| "no part declares `port`; nothing to run.".to_string())?;
 
         let mut ev = Evaluator::new(&result.program, &result.composed);
+        ev.foreign_root = Some(root.clone());
 
         // Persistence: load stored values (shape validation happened in
         // the checker; unknown keys are ignored).
@@ -716,20 +774,88 @@ pub fn serve(
 
         let mut last_mtime = source_mtime(&root);
         let mut last_scan = std::time::Instant::now();
+        let mut ws_conns: Vec<WsConn> = Vec::new();
         let exit = 'inner: loop {
             if stop.load(Ordering::Relaxed) {
                 break 'inner Exit::Stop;
             }
             // Accept one connection if pending.
             match listener.as_ref().unwrap().accept() {
-                Ok((mut conn, _)) => {
+                Ok((conn, _)) => {
                     let _ = conn.set_nonblocking(false);
-                    handle_conn(&mut ev, &root, &mut conn);
+                    if let Some(ws) = handle_conn(&mut ev, &root, conn) {
+                        ws_conns.push(ws);
+                    }
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     std::thread::sleep(std::time::Duration::from_millis(5));
                 }
                 Err(_) => {}
+            }
+            // Poll live sockets: read available bytes, process complete
+            // frames, drop closed connections. An open socket never
+            // blocks the loop (§9.4's protocol depends on this).
+            let mut tmp = [0u8; 4096];
+            let mut i = 0;
+            while i < ws_conns.len() {
+                let mut drop_conn = false;
+                let mut replies: Vec<(String, Vec<(String, String)>)> = Vec::new();
+                loop {
+                    match ws_conns[i].stream.read(&mut tmp) {
+                        Ok(0) => {
+                            drop_conn = true;
+                            break;
+                        }
+                        Ok(n) => ws_conns[i].buf.extend_from_slice(&tmp[..n]),
+                        Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                        Err(_) => {
+                            drop_conn = true;
+                            break;
+                        }
+                    }
+                }
+                while let Some((opcode, payload)) = ws_frame_from_buf(&mut ws_conns[i].buf) {
+                    match opcode {
+                        1 => {
+                            if let Ok(text) = String::from_utf8(payload) {
+                                let headers = ws_conns[i].headers.clone();
+                                let session = ws_conns[i].session.clone();
+                                let (reply, patches) =
+                                    process_ws_text(&mut ev, &text, &headers, &session);
+                                replies.push((reply, patches));
+                            }
+                        }
+                        8 => {
+                            drop_conn = true;
+                        }
+                        9 => {
+                            let mut pong = vec![0x8Au8, payload.len() as u8];
+                            pong.extend_from_slice(&payload);
+                            let _ = ws_conns[i].stream.write_all(&pong);
+                        }
+                        _ => {}
+                    }
+                }
+                for (reply, patches) in replies {
+                    if !ws_send(&mut ws_conns[i].stream, &reply) {
+                        drop_conn = true;
+                    }
+                    // View patches broadcast to every OTHER live socket
+                    // (§9.4: every view that read a changed property).
+                    if !patches.is_empty() {
+                        let msg = patches_json(&patches);
+                        for (j, other) in ws_conns.iter_mut().enumerate() {
+                            if j != i {
+                                let _ = ws_send(&mut other.stream, &msg);
+                            }
+                        }
+                    }
+                }
+                if drop_conn {
+                    ws_conns.remove(i);
+                } else {
+                    i += 1;
+                }
             }
             // Scheduled tasks due?
             let now = std::time::Instant::now();
@@ -748,6 +874,25 @@ pub fn serve(
             } {
                 if let Err(fault) = ev.call(f, vec![]) {
                     eprintln!("spawned task failed: {}", fault);
+                }
+            }
+            // Instances dirtied outside an event (schedules, spawned
+            // tasks) re-render and broadcast.
+            if !ev.dirty_instances.is_empty() {
+                let dirty: Vec<String> = std::mem::take(&mut ev.dirty_instances);
+                let mut patches = Vec::new();
+                for id in dirty {
+                    if ev.instances.contains_key(&id) {
+                        if let Ok(html) = render_instance(&mut ev, &id) {
+                            patches.push((id, html));
+                        }
+                    }
+                }
+                if !patches.is_empty() {
+                    let msg = patches_json(&patches);
+                    for conn in ws_conns.iter_mut() {
+                        let _ = ws_send(&mut conn.stream, &msg);
+                    }
                 }
             }
             // Flush stored state.
@@ -903,10 +1048,25 @@ fn session_from_headers(headers: &BTreeMap<String, String>) -> Option<String> {
     })
 }
 
-/// Serve one connection: plain HTTP, or a WebSocket session speaking
-/// `{path, data}` envelopes to the same routes (§9.2, G2).
-fn handle_conn(ev: &mut Evaluator, root: &std::path::Path, conn: &mut TcpStream) {
-    let Some(req) = read_request(conn) else { return };
+/// A live WebSocket connection multiplexed on the event loop: the loop
+/// polls its buffer for complete frames, so an open socket never blocks
+/// other requests, schedules, or reloads.
+pub struct WsConn {
+    pub stream: TcpStream,
+    pub buf: Vec<u8>,
+    pub session: Option<String>,
+    pub headers: BTreeMap<String, String>,
+}
+
+/// Serve one accepted connection. An HTTP request is answered in place;
+/// a WebSocket upgrade completes its handshake and returns the
+/// connection for the event loop to poll.
+fn handle_conn(
+    ev: &mut Evaluator,
+    root: &std::path::Path,
+    mut conn: TcpStream,
+) -> Option<WsConn> {
+    let req = read_request(&mut conn)?;
 
     if req
         .headers
@@ -921,74 +1081,18 @@ fn handle_conn(ev: &mut Evaluator, root: &std::path::Path, conn: &mut TcpStream)
             accept
         );
         let _ = conn.write_all(head.as_bytes());
-        ev.current_session = session_from_headers(&req.headers);
-        while let Some(text) = ws_read_text(conn) {
-            let envelope = from_json(&text).unwrap_or(V::None);
-            // Browser event envelope (§9.4): run the handler, patch.
-            if let V::Map(m) = &envelope {
-                if let Some(V::Map(e)) = m.get("event") {
-                    let instance = e.get("instance").map(to_text).unwrap_or_default();
-                    let hid = e.get("h").map(to_text).unwrap_or_default();
-                    let name = e.get("name").map(to_text).unwrap_or_default();
-                    let value = e.get("value").cloned().unwrap_or(V::None);
-                    let reply = match dispatch_event(ev, &instance, &hid, &name, value) {
-                        Ok(patches) => {
-                            let list = V::List(
-                                patches
-                                    .into_iter()
-                                    .map(|(id, html)| {
-                                        let mut p = BTreeMap::new();
-                                        p.insert("instance".to_string(), V::Text(id));
-                                        p.insert("html".to_string(), V::Text(html));
-                                        V::Map(p)
-                                    })
-                                    .collect(),
-                            );
-                            let mut m = BTreeMap::new();
-                            m.insert("patches".to_string(), list);
-                            V::Map(m)
-                        }
-                        Err(f) => {
-                            let mut m = BTreeMap::new();
-                            m.insert("status".to_string(), V::Number(f.status as f64));
-                            m.insert("error".to_string(), V::Text(f.message));
-                            V::Map(m)
-                        }
-                    };
-                    ws_write_text(conn, &to_json(&reply));
-                    continue;
-                }
-            }
-            let (path, data, method) = match &envelope {
-                V::Map(m) => (
-                    m.get("path").map(to_text).unwrap_or_default(),
-                    m.get("data").cloned().unwrap_or(V::None),
-                    m.get("method").map(to_text).unwrap_or_else(|| "get".to_string()),
-                ),
-                _ => (String::new(), V::None, "get".to_string()),
-            };
-            let reply = match dispatch(ev, &method, &path, data, &req.headers) {
-                Ok(v) => {
-                    let mut m = BTreeMap::new();
-                    m.insert("status".to_string(), V::Number(200.0));
-                    m.insert("data".to_string(), v);
-                    V::Map(m)
-                }
-                Err(f) => {
-                    let mut m = BTreeMap::new();
-                    m.insert("status".to_string(), V::Number(f.status as f64));
-                    m.insert("error".to_string(), V::Text(f.message));
-                    V::Map(m)
-                }
-            };
-            ws_write_text(conn, &to_json(&reply));
-        }
-        return;
+        let _ = conn.set_nonblocking(true);
+        return Some(WsConn {
+            session: session_from_headers(&req.headers),
+            headers: req.headers,
+            stream: conn,
+            buf: Vec::new(),
+        });
     }
 
     // Static files (§9.8) match by route prefix before dynamic dispatch.
-    if req.method == "GET" && try_serve_files(ev, root, &req.path, conn) {
-        return;
+    if req.method == "GET" && try_serve_files(ev, root, &req.path, &mut conn) {
+        return None;
     }
 
     let data = if req.body.is_empty() {
@@ -1013,10 +1117,10 @@ fn handle_conn(ev: &mut Evaluator, root: &std::path::Path, conn: &mut TcpStream)
                     };
                     extra.push(("set-cookie".to_string(), cookie));
                 }
-                write_response(conn, status, &ct, &extra, &body);
+                write_response(&mut conn, status, &ct, &extra, &body);
             }
             Err(f) => {
-                write_response(conn, f.status, "text/plain", &[], f.message.as_bytes());
+                write_response(&mut conn, f.status, "text/plain", &[], f.message.as_bytes());
             }
         },
         Err(f) => {
@@ -1028,7 +1132,106 @@ fn handle_conn(ev: &mut Evaluator, root: &std::path::Path, conn: &mut TcpStream)
                     s
                 }
             );
-            write_response(conn, f.status, "application/json", &[], body.as_bytes());
+            write_response(&mut conn, f.status, "application/json", &[], body.as_bytes());
         }
     }
+    None
+}
+
+/// Process one text envelope from a live socket; the reply JSON goes
+/// back on the same connection, and view patches broadcast to everyone.
+fn process_ws_text(
+    ev: &mut Evaluator,
+    text: &str,
+    headers: &BTreeMap<String, String>,
+    session: &Option<String>,
+) -> (String, Vec<(String, String)>) {
+    ev.current_session = session.clone();
+    let envelope = from_json(text).unwrap_or(V::None);
+    if let V::Map(m) = &envelope {
+        if let Some(V::Map(e)) = m.get("event") {
+            let instance = e.get("instance").map(to_text).unwrap_or_default();
+            let hid = e.get("h").map(to_text).unwrap_or_default();
+            let name = e.get("name").map(to_text).unwrap_or_default();
+            let value = e.get("value").cloned().unwrap_or(V::None);
+            return match dispatch_event(ev, &instance, &hid, &name, value) {
+                Ok(patches) => (patches_json(&patches), patches),
+                Err(f) => {
+                    let mut m = BTreeMap::new();
+                    m.insert("status".to_string(), V::Number(f.status as f64));
+                    m.insert("error".to_string(), V::Text(f.message));
+                    (to_json(&V::Map(m)), Vec::new())
+                }
+            };
+        }
+    }
+    let (path, data, method) = match &envelope {
+        V::Map(m) => (
+            m.get("path").map(to_text).unwrap_or_default(),
+            m.get("data").cloned().unwrap_or(V::None),
+            m.get("method").map(to_text).unwrap_or_else(|| "get".to_string()),
+        ),
+        _ => (String::new(), V::None, "get".to_string()),
+    };
+    let reply = match dispatch(ev, &method, &path, data, headers) {
+        Ok(v) => {
+            let mut m = BTreeMap::new();
+            m.insert("status".to_string(), V::Number(200.0));
+            m.insert("data".to_string(), v);
+            V::Map(m)
+        }
+        Err(f) => {
+            let mut m = BTreeMap::new();
+            m.insert("status".to_string(), V::Number(f.status as f64));
+            m.insert("error".to_string(), V::Text(f.message));
+            V::Map(m)
+        }
+    };
+    (to_json(&reply), Vec::new())
+}
+
+fn patches_json(patches: &[(String, String)]) -> String {
+    let list = V::List(
+        patches
+            .iter()
+            .map(|(id, html)| {
+                let mut p = BTreeMap::new();
+                p.insert("instance".to_string(), V::Text(id.clone()));
+                p.insert("html".to_string(), V::Text(html.clone()));
+                V::Map(p)
+            })
+            .collect(),
+    );
+    let mut m = BTreeMap::new();
+    m.insert("patches".to_string(), list);
+    to_json(&V::Map(m))
+}
+
+/// Write a text frame on a non-blocking stream, retrying on WouldBlock.
+fn ws_send(conn: &mut TcpStream, text: &str) -> bool {
+    let payload = text.as_bytes();
+    let mut frame = vec![0x81u8];
+    let len = payload.len();
+    if len < 126 {
+        frame.push(len as u8);
+    } else if len < 1 << 16 {
+        frame.push(126);
+        frame.extend_from_slice(&(len as u16).to_be_bytes());
+    } else {
+        frame.push(127);
+        frame.extend_from_slice(&(len as u64).to_be_bytes());
+    }
+    frame.extend_from_slice(payload);
+    let mut written = 0usize;
+    while written < frame.len() {
+        match conn.write(&frame[written..]) {
+            Ok(0) => return false,
+            Ok(n) => written += n,
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(std::time::Duration::from_millis(1));
+            }
+            Err(_) => return false,
+        }
+    }
+    true
 }

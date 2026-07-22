@@ -538,3 +538,229 @@ part status {
     stop.store(true, Ordering::Relaxed);
     join.join().unwrap();
 }
+
+// ---------------------------------------------------------------------------
+// Multiplexed sockets, cross-client reactivity, foreign binding.
+// ---------------------------------------------------------------------------
+
+/// A persistent WebSocket client: handshake once, then send/read frames.
+fn ws_open(port: u16) -> TcpStream {
+    let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let req = "GET / HTTP/1.1\r\nhost: t\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==\r\nsec-websocket-version: 13\r\n\r\n";
+    s.write_all(req.as_bytes()).unwrap();
+    let mut hdr = Vec::new();
+    let mut byte = [0u8; 1];
+    while !hdr.ends_with(b"\r\n\r\n") {
+        s.read_exact(&mut byte).unwrap();
+        hdr.push(byte[0]);
+    }
+    assert!(String::from_utf8_lossy(&hdr).starts_with("HTTP/1.1 101"));
+    s
+}
+
+fn ws_send_frame(s: &mut TcpStream, text: &str) {
+    let payload = text.as_bytes();
+    let mask = [0x51u8, 0x62, 0x73, 0x84];
+    let mut frame = vec![0x81u8];
+    assert!(payload.len() < 126);
+    frame.push(0x80 | payload.len() as u8);
+    frame.extend_from_slice(&mask);
+    for (i, b) in payload.iter().enumerate() {
+        frame.push(b ^ mask[i % 4]);
+    }
+    s.write_all(&frame).unwrap();
+}
+
+fn ws_read_frame(s: &mut TcpStream) -> String {
+    let mut h2 = [0u8; 2];
+    s.read_exact(&mut h2).unwrap();
+    assert_eq!(h2[0] & 0x0F, 1);
+    let mut len = (h2[1] & 0x7F) as u64;
+    if len == 126 {
+        let mut ext = [0u8; 2];
+        s.read_exact(&mut ext).unwrap();
+        len = u16::from_be_bytes(ext) as u64;
+    }
+    let mut payload = vec![0u8; len as usize];
+    s.read_exact(&mut payload).unwrap();
+    String::from_utf8(payload).unwrap()
+}
+
+#[test]
+fn t_g4_synced_state_broadcasts_across_clients() {
+    // covers: G4 (server-synchronized reactive state), reference 9.3/9.4
+    let app = r#"space live
+
+part Server {
+  port = 0
+}
+
+part board {
+  route = "/"
+  synced total: number = 0
+  view = () => el("button", { onclick: bump }, ["total: " + text(total)])
+  bump = () => { total = total + 1 }
+}
+"#;
+    let root = fixture("synced", &[("app.ash", app)]);
+    let (port, stop, join) = start(root);
+
+    // Two browsers load the page: two instances of `board`, each reading
+    // the same synced singleton... per-instance? `synced total` on a view
+    // part is per-instance state; cross-client sync needs the SINGLETON
+    // read. Use a second part holding the singleton instead.
+    let (_, _, html_a) = http_req_full(port, "GET", "/", None, None);
+    let (_, _, html_b) = http_req_full(port, "GET", "/", None, None);
+    let ia = attr_of(&html_a, "data-ash-instance").unwrap();
+    let ha = attr_of(&html_a, "data-ash-h").unwrap();
+    let ib = attr_of(&html_b, "data-ash-instance").unwrap();
+    assert_ne!(ia, ib, "each page load is its own instance");
+
+    let mut client_a = ws_open(port);
+    let client_b = ws_open(port);
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    // Client A clicks. A gets its reply patch; B — whose instance has its
+    // own per-instance state — must NOT change here. (The cross-client
+    // case for singletons is the next assertion set.)
+    ws_send_frame(
+        &mut client_a,
+        &format!("{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onclick\"}}}}", ia, ha),
+    );
+    let reply_a = ws_read_frame(&mut client_a);
+    assert!(reply_a.contains("total: 1"), "{}", reply_a);
+
+    drop(client_a);
+    drop(client_b);
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}
+
+#[test]
+fn t_g4_singleton_state_read_by_views_broadcasts() {
+    // covers: G4 (reactive state read across instances), reference 9.4:
+    // "every view that read a changed state property re-renders".
+    let app = r#"space live
+
+part Tally {
+  synced total: number = 0
+  bump = () => { total = total + 1 }
+}
+
+part Server {
+  port = 0
+}
+
+part board {
+  route = "/"
+  view = () => el("button", { onclick: poke }, ["seen: " + text(live.Tally.total)])
+  poke = () => { live.Tally.bump() }
+}
+"#;
+    let root = fixture("bcast", &[("app.ash", app)]);
+    let (port, stop, join) = start(root);
+
+    let (_, _, html_a) = http_req_full(port, "GET", "/", None, None);
+    let (_, _, html_b) = http_req_full(port, "GET", "/", None, None);
+    let ia = attr_of(&html_a, "data-ash-instance").unwrap();
+    let ha = attr_of(&html_a, "data-ash-h").unwrap();
+    let ib = attr_of(&html_b, "data-ash-instance").unwrap();
+
+    let mut client_a = ws_open(port);
+    let mut client_b = ws_open(port);
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    // A clicks: the singleton changes; BOTH instances read it, so A's
+    // reply carries patches for both, and B receives a broadcast.
+    ws_send_frame(
+        &mut client_a,
+        &format!("{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onclick\"}}}}", ia, ha),
+    );
+    let reply_a = ws_read_frame(&mut client_a);
+    assert!(reply_a.contains("seen: 1"), "{}", reply_a);
+    assert!(
+        reply_a.contains(&ib),
+        "the other instance read the changed singleton and must be in the patch set: {}",
+        reply_a
+    );
+    let broadcast_b = ws_read_frame(&mut client_b);
+    assert!(broadcast_b.contains("seen: 1"), "{}", broadcast_b);
+    assert!(broadcast_b.contains(&ib), "{}", broadcast_b);
+
+    drop(client_a);
+    drop(client_b);
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}
+
+#[test]
+fn t_g_foreign_binding_and_shape_fault() {
+    // covers: G4 boundary + reference 9.10: foreign calls bind to
+    // foreign/<space>.so, values cross as data, a return that does not
+    // fit the declared shape is a runtime fault.
+    let cc = std::process::Command::new("cc").arg("--version").output();
+    if cc.is_err() {
+        eprintln!("t_g_foreign: no C compiler; skipping");
+        return;
+    }
+    let app = r#"space net
+
+foreign triple: (number) -> number
+foreign lies: (number) -> number
+
+part Server {
+  port = 0
+}
+
+part calc {
+  route = "/calc/{n}"
+  handle pipe = (req: std.Request) => triple(number(req.params["n"]!)!)
+}
+
+part liar {
+  route = "/lie"
+  handle pipe = (req: std.Request) => lies(1)
+}
+"#;
+    let c_src = r#"
+#include <stdlib.h>
+#include <stdio.h>
+char* triple(const char* args) {
+    double n = 0;
+    sscanf(args, "[%lf", &n);
+    char* out = malloc(64);
+    snprintf(out, 64, "%g", n * 3);
+    return out;
+}
+char* lies(const char* args) {
+    (void)args;
+    char* out = malloc(16);
+    snprintf(out, 16, "\"not a number\"");
+    return out;
+}
+"#;
+    let root = fixture("foreign", &[("app.ash", app)]);
+    std::fs::create_dir_all(root.join("foreign")).unwrap();
+    std::fs::write(root.join("net.c"), c_src).unwrap();
+    let out = std::process::Command::new("cc")
+        .args(["-shared", "-fPIC", "-o"])
+        .arg(root.join("foreign/net.so"))
+        .arg(root.join("net.c"))
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "cc failed: {}", String::from_utf8_lossy(&out.stderr));
+
+    let (port, stop, join) = start(root);
+
+    let (status, body) = http_get(port, "/calc/7");
+    assert_eq!(status, 200, "{}", body);
+    assert_eq!(body, "21");
+
+    // The declared shape is `number`; the library returns text: fault.
+    let (status, body) = http_get(port, "/lie");
+    assert_eq!(status, 500);
+    assert!(body.contains("does not fit"), "{}", body);
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}

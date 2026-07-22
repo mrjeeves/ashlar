@@ -1610,7 +1610,6 @@ fn lev(a: &str, b: &str) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::check_sources;
     use crate::diag::Diag;
 
