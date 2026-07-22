@@ -644,9 +644,11 @@ to run on every edit.
 Refactors are commands, not text edits. Each one first computes and reports
 its complete blast radius from the manifest; applies atomically or not at
 all, refusing with a reason if the radius cannot be fully computed; leaves no
-stale reference behind; and is reversible — running the reverse command
-yields byte-identical source. `radius` alone answers "what would this
-touch" without touching it.
+stale reference behind; and is reversible. `rename` and `rekind` reversed
+yield byte-identical source; `move` does too when the part sits at its
+file's end and no `use` line needed adding — `move` adds `use` lines but
+never removes them. `radius` alone answers "what would this touch"
+without touching it.
 
 ## 12. What programs cannot do
 

@@ -423,6 +423,177 @@ fn t_e_radius_prints_without_touching() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+// -- regressions from the adversarial review of increment 9 ---------------
+
+#[test]
+fn t_e_nested_lambda_maps_are_not_state_merges() {
+    // A nested lambda's returned map is a plain value; renaming the state
+    // prop must not rewrite its keys (silent data corruption otherwise) —
+    // and a same-named key in a non-return position inside the nested fn
+    // must not veto the rename either.
+    let app = r#"space a
+
+part P {
+  state ready: bool = false
+  start stack = () => {
+    let f = map([1], (n: number) => {
+      return { ready: n }
+    })
+    return { ready: true }
+  }
+}
+"#;
+    let srcs = sources(&[("app.ash", app)]);
+    let plan = refactor::plan_rename_prop(&srcs, "a.P", "ready", "done").unwrap();
+    let after = refactor::execute(&srcs, &plan).unwrap();
+    assert!(
+        after["app.ash"].contains("return { ready: n }"),
+        "nested lambda's plain map was corrupted:\n{}",
+        after["app.ash"]
+    );
+    assert!(after["app.ash"].contains("state done: bool"));
+    assert!(after["app.ash"].contains("return { done: true }"));
+
+    // Non-return position inside the nested fn: no refusal, no rewrite.
+    let app2 = r#"space a
+
+part P {
+  state ready: bool = false
+  start stack = () => {
+    let f = map([1], (n: number) => {
+      let m = { ready: n }
+      return m
+    })
+    return { ready: true }
+  }
+}
+"#;
+    let srcs2 = sources(&[("app.ash", app2)]);
+    let plan2 = refactor::plan_rename_prop(&srcs2, "a.P", "ready", "done").unwrap();
+    let after2 = refactor::execute(&srcs2, &plan2).unwrap();
+    assert!(after2["app.ash"].contains("let m = { ready: n }"));
+}
+
+#[test]
+fn t_e_bare_chains_in_non_seeing_spaces_are_untouched() {
+    // `Store.messages` in a space where `Store` resolves to a DIFFERENT
+    // part must not be rewritten by a rename of a.Store.messages.
+    let srcs = sources(&[
+        ("a.ash", "space a\n\npart Store {\n  state messages: {text: text} = {}\n}\n"),
+        (
+            "x.ash",
+            "space x\n\npart Store {\n  state messages: {text: text} = {}\n  state msgs: {text: text} = {}\n}\n",
+        ),
+        ("u.ash", "space u\nuse x\n\npart Q {\n  peek = () => Store.messages\n}\n"),
+    ]);
+    let plan = refactor::plan_rename_prop(&srcs, "a.Store", "messages", "msgs").unwrap();
+    assert!(
+        !plan.changes.iter().any(|c| c.file == "u.ash"),
+        "u.ash references x.Store, not a.Store: {:#?}",
+        plan.changes
+    );
+    let after = refactor::execute(&srcs, &plan).unwrap();
+    assert!(after["u.ash"].contains("Store.messages"));
+}
+
+#[test]
+fn t_e_quoted_literal_keys_rename_with_their_quotes() {
+    let app = r#"space a
+
+part Msg {
+  id: text
+  body: text
+}
+
+part Api {
+  go = (m: Msg) => m.id
+  mk = () => go({ id: "a", "body": "b" })
+}
+"#;
+    let srcs = sources(&[("app.ash", app)]);
+    let plan = refactor::plan_rename_prop(&srcs, "a.Msg", "body", "content").unwrap();
+    let after = refactor::execute(&srcs, &plan).unwrap();
+    assert!(
+        after["app.ash"].contains("\"content\": \"b\""),
+        "quoted key lost its quotes or its rename:\n{}",
+        after["app.ash"]
+    );
+
+    let after_vec: Vec<(String, String)> =
+        after.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+    let back = refactor::plan_rename_prop(&after_vec, "a.Msg", "content", "body").unwrap();
+    let restored = refactor::execute(&after_vec, &back).unwrap();
+    assert_eq!(restored["app.ash"], app);
+}
+
+#[test]
+fn t_e_spaced_dotted_chains_refuse_toward_fmt() {
+    // `m . body` is legal source the column arithmetic cannot model; the
+    // plan must refuse with the fmt correction, not an internal error.
+    let app = "space a\n\npart Msg {\n  id: text\n  body: text\n}\n\npart Api {\n  mk = (m: Msg) => m . body\n}\n";
+    let srcs = sources(&[("app.ash", app)]);
+    let r = refactor::plan_rename_prop(&srcs, "a.Msg", "body", "content");
+    let msg = r.err().unwrap().0;
+    assert!(msg.contains("ashlar fmt"), "{}", msg);
+}
+
+#[test]
+fn t_e_move_ignores_self_references_and_unrelated_bare_twins() {
+    // (1) A full-name self-reference must not fabricate a dependency on
+    // the old home (which cycles with the caller's `use` and refuses a
+    // legal move).
+    let srcs = sources(&[
+        (
+            "a.ash",
+            "space a\n\npart Caller {\n  msg = a.Helper.greet(\"x\")\n}\n\npart Helper {\n  greet = (n: text) => \"hi \" + n\n  again = (n: text) => a.Helper.greet(n)\n}\n",
+        ),
+        ("b.ash", "space b\n\npart Anchor {\n  z = 1\n}\n"),
+    ]);
+    let plan = refactor::plan_move(&srcs, "a.Helper", "b").unwrap();
+    let after = refactor::execute(&srcs, &plan).unwrap();
+    assert!(
+        !after["b.ash"].contains("use a"),
+        "spurious `use a` from a self-reference:\n{}",
+        after["b.ash"]
+    );
+    assert!(after["a.ash"].contains("use b"));
+    assert!(after["b.ash"].contains("b.Helper.greet(n)"));
+
+    // (2) A space referencing an unrelated part that merely shares the
+    // bare name must not be dragged into the radius (that addition makes
+    // the bare name ambiguous there and vetoes the move).
+    let srcs2 = sources(&[
+        ("f.ash", "space f\n\npart Msg {\n  a: text\n}\n"),
+        ("home.ash", "space home\n\npart Msg {\n  b: text\n}\n"),
+        ("tgt.ash", "space tgt\n\npart Anchor {\n  z = 1\n}\n"),
+        ("u.ash", "space u\nuse f\n\npart Q {\n  last: Msg? = none\n}\n"),
+    ]);
+    let plan2 = refactor::plan_move(&srcs2, "home.Msg", "tgt").unwrap();
+    assert!(
+        !plan2.changes.iter().any(|c| c.file == "u.ash"),
+        "u.ash references f.Msg, not home.Msg: {:#?}",
+        plan2.changes
+    );
+    let after2 = refactor::execute(&srcs2, &plan2).unwrap();
+    assert!(after2["tgt.ash"].contains("part Msg"));
+    assert!(!after2["u.ash"].contains("use tgt"));
+}
+
+#[test]
+fn t_e_space_rename_carries_foreign_lib_and_only_stored_migrations() {
+    let srcs = sources(&[(
+        "a.ash",
+        "space old\n\nforeign fetch: (text) -> data\n\npart Api {\n  go = () => fetch(\"http://x\")\n}\n",
+    )]);
+    let plan = refactor::plan_rename_space(&srcs, "old", "fresh").unwrap();
+    assert_eq!(
+        plan.foreign_renames,
+        vec![("foreign/old.so".to_string(), "foreign/fresh.so".to_string())]
+    );
+    // No stored props anywhere: no state migrations to report.
+    assert!(plan.state_part_renames.is_empty(), "{:?}", plan.state_part_renames);
+}
+
 #[test]
 fn t_e_vendor_copies_checks_and_refuses_collisions() {
     // covers: reference §11 `vendor` — copy-in, space collision refusal,
