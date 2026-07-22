@@ -9,6 +9,7 @@
 //!   fixup, manifest, main             — CLI implementor
 
 pub mod ast;
+pub mod check;
 pub mod compose;
 pub mod diag;
 pub mod fixup;
@@ -114,6 +115,13 @@ pub fn check_sources(sources: Vec<(String, String)>) -> CheckResult {
 
     let (composed, mut compose_diags) = compose::compose(&program);
     diags.append(&mut compose_diags);
+
+    // Shape checking runs only on programs whose names resolved: earlier
+    // errors would cascade into misleading shape diagnostics.
+    if !diags.iter().any(|d| d.is_error()) {
+        let mut check_diags = check::check(&program, &composed);
+        diags.append(&mut check_diags);
+    }
 
     // Stable output order: file, then position, then id.
     diags.sort_by(|a, b| {
