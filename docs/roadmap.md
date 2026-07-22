@@ -97,42 +97,26 @@ Proof: not yet named. This item is a prerequisite research question
 ("what does a round trip count as, mechanically?") before a suite can be
 written — until that question has an answer, D5 stays on this ledger.
 
-## 7. A5 reference-budget audit
+## 7. A5 reference-budget audit — DONE 2026-07-22 (moves off this page next revision)
 
-Satisfies: **A5** (no feature costs reference budget disproportionate to
-its value) as an ongoing, re-runnable check rather than a one-time
-judgment made when each construct was added. Needs a per-construct byte
-accounting of reference/ashlar.md — how many of the (currently) under
-26,000 of the 40,000-byte budget (T-A1) each documented construct consumes
-— so that a future addition's cost is visible before it's paid, and so
-that A5's "5% of budget must be worth 5% of the language" comparison has
-actual numbers behind it instead of being argued from memory each time.
+Delivered as `crates/ashlar/tests/t_a5.rs`. The criterion, decided with
+the suite: sections are measured at the finest heading level (`###`
+where present), because A5 governs constructs and a chapter is many; no
+single section may exceed 20% of the bytes actually used. Current state:
+26,229 of 40,000 bytes; the largest construct is merge kinds (7.5%, plus
+3.9% for stack/pipe detail) — the heart of the language, priced
+accordingly; every runtime builtin sits between 1.3% and 4.7%. The
+distribution prints on every run so future additions are argued from
+data.
 
-Proof: a script or suite that maps reference sections to byte ranges and
-reports the distribution; the pass/fail criterion (what counts as
-"disproportionate") is itself still to be defined and belongs with this
-item, not assumed.
+## 8. T-A3 surface findings — DONE 2026-07-22 (moves off this page next revision)
 
-## 8. T-A3 surface findings: design decisions owed
-
-Satisfies: **A3/A4** follow-through. The first cold-read gate run
-(`suites/t_a3/results/2026-07-22-sonnet.md`) produced two genuine surface
-bugs and two prior-import hazards that need design decisions, not code:
-
-- **F1**: a restated `stack`/`pipe` kind on a derived layer reads as
-  *override*, not chain-participation — the one actively-wrong reading of
-  shown semantics that no compile error can catch. Candidate directions: a
-  surface marker for "runs in addition to base," or accepting that this is
-  reference-carried and measuring it in the reference-in-context suite.
-- **F2**: `{Shape}` map syntax reads as a set literal. Candidate: key-
-  explicit map shapes (`{text: Shape}`), which would touch the reference,
-  parser, corpus, and examples — a coordinated revision, priced against
-  the A1 budget before adoption.
-- **F3/F4**: index-yields-optional and the determinism guarantees (map
-  iteration order, `every` validation, foreign-call check timing)
-  contradict mainstream priors silently; they fail safe via downstream
-  checking but must stay prominent in the reference.
-
-Proof: a dated ADR accepting or rejecting each finding, then a re-run of
-the gate against the recalibrated rubrics (PROTOCOL.md revision of
-2026-07-22).
+Resolved by ADR-0008 and validated by gate run 2
+(`suites/t_a3/results/2026-07-22-sonnet-run2.md`, 23/24 PASS): F2 fixed
+by the `{text: Shape}` syntax change and confirmed by measurement
+(0/4-with-wrong-claim → 4/4 clean); F1 kept with the E005 write-time
+guardrail named and fixture-pinned, its cold-read residual reproduced
+and recorded; F3 converted to a compile-time correction by the shape
+checker; F4 accepted as reference-carried. The remaining open thread is
+recorded inside the run-2 results file: the reader-suggested explicit
+composition marker, if the F1 residual is ever judged worth closing.
