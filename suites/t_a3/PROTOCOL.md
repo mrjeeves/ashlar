@@ -95,3 +95,18 @@ using the date the run was performed and a short model identifier (e.g.
 Do not overwrite a previous run's results file; each run gets its own dated
 file, so regressions and improvements across model versions or language
 revisions are visible side by side.
+
+## Revisions
+
+2026-07-22 — First run (`results/2026-07-22-sonnet.md`, 5/24 strict FAIL)
+showed the rubrics mixing two populations: meaning-of-what-is-shown, which
+a no-reference cold read can measure, and system behavior the snippet does
+not exhibit (compile-error obligations, runtime lifecycle facts, protocol
+transparency), which it definitionally cannot. Per requirements §1 — tests
+are revised freely against the requirement, and A3 asks whether a reader
+"states the meaning" of the construct shown — future rubric bullets must be
+decidable from the snippet text plus universal programming knowledge.
+Bullets about unexhibited behavior move to a separate reference-in-context
+comprehension suite. The strict 2026-07-22 result stands as recorded;
+re-baseline against the recalibrated rubrics after the F1/F2 surface
+findings in that results file receive a design decision.

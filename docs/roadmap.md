@@ -106,3 +106,27 @@ Proof: a script or suite that maps reference sections to byte ranges and
 reports the distribution; the pass/fail criterion (what counts as
 "disproportionate") is itself still to be defined and belongs with this
 item, not assumed.
+
+## 8. T-A3 surface findings: design decisions owed
+
+Satisfies: **A3/A4** follow-through. The first cold-read gate run
+(`suites/t_a3/results/2026-07-22-sonnet.md`) produced two genuine surface
+bugs and two prior-import hazards that need design decisions, not code:
+
+- **F1**: a restated `stack`/`pipe` kind on a derived layer reads as
+  *override*, not chain-participation — the one actively-wrong reading of
+  shown semantics that no compile error can catch. Candidate directions: a
+  surface marker for "runs in addition to base," or accepting that this is
+  reference-carried and measuring it in the reference-in-context suite.
+- **F2**: `{Shape}` map syntax reads as a set literal. Candidate: key-
+  explicit map shapes (`{text: Shape}`), which would touch the reference,
+  parser, corpus, and examples — a coordinated revision, priced against
+  the A1 budget before adoption.
+- **F3/F4**: index-yields-optional and the determinism guarantees (map
+  iteration order, `every` validation, foreign-call check timing)
+  contradict mainstream priors silently; they fail safe via downstream
+  checking but must stay prominent in the reference.
+
+Proof: a dated ADR accepting or rejecting each finding, then a re-run of
+the gate against the recalibrated rubrics (PROTOCOL.md revision of
+2026-07-22).
