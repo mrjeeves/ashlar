@@ -1,7 +1,8 @@
 //! CLI (reference §11).
 //!
-//! Commands that exist: `check [path] [--human]`, `fix [path]`,
-//! `build [path]`. Nothing else — a command that doesn't fully work is not
+//! Every command in the reference's toolchain table exists here: `check`,
+//! `fix`, `build`, `fmt`, `run`, `rename`, `rekind`, `move`, `radius`,
+//! `vendor`. Nothing else — a command that doesn't fully work is not
 //! present at all, so any other input (including no input) is a usage
 //! error, never a stub.
 //!
@@ -20,8 +21,11 @@ mod cli {
         ashlar build [path]\n  \
         ashlar fmt [path] [--check]\n  \
         ashlar run [path]\n  \
-        ashlar rename <part-or-part.prop> <new-name> [path] [--plan]\n  \
-        ashlar rekind <part.prop> <kind> [path] [--plan]\n";
+        ashlar rename <space-part-or-prop> <new-name> [path] [--plan]\n  \
+        ashlar rekind <part.prop> <kind> [path] [--plan]\n  \
+        ashlar move <part> <space> [path] [--plan]\n  \
+        ashlar radius <full-name> [path]\n  \
+        ashlar vendor <source> [path]\n";
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum Cmd {
@@ -32,6 +36,9 @@ mod cli {
         Run { path: String },
         Rename { target: String, new_name: String, path: String, plan_only: bool },
         Rekind { target: String, kind: String, path: String, plan_only: bool },
+        Move { part: String, space: String, path: String, plan_only: bool },
+        Radius { target: String, path: String },
+        Vendor { source: String, path: String },
     }
 
     /// Parse the command and its arguments (everything after the binary
@@ -68,7 +75,7 @@ mod cli {
             "build" => Ok(Cmd::Build {
                 path: one_path(rest)?,
             }),
-            "rename" | "rekind" => {
+            "rename" | "rekind" | "move" => {
                 let mut positionals: Vec<String> = Vec::new();
                 let mut plan_only = false;
                 for a in rest {
@@ -84,21 +91,58 @@ mod cli {
                     return Err(format!("`{}` takes a target, a new value, and an optional path", name));
                 }
                 let path = positionals.get(2).cloned().unwrap_or_else(default_path);
-                if name == "rename" {
-                    Ok(Cmd::Rename {
+                match name.as_str() {
+                    "rename" => Ok(Cmd::Rename {
                         target: positionals[0].clone(),
                         new_name: positionals[1].clone(),
                         path,
                         plan_only,
-                    })
-                } else {
-                    Ok(Cmd::Rekind {
+                    }),
+                    "move" => Ok(Cmd::Move {
+                        part: positionals[0].clone(),
+                        space: positionals[1].clone(),
+                        path,
+                        plan_only,
+                    }),
+                    _ => Ok(Cmd::Rekind {
                         target: positionals[0].clone(),
                         kind: positionals[1].replace('+', " "),
                         path,
                         plan_only,
-                    })
+                    }),
                 }
+            }
+            "radius" => {
+                let mut positionals: Vec<String> = Vec::new();
+                for a in rest {
+                    if a.starts_with("--") {
+                        return Err(format!("unknown flag `{}`", a));
+                    }
+                    positionals.push(a.clone());
+                }
+                if positionals.is_empty() || positionals.len() > 2 {
+                    return Err("`radius` takes a full name and an optional path".to_string());
+                }
+                Ok(Cmd::Radius {
+                    target: positionals[0].clone(),
+                    path: positionals.get(1).cloned().unwrap_or_else(default_path),
+                })
+            }
+            "vendor" => {
+                let mut positionals: Vec<String> = Vec::new();
+                for a in rest {
+                    if a.starts_with("--") {
+                        return Err(format!("unknown flag `{}`", a));
+                    }
+                    positionals.push(a.clone());
+                }
+                if positionals.is_empty() || positionals.len() > 2 {
+                    return Err("`vendor` takes a source tree and an optional path".to_string());
+                }
+                Ok(Cmd::Vendor {
+                    source: positionals[0].clone(),
+                    path: positionals.get(1).cloned().unwrap_or_else(default_path),
+                })
             }
             "run" => Ok(Cmd::Run {
                 path: one_path(rest)?,
@@ -161,21 +205,7 @@ mod cli {
             Cmd::Fmt { path, check_only } => run_fmt(&path, check_only),
             Cmd::Run { path } => run_serve(&path),
             Cmd::Rename { target, new_name, path, plan_only } => {
-                run_refactor(&path, plan_only, |srcs| {
-                    // A target matching a part renames the part; otherwise
-                    // the last segment names a property of the prefix part.
-                    let checked = ashlar::check_sources(srcs.to_vec());
-                    if checked.program.parts.contains_key(&target) {
-                        ashlar::refactor::plan_rename_part(srcs, &new_name, &target)
-                    } else if let Some((part, prop)) = target.rsplit_once('.') {
-                        ashlar::refactor::plan_rename_prop(srcs, part, prop, &new_name)
-                    } else {
-                        Err(ashlar::refactor::Refusal(format!(
-                            "`{}` names neither a part nor a part.property.",
-                            target
-                        )))
-                    }
-                })
+                run_refactor(&path, plan_only, |srcs| plan_rename(srcs, &target, &new_name))
             }
             Cmd::Rekind { target, kind, path, plan_only } => {
                 run_refactor(&path, plan_only, |srcs| match target.rsplit_once('.') {
@@ -185,7 +215,252 @@ mod cli {
                     )),
                 })
             }
+            Cmd::Move { part, space, path, plan_only } => {
+                run_refactor(&path, plan_only, |srcs| {
+                    ashlar::refactor::plan_move(srcs, &part, &space)
+                })
+            }
+            Cmd::Radius { target, path } => run_radius(&path, &target),
+            Cmd::Vendor { source, path } => run_vendor(&path, &source),
         }
+    }
+
+    /// `rename`'s target resolution (reference §11: a space, part, or
+    /// property). A name that is both a part and a space refuses as
+    /// ambiguous rather than guessing.
+    fn plan_rename(
+        srcs: &[(String, String)],
+        target: &str,
+        new_name: &str,
+    ) -> Result<ashlar::refactor::Plan, ashlar::refactor::Refusal> {
+        let checked = ashlar::check_sources(srcs.to_vec());
+        let is_part = checked.program.parts.contains_key(target);
+        let is_space = checked.program.spaces.contains_key(target);
+        if is_part && is_space {
+            return Err(ashlar::refactor::Refusal(format!(
+                "`{}` names both a part and a space; rename one of them out of the collision first.",
+                target
+            )));
+        }
+        if is_part {
+            ashlar::refactor::plan_rename_part(srcs, new_name, target)
+        } else if is_space {
+            ashlar::refactor::plan_rename_space(srcs, target, new_name)
+        } else if let Some((part, prop)) = target.rsplit_once('.') {
+            ashlar::refactor::plan_rename_prop(srcs, part, prop, new_name)
+        } else {
+            Err(ashlar::refactor::Refusal(format!(
+                "`{}` names neither a space, a part, nor a part.property.",
+                target
+            )))
+        }
+    }
+
+    /// `ashlar radius <full-name>` (reference §11): print every location a
+    /// rename of the name would touch, touching nothing. Implemented as
+    /// the real plan against a fresh probe name, so the printed radius is
+    /// exactly the rename's radius — same code path, no drift.
+    fn run_radius(path: &str, target: &str) -> i32 {
+        let root = Path::new(path);
+        let mut sources: Vec<(String, String)> = Vec::new();
+        for file in ashlar::find_ash_files(root) {
+            let rel = file
+                .strip_prefix(root)
+                .unwrap_or(&file)
+                .to_string_lossy()
+                .replace('\\', "/");
+            match std::fs::read_to_string(&file) {
+                Ok(s) => sources.push((rel, s)),
+                Err(e) => {
+                    eprintln!("error reading {}: {}", rel, e);
+                    return 1;
+                }
+            }
+        }
+        let checked = ashlar::check_sources(sources.clone());
+        let mut probe = "radius_probe".to_string();
+        let taken = |name: &str| {
+            checked.program.parts.keys().any(|p| {
+                p.rsplit('.').next() == Some(name) || p == name
+            }) || checked.program.spaces.contains_key(name)
+                || checked
+                    .composed
+                    .values()
+                    .any(|cp| cp.props.contains_key(name))
+        };
+        while taken(&probe) {
+            probe.push('_');
+        }
+        match plan_rename(&sources, target, &probe) {
+            Ok(plan) => {
+                println!("radius of `{}`: {} site(s)", target, plan.changes.len());
+                for c in &plan.changes {
+                    println!(
+                        "  {}:{}:{}  `{}`",
+                        c.file, c.span.start.line, c.span.start.col, c.old
+                    );
+                }
+                0
+            }
+            Err(ashlar::refactor::Refusal(reason)) => {
+                eprintln!("cannot compute the radius: {}", reason);
+                1
+            }
+        }
+    }
+
+    /// `ashlar vendor <source>` (reference §11, G-series: no registry —
+    /// dependencies are code vendored into the tree). Copies the source
+    /// tree's `.ash` files under `vendor/<name>/`, refuses on space
+    /// collisions BEFORE copying, and rolls the copy back entirely if the
+    /// combined project does not check clean.
+    fn run_vendor(path: &str, source: &str) -> i32 {
+        let root = Path::new(path);
+        let src_root = Path::new(source);
+        if !src_root.is_dir() {
+            eprintln!("refused: `{}` is not a directory.", source);
+            return 1;
+        }
+        let name = src_root
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "vendored".to_string());
+        let dest = root.join("vendor").join(&name);
+        if dest.exists() {
+            eprintln!(
+                "refused: `vendor/{}` already exists; remove it to re-vendor.",
+                name
+            );
+            return 1;
+        }
+        let files = ashlar::find_ash_files(src_root);
+        if files.is_empty() {
+            eprintln!("refused: `{}` contains no .ash files.", source);
+            return 1;
+        }
+        // Space collision check before anything is written.
+        let mut incoming: Vec<(String, String)> = Vec::new();
+        for f in &files {
+            let rel = f
+                .strip_prefix(src_root)
+                .unwrap_or(f)
+                .to_string_lossy()
+                .replace('\\', "/");
+            match std::fs::read_to_string(f) {
+                Ok(s) => incoming.push((rel, s)),
+                Err(e) => {
+                    eprintln!("error reading {}: {}", f.display(), e);
+                    return 1;
+                }
+            }
+        }
+        let theirs = ashlar::check_sources(incoming.clone());
+        let ours = ashlar::check_project(root);
+        let collisions: Vec<&String> = theirs
+            .program
+            .spaces
+            .keys()
+            .filter(|s| ours.program.spaces.contains_key(*s))
+            .collect();
+        if !collisions.is_empty() {
+            eprintln!(
+                "refused: the tree declares space(s) this project already has: {}.",
+                collisions
+                    .iter()
+                    .map(|s| format!("`{}`", s))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            return 1;
+        }
+        // Copy, then verify the combined project; errors roll it all back.
+        for (rel, text) in &incoming {
+            let target = dest.join(rel);
+            if let Some(dir) = target.parent() {
+                if let Err(e) = std::fs::create_dir_all(dir) {
+                    eprintln!("error creating {}: {}", dir.display(), e);
+                    let _ = std::fs::remove_dir_all(&dest);
+                    return 1;
+                }
+            }
+            if let Err(e) = std::fs::write(&target, text) {
+                eprintln!("error writing {}: {}", target.display(), e);
+                let _ = std::fs::remove_dir_all(&dest);
+                return 1;
+            }
+        }
+        let combined = ashlar::check_project(root);
+        if combined.has_errors() {
+            print_diags(&combined.diags, false);
+            let _ = std::fs::remove_dir_all(&dest);
+            eprintln!(
+                "refused: the combined project does not check; `vendor/{}` rolled back.",
+                name
+            );
+            return 1;
+        }
+        eprintln!(
+            "vendored {} file(s) into vendor/{} (spaces: {})",
+            incoming.len(),
+            name,
+            theirs
+                .program
+                .spaces
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        0
+    }
+
+    /// Migrate `.ashlar-state.json` keys after a rename/move touching
+    /// `stored` properties (ADR-0007's orphaned-rows note, closed). The
+    /// file is a flat map of `space.Part.prop` keys (plus `__users`);
+    /// migration rewrites keys and writes atomically via a temp file.
+    fn migrate_state(root: &Path, plan: &ashlar::refactor::Plan) -> Result<usize, String> {
+        if plan.state_part_renames.is_empty() && plan.state_prop_renames.is_empty() {
+            return Ok(0);
+        }
+        let state_path = root.join(".ashlar-state.json");
+        let Ok(text) = std::fs::read_to_string(&state_path) else {
+            return Ok(0); // no state file, nothing to migrate
+        };
+        let Some(ashlar::eval::V::Map(m)) = ashlar::eval::from_json(&text) else {
+            return Err(format!(
+                "{} is not a JSON object; refusing to migrate it.",
+                state_path.display()
+            ));
+        };
+        let mut migrated = 0usize;
+        let mut out: std::collections::BTreeMap<String, ashlar::eval::V> =
+            std::collections::BTreeMap::new();
+        'keys: for (k, v) in m {
+            for (old, new) in &plan.state_prop_renames {
+                if &k == old {
+                    out.insert(new.clone(), v);
+                    migrated += 1;
+                    continue 'keys;
+                }
+            }
+            for (old, new) in &plan.state_part_renames {
+                if let Some((part, prop)) = k.rsplit_once('.') {
+                    if part == old {
+                        out.insert(format!("{}.{}", new, prop), v);
+                        migrated += 1;
+                        continue 'keys;
+                    }
+                }
+            }
+            out.insert(k, v);
+        }
+        if migrated > 0 {
+            let tmp = root.join(".ashlar-state.json.tmp");
+            let rendered = ashlar::eval::to_json(&ashlar::eval::V::Map(out));
+            std::fs::write(&tmp, rendered).map_err(|e| e.to_string())?;
+            std::fs::rename(&tmp, &state_path).map_err(|e| e.to_string())?;
+        }
+        Ok(migrated)
     }
 
     /// Shared refactor driver: load sources, plan, report the blast
@@ -225,6 +500,13 @@ mod cli {
                 c.file, c.span.start.line, c.span.start.col, c.old, c.new
             );
         }
+        // Stored-state migrations are part of the blast radius (E3).
+        for (old, new) in &plan.state_part_renames {
+            eprintln!("  .ashlar-state.json  `{}.*` -> `{}.*`", old, new);
+        }
+        for (old, new) in &plan.state_prop_renames {
+            eprintln!("  .ashlar-state.json  `{}` -> `{}`", old, new);
+        }
         if plan_only {
             return 0;
         }
@@ -238,6 +520,14 @@ mod cli {
                             return 1;
                         }
                         eprintln!("rewrote: {}", rel);
+                    }
+                }
+                match migrate_state(root, &plan) {
+                    Ok(0) => {}
+                    Ok(n) => eprintln!("migrated {} stored key(s) in .ashlar-state.json", n),
+                    Err(e) => {
+                        eprintln!("warning: state migration failed: {}", e);
+                        eprintln!("sources are consistent; fix the state file by hand.");
                     }
                 }
                 0
@@ -500,6 +790,47 @@ mod cli {
         #[test]
         fn two_positional_paths_is_an_error() {
             assert!(parse(&args(&["check", "a", "b"])).is_err());
+        }
+
+        #[test]
+        fn move_parses_with_plan_flag() {
+            let cmd = parse(&args(&["move", "a.Two", "b", "--plan"])).unwrap();
+            assert_eq!(
+                cmd,
+                Cmd::Move {
+                    part: "a.Two".to_string(),
+                    space: "b".to_string(),
+                    path: ".".to_string(),
+                    plan_only: true
+                }
+            );
+        }
+
+        #[test]
+        fn radius_takes_a_name_and_optional_path() {
+            let cmd = parse(&args(&["radius", "a.W"])).unwrap();
+            assert_eq!(
+                cmd,
+                Cmd::Radius {
+                    target: "a.W".to_string(),
+                    path: ".".to_string()
+                }
+            );
+            assert!(parse(&args(&["radius"])).is_err());
+            assert!(parse(&args(&["radius", "a", "b", "c"])).is_err());
+        }
+
+        #[test]
+        fn vendor_takes_a_source_and_optional_path() {
+            let cmd = parse(&args(&["vendor", "../lib", "proj"])).unwrap();
+            assert_eq!(
+                cmd,
+                Cmd::Vendor {
+                    source: "../lib".to_string(),
+                    path: "proj".to_string()
+                }
+            );
+            assert!(parse(&args(&["vendor"])).is_err());
         }
 
         // `run` itself is deliberately not unit-tested here: it calls

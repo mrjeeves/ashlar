@@ -32,6 +32,9 @@ pub struct CheckResult {
     pub program: resolved::Program,
     pub composed: BTreeMap<String, resolved::ComposedPart>,
     pub diags: Vec<diag::Diag>,
+    /// Field-site index from the checker (empty when earlier errors kept
+    /// the checker from running). See `check::FieldSite`.
+    pub field_sites: Vec<check::FieldSite>,
 }
 
 impl CheckResult {
@@ -191,9 +194,11 @@ fn finish_check(files: Vec<resolved::FileEntry>, mut diags: Vec<diag::Diag>) -> 
 
     // Shape checking runs only on programs whose names resolved: earlier
     // errors would cascade into misleading shape diagnostics.
+    let mut field_sites = Vec::new();
     if !diags.iter().any(|d| d.is_error()) {
-        let mut check_diags = check::check(&program, &composed);
+        let (mut check_diags, sites) = check::check(&program, &composed);
         diags.append(&mut check_diags);
+        field_sites = sites;
     }
 
     // Stable output order: file, then position, then id.
@@ -206,5 +211,6 @@ fn finish_check(files: Vec<resolved::FileEntry>, mut diags: Vec<diag::Diag>) -> 
         program,
         composed,
         diags,
+        field_sites,
     }
 }

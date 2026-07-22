@@ -845,6 +845,7 @@ mod tests {
             let part_decl = ast::PartDecl {
                 name: vec![part_name.to_string()],
                 name_span: sp(),
+                span: sp(),
                 props,
             };
             let src = ast::SrcFile {
