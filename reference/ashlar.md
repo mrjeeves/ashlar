@@ -637,6 +637,7 @@ to run on every edit.
 | `ashlar fix [id]` | apply machine-applicable fixes from the last check |
 | `ashlar rename <full-name> <new-name>` | rename a space, part, or property |
 | `ashlar rekind <part.prop> <kind>` | change a property's merge kind across all layers |
+| `ashlar move <part> <space>` | move a part's home declaration to another space, adding the `use` lines both sides need |
 | `ashlar radius <full-name>` | print every location a rename of the name would touch |
 | `ashlar vendor <source>` | copy an external tree into the project so its spaces resolve |
 

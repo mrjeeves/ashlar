@@ -36,6 +36,9 @@ pub struct PartDecl {
     /// (must match an existing visible part: declares a layer).
     pub name: Name,
     pub name_span: Span,
+    /// The whole declaration, `part` keyword through closing `}` —
+    /// the block `ashlar move` excises.
+    pub span: Span,
     pub props: Vec<Prop>,
 }
 

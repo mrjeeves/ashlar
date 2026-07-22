@@ -2,14 +2,14 @@
 //! Token model shared by the lexer (producer) and parser (consumer).
 
 /// 1-based line/column position. Columns count Unicode scalar values.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Pos {
     pub line: u32,
     pub col: u32,
 }
 
 /// Half-open span: `start` inclusive, `end` exclusive.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub struct Span {
     pub start: Pos,
     pub end: Pos,

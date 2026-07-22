@@ -218,6 +218,7 @@ mod tests {
         let part = PartDecl {
             name: vec!["static".to_string()],
             name_span: Span::point(3, 6),
+            span: Span::point(3, 6),
             props: vec![
                 Prop {
                     name: "route".to_string(),

@@ -384,6 +384,7 @@ impl<'a> Parser<'a> {
     // -- parts and properties ------------------------------------------------
 
     fn parse_part(&mut self) -> Option<PartDecl> {
+        let kw_span = self.here_span();
         self.bump(); // `part`
         let Some((name, name_span)) = self.dotted_name() else {
             self.skip_to_top_decl();
@@ -395,9 +396,11 @@ impl<'a> Parser<'a> {
             return None;
         }
         let mut props = Vec::new();
+        let mut end = name_span.end;
         loop {
             self.skip_newlines();
-            if self.eat(&Tok::RBrace).is_some() {
+            if let Some(sp) = self.eat(&Tok::RBrace) {
+                end = sp.end;
                 break;
             }
             if self.cur().is_none() {
@@ -413,6 +416,10 @@ impl<'a> Parser<'a> {
         Some(PartDecl {
             name,
             name_span,
+            span: Span {
+                start: kw_span.start,
+                end,
+            },
             props,
         })
     }

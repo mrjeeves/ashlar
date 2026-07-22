@@ -27,16 +27,42 @@ use crate::ast::{
 };
 use crate::diag::{Diag, Edit, Level, E006_SHAPE, E021_ROUTE_CONFLICT};
 use crate::resolved::{ComposedPart, MergedValue, Program, STD_FNS, STD_PARTS};
-use crate::tokens::Span;
-use std::collections::BTreeMap;
+use crate::tokens::{Pos, Span};
+use std::collections::{BTreeMap, BTreeSet};
+
+/// One place a data-shape (or view-part) field name appears such that a
+/// rename of the field must rewrite it: a literal key checked against the
+/// shape, an `el(Part, {...})` key, or a field access on a value whose
+/// shape the checker knows. Produced here, consumed by
+/// `refactor::plan_rename_prop` — this index is what makes the field
+/// rename's blast radius computable (E5). Sites are complete for clean
+/// projects because construction only happens at checked positions:
+/// a plain map never `fits` a data shape, so every literal that builds one
+/// passes through `check_against`, and every known-base access passes
+/// through `field_of`. `data`-mediated key access is deliberately outside
+/// the shape system and outside the radius.
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+pub struct FieldSite {
+    pub file: String,
+    pub span: Span,
+    pub part: String,
+    pub field: String,
+    /// False when a multi-line dotted chain prevented column arithmetic;
+    /// a rename touching the site refuses and points at `ashlar fmt`.
+    pub precise: bool,
+}
 
 /// Check every property value in every part declaration of `program`.
+/// Returns the diagnostics and the field-site index.
 pub fn check(
     program: &Program,
     composed: &BTreeMap<String, ComposedPart>,
-) -> Vec<Diag> {
+) -> (Vec<Diag>, Vec<FieldSite>) {
     let mut diags = Vec::new();
-    let tables = Tables::build(program, composed);
+    let mut sites: Vec<FieldSite> = Vec::new();
+    let mut tables = Tables::build(program, composed);
+    refine_recursive_returns(program, &mut tables);
+    let mut pipe_defs: Vec<PipeDef> = Vec::new();
     for idx in 0..program.files.len() {
         let space = ast::name_to_string(&program.files[idx].ast.space);
         if !program.spaces.contains_key(&space) {
@@ -56,13 +82,137 @@ pub fn check(
                 part_full,
                 locals: Vec::new(),
                 diags: Vec::new(),
+                sites: Vec::new(),
+                pending_stack: false,
+                stack_ctx: None,
+                pipe_defs: Vec::new(),
             };
             cx.check_part_decl(decl);
             diags.append(&mut cx.diags);
+            sites.append(&mut cx.sites);
+            pipe_defs.append(&mut cx.pipe_defs);
         }
     }
+    diags.append(&mut check_pipe_agreement(program, composed, &tables, pipe_defs));
     diags.append(&mut check_routes(program, composed));
+    sites.sort();
+    sites.dedup();
+    (diags, sites)
+}
+
+/// One pipe layer's observed signature, collected during body checking so
+/// the cross-layer agreement pass (reference §4: "all layers of a `pipe`
+/// property must agree in parameter and return shape") never re-walks a
+/// body.
+struct PipeDef {
+    part: String,
+    prop: String,
+    file: String,
+    /// The parameter annotation's span.
+    param_span: Span,
+    param: S,
+    /// The function literal's span (return mismatches point here).
+    value_span: Span,
+    ret: S,
+}
+
+/// Compare every pipe layer's parameter and return shape against the
+/// first concrete one (the declared prop shape, where present, is the
+/// baseline). `Unknown` never disagrees — no false positives.
+fn check_pipe_agreement(
+    program: &Program,
+    composed: &BTreeMap<String, ComposedPart>,
+    tables: &Tables,
+    defs: Vec<PipeDef>,
+) -> Vec<Diag> {
+    let mut diags = Vec::new();
+    let mut by_prop: BTreeMap<(String, String), Vec<PipeDef>> = BTreeMap::new();
+    for d in defs {
+        by_prop.entry((d.part.clone(), d.prop.clone())).or_default().push(d);
+    }
+    for ((part, prop), defs) in by_prop {
+        // Baseline from the declared shape, resolved in the home space.
+        let declared = composed
+            .get(&part)
+            .and_then(|cp| cp.props.get(&prop))
+            .and_then(|p| p.shape.as_ref())
+            .and_then(|sh| {
+                let home = program.parts.get(&part).map(|i| i.home.as_str()).unwrap_or("");
+                match resolve_shape_in(&tables.bare, home, sh) {
+                    S::Fn(ps, r) if ps.len() == 1 => Some((ps[0].clone(), *r)),
+                    _ => None,
+                }
+            });
+        let mut param_base: Option<(S, String)> = declared
+            .as_ref()
+            .filter(|(p, _)| !p.is_unknown())
+            .map(|(p, _)| (p.clone(), "the declared shape".to_string()));
+        let mut ret_base: Option<(S, String)> = declared
+            .as_ref()
+            .filter(|(_, r)| !r.is_unknown())
+            .map(|(_, r)| (r.clone(), "the declared shape".to_string()));
+        for d in &defs {
+            if !d.param.is_unknown() {
+                match &param_base {
+                    None => param_base = Some((d.param.clone(), d.file.clone())),
+                    Some((base, origin)) if *base != d.param => {
+                        diags.push(
+                            Diag::new(
+                                E006_SHAPE,
+                                Level::Error,
+                                &d.file,
+                                d.param_span,
+                                format!(
+                                    "pipe layers of `{}.{}` must agree in parameter shape: this layer takes `{}`, but {} takes `{}`.",
+                                    part, prop, render(&d.param),
+                                    origin_phrase(origin), render(base)
+                                ),
+                            )
+                            .with_fix(
+                                format!("Give every layer the parameter shape `{}`.", render(base)),
+                                vec![],
+                            ),
+                        );
+                    }
+                    _ => {}
+                }
+            }
+            if !d.ret.is_unknown() {
+                match &ret_base {
+                    None => ret_base = Some((d.ret.clone(), d.file.clone())),
+                    Some((base, origin)) if *base != d.ret => {
+                        diags.push(
+                            Diag::new(
+                                E006_SHAPE,
+                                Level::Error,
+                                &d.file,
+                                d.value_span,
+                                format!(
+                                    "pipe layers of `{}.{}` must agree in return shape: this layer returns `{}`, but {} returns `{}`.",
+                                    part, prop, render(&d.ret),
+                                    origin_phrase(origin), render(base)
+                                ),
+                            )
+                            .with_fix(
+                                format!("Make every layer return `{}`.", render(base)),
+                                vec![],
+                            ),
+                        );
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
     diags
+}
+
+fn origin_phrase(origin: &str) -> String {
+    if origin == "the declared shape" {
+        origin.to_string()
+    } else {
+        format!("the layer in `{}`", origin)
+    }
 }
 
 /// E021 (reference §9.2): two routes matching one path is a compile error
@@ -98,6 +248,50 @@ fn check_routes(
                 };
                 routes.push((full.clone(), pattern.clone(), file, e.span));
             }
+        }
+    }
+    // Per-route capture rules (§9.2): captures bind `req.params` keys, so
+    // each must be a legal name and each name may bind once.
+    for (part, pattern, file, span) in &routes {
+        let mut seen: Vec<&str> = Vec::new();
+        for seg in pattern.trim_matches('/').split('/') {
+            let Some(cap) = seg.strip_prefix('{').and_then(|s| s.strip_suffix('}')) else {
+                continue;
+            };
+            let legal = !cap.is_empty()
+                && cap.chars().next().map(|c| c.is_alphabetic() || c == '_').unwrap_or(false)
+                && cap.chars().all(|c| c.is_alphanumeric() || c == '_');
+            if !legal {
+                diags.push(
+                    Diag::new(
+                        E021_ROUTE_CONFLICT,
+                        Level::Error,
+                        file,
+                        *span,
+                        format!(
+                            "`{{{}}}` in `{}`'s route is not a legal capture name.",
+                            cap, part
+                        ),
+                    )
+                    .with_fix(
+                        "A capture is a name: letters, digits, `_`, not starting with a digit."
+                            .to_string(),
+                        vec![],
+                    ),
+                );
+            } else if seen.contains(&cap) {
+                diags.push(
+                    Diag::new(
+                        E021_ROUTE_CONFLICT,
+                        Level::Error,
+                        file,
+                        *span,
+                        format!("`{}`'s route binds `{{{}}}` twice.", part, cap),
+                    )
+                    .with_fix("Give each capture a distinct name.".to_string(), vec![]),
+                );
+            }
+            seen.push(cap);
         }
     }
     for i in 0..routes.len() {
@@ -261,6 +455,9 @@ struct Tables {
     part_props: BTreeMap<String, BTreeMap<String, S>>,
     /// data-shape parts only: full name -> field name -> (shape, has default).
     data_shape_fields: BTreeMap<String, BTreeMap<String, (S, bool)>>,
+    /// full part name -> names of its storage (state/stored/synced) props —
+    /// the only legal keys of a `stack` return literal.
+    storage_props: BTreeMap<String, BTreeSet<String>>,
     /// foreign full name and per-space bare -> function shape.
     foreigns: BTreeMap<String, S>,
 }
@@ -310,7 +507,17 @@ impl Tables {
         let mut part_props: BTreeMap<String, BTreeMap<String, S>> = BTreeMap::new();
         let mut data_shape_fields: BTreeMap<String, BTreeMap<String, (S, bool)>> =
             BTreeMap::new();
+        let mut storage_props: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
         for (full, cp) in composed {
+            let storages: BTreeSet<String> = cp
+                .props
+                .iter()
+                .filter(|(_, p)| p.storage.is_some())
+                .map(|(n, _)| n.clone())
+                .collect();
+            if !storages.is_empty() {
+                storage_props.insert(full.clone(), storages);
+            }
             let home = program
                 .parts
                 .get(full)
@@ -416,7 +623,97 @@ impl Tables {
             fulls,
             part_props,
             data_shape_fields,
+            storage_props,
             foreigns,
+        }
+    }
+}
+
+/// Refine `-> ?` returns of unannotated function-valued properties from
+/// their concrete return branches, so callers of recursive functions
+/// check (the D3 "deeper inference" item). A recursive call contributes
+/// `Unknown` on the first pass; the join of the CONCRETE branches, when
+/// they agree, becomes the property's return shape, and the pass repeats
+/// (bounded) so chains of mutually recursive properties settle too.
+/// Diagnostics and field sites from these speculative walks are discarded
+/// — the main pass re-emits both against the refined tables.
+fn refine_recursive_returns(program: &Program, tables: &mut Tables) {
+    for _round in 0..3 {
+        let mut updates: Vec<(String, String, S)> = Vec::new();
+        for idx in 0..program.files.len() {
+            let space = ast::name_to_string(&program.files[idx].ast.space);
+            if !program.spaces.contains_key(&space) {
+                continue;
+            }
+            let file = program.files[idx].path.clone();
+            for decl in &program.files[idx].ast.parts {
+                let part_full = if decl.name.len() == 1 {
+                    format!("{}.{}", space, decl.name[0])
+                } else {
+                    ast::name_to_string(&decl.name)
+                };
+                for prop in &decl.props {
+                    let current = tables
+                        .part_props
+                        .get(&part_full)
+                        .and_then(|m| m.get(&prop.name));
+                    let Some(S::Fn(ps, ret)) = current else { continue };
+                    if !ret.is_unknown() || prop.shape.is_some() {
+                        continue;
+                    }
+                    let ps = ps.clone();
+                    // A `stack` prop's CALL returns the part, not the fn's
+                    // return; leaving its shape Unknown keeps that safe.
+                    if matches!(
+                        prop.kind.as_ref().map(|k| k.kind),
+                        Some(ast::MergeKind::Stack)
+                    ) {
+                        continue;
+                    }
+                    let Some(value) = &prop.value else { continue };
+                    let Expr::FnLit(params, body) = &value.expr else { continue };
+                    let mut cx = Cx {
+                        tables,
+                        space: space.clone(),
+                        file: file.clone(),
+                        part_full: part_full.clone(),
+                        locals: Vec::new(),
+                        diags: Vec::new(),
+                        sites: Vec::new(),
+                        pending_stack: false,
+                        stack_ctx: None,
+                        pipe_defs: Vec::new(),
+                    };
+                    let returns = cx.fn_return_branches(params, body);
+                    let mut joined: Option<S> = None;
+                    let mut agree = true;
+                    for r in returns.into_iter().filter(|r| !r.is_unknown()) {
+                        joined = match joined.take() {
+                            None => Some(r),
+                            Some(prev) => match join(tables, &prev, &r) {
+                                Some(j) => Some(j),
+                                None => {
+                                    agree = false;
+                                    break;
+                                }
+                            },
+                        };
+                    }
+                    if let (true, Some(j)) = (agree, joined) {
+                        if !j.is_unknown() {
+                            updates.push((part_full.clone(), prop.name.clone(), S::Fn(ps, Box::new(j))));
+                        }
+                    }
+                }
+            }
+        }
+        if updates.is_empty() {
+            break;
+        }
+        for (part, prop, s) in updates {
+            if let Some(m) = tables.part_props.get_mut(&part) {
+                m.insert(prop, s);
+            }
         }
     }
 }
@@ -468,6 +765,17 @@ struct Cx<'a> {
     part_full: String,
     locals: Vec<BTreeMap<String, S>>,
     diags: Vec<Diag>,
+    /// Field-site index entries collected while checking (see `FieldSite`).
+    sites: Vec<FieldSite>,
+    /// Set just before inferring a `stack` prop's value: the NEXT function
+    /// literal walked is that stack layer, and its direct `return` map
+    /// literals merge onto the enclosing part's state (§4).
+    pending_stack: bool,
+    /// While walking a stack layer's body: the part whose storage props
+    /// constrain return literals. Cleared for nested function literals.
+    stack_ctx: Option<String>,
+    /// Pipe layers observed in this declaration, for the agreement pass.
+    pipe_defs: Vec<PipeDef>,
 }
 
 impl<'a> Cx<'a> {
@@ -503,17 +811,38 @@ impl<'a> Cx<'a> {
             if let Some(value) = &prop.value {
                 // stack/pipe layer functions have arity rules the composer
                 // owns (E019); check their bodies without an expectation.
-                let is_chain = matches!(
-                    prop.kind.as_ref().map(|k| k.kind),
-                    Some(ast::MergeKind::Stack) | Some(ast::MergeKind::Pipe)
-                );
+                let kind = prop.kind.as_ref().map(|k| k.kind);
+                let is_chain =
+                    matches!(kind, Some(ast::MergeKind::Stack) | Some(ast::MergeKind::Pipe));
                 match (&declared, is_chain) {
                     (Some(exp), false) => {
                         let exp = exp.clone();
                         self.check_against(value, &exp);
                     }
                     _ => {
-                        self.infer(value);
+                        if matches!(kind, Some(ast::MergeKind::Stack)) {
+                            self.pending_stack = true;
+                        }
+                        let inferred = self.infer(value);
+                        self.pending_stack = false;
+                        // Record pipe layers for the agreement pass (§4).
+                        if matches!(kind, Some(ast::MergeKind::Pipe)) {
+                            if let (Expr::FnLit(params, _), S::Fn(ps, ret)) =
+                                (&value.expr, &inferred)
+                            {
+                                if params.len() == 1 && ps.len() == 1 {
+                                    self.pipe_defs.push(PipeDef {
+                                        part: self.part_full.clone(),
+                                        prop: prop.name.clone(),
+                                        file: self.file.clone(),
+                                        param_span: params[0].shape.span,
+                                        param: ps[0].clone(),
+                                        value_span: value.span,
+                                        ret: (**ret).clone(),
+                                    });
+                                }
+                            }
+                        }
                     }
                 }
                 // `every` durations are validated at build time (§9.7).
@@ -556,6 +885,13 @@ impl<'a> Cx<'a> {
                             match fields.get(k) {
                                 Some((fs, _)) => {
                                     let fs = fs.clone();
+                                    self.sites.push(FieldSite {
+                                        file: self.file.clone(),
+                                        span: *kspan,
+                                        part: p.clone(),
+                                        field: k.clone(),
+                                        precise: true,
+                                    });
                                     self.check_against(v, &fs);
                                 }
                                 None => {
@@ -781,8 +1117,12 @@ impl<'a> Cx<'a> {
                     self.locals.pop();
                 }
                 Stmt::Return(Some(e), _) => {
-                    let s = self.infer(e);
-                    returns.push(s);
+                    if self.stack_return_literal(e) {
+                        returns.push(S::Unknown);
+                    } else {
+                        let s = self.infer(e);
+                        returns.push(s);
+                    }
                 }
                 Stmt::Return(None, _) => returns.push(S::NoneS),
                 Stmt::Expr(e) => {
@@ -791,6 +1131,104 @@ impl<'a> Cx<'a> {
             }
         }
         self.locals.pop();
+    }
+
+    /// When walking a stack layer's body, a direct `return { ... }` literal
+    /// merges one level onto the part's state (§4): every key must name a
+    /// storage prop and every value must fit that prop's shape. Returns
+    /// true when the expression was handled here.
+    fn stack_return_literal(&mut self, e: &SExpr) -> bool {
+        let Some(part) = self.stack_ctx.clone() else {
+            return false;
+        };
+        let Expr::MapLit(items) = &e.expr else {
+            return false;
+        };
+        let storages = self
+            .tables
+            .storage_props
+            .get(&part)
+            .cloned()
+            .unwrap_or_default();
+        for it in items {
+            match it {
+                MapItem::Entry(k, kspan, v) => {
+                    if storages.contains(k) {
+                        let exp = self
+                            .tables
+                            .part_props
+                            .get(&part)
+                            .and_then(|m| m.get(k))
+                            .cloned()
+                            .unwrap_or(S::Unknown);
+                        if exp.is_unknown() {
+                            self.infer(v);
+                        } else {
+                            self.check_against(v, &exp);
+                        }
+                    } else {
+                        let nearest = storages
+                            .iter()
+                            .min_by_key(|f| lev(f, k))
+                            .filter(|f| lev(f, k) <= 2);
+                        let note = match nearest {
+                            Some(f) => format!("Did you mean `{}`?", f),
+                            None if storages.is_empty() => format!(
+                                "`{}` has no state properties; return `none` instead.",
+                                part
+                            ),
+                            None => format!(
+                                "`{}`'s state: {}.",
+                                part,
+                                storages
+                                    .iter()
+                                    .map(|f| format!("`{}`", f))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            ),
+                        };
+                        self.err(
+                            *kspan,
+                            format!(
+                                "a `stack` return merges onto state, and `{}` is not a state property of `{}`.",
+                                k, part
+                            ),
+                            note,
+                            vec![],
+                        );
+                        self.infer(v);
+                    }
+                }
+                MapItem::Spread(x) => {
+                    self.infer(x);
+                }
+            }
+        }
+        true
+    }
+
+    /// The raw list of a function body's return shapes (implicit
+    /// fall-through only when no `return` exists), for the recursion
+    /// refinement pass.
+    fn fn_return_branches(&mut self, params: &[ast::Param], body: &FnBody) -> Vec<S> {
+        self.locals.push(BTreeMap::new());
+        for p in params {
+            let s = resolve_shape_in(&self.tables.bare, &self.space, &p.shape);
+            self.locals.last_mut().unwrap().insert(p.name.clone(), s);
+        }
+        let returns = match body {
+            FnBody::Expr(x) => vec![self.infer(x)],
+            FnBody::Block(stmts) => {
+                let mut rs = Vec::new();
+                self.walk_stmts(stmts, &mut rs);
+                if rs.is_empty() {
+                    rs.push(S::NoneS);
+                }
+                rs
+            }
+        };
+        self.locals.pop();
+        returns
     }
 
     /// Conditions must be `bool` (reference §6: no truthiness). An optional
@@ -892,7 +1330,7 @@ impl<'a> Cx<'a> {
             }
             Expr::Field(base, name, fspan) => {
                 let b = self.infer(base);
-                self.field_of(&b, name, *fspan)
+                self.field_of(&b, name, *fspan, Some(*fspan))
             }
             Expr::Index(base, idx) => {
                 let b = self.infer(base);
@@ -983,6 +1421,15 @@ impl<'a> Cx<'a> {
                 }
             }
             Expr::FnLit(params, body) => {
+                // A pending stack layer applies to THIS literal's body;
+                // nested literals are plain functions again.
+                let ctx = if self.pending_stack {
+                    self.pending_stack = false;
+                    Some(self.part_full.clone())
+                } else {
+                    None
+                };
+                let saved = std::mem::replace(&mut self.stack_ctx, ctx);
                 self.locals.push(BTreeMap::new());
                 let mut ps = Vec::new();
                 for p in params {
@@ -991,10 +1438,17 @@ impl<'a> Cx<'a> {
                     ps.push(s);
                 }
                 let ret = match body.as_ref() {
-                    FnBody::Expr(x) => self.infer(x),
+                    FnBody::Expr(x) => {
+                        if self.stack_return_literal(x) {
+                            S::Unknown
+                        } else {
+                            self.infer(x)
+                        }
+                    }
                     FnBody::Block(stmts) => self.walk_block_collecting_returns(stmts),
                 };
                 self.locals.pop();
+                self.stack_ctx = saved;
                 S::Fn(ps, Box::new(ret))
             }
         }
@@ -1170,11 +1624,33 @@ impl<'a> Cx<'a> {
     // -- names and fields -----------------------------------------------------
 
     /// Longest-prefix resolution mirroring the resolver, then trailing
-    /// segments as checked field accesses.
+    /// segments as checked field accesses. Each segment's own span is
+    /// recovered by column arithmetic (single-line chains only) so field
+    /// accesses land in the field-site index precisely.
     fn infer_nameref(&mut self, segs: &[String], span: Span) -> S {
         let (mut s, consumed) = self.resolve_prefix(segs);
+        let single_line = span.start.line == span.end.line;
+        let mut col = span.start.col;
+        for seg in &segs[..consumed] {
+            col += seg.chars().count() as u32 + 1;
+        }
         for name in &segs[consumed..] {
-            s = self.field_of(&s, name, span);
+            let site = if single_line {
+                Some(Span {
+                    start: Pos {
+                        line: span.start.line,
+                        col,
+                    },
+                    end: Pos {
+                        line: span.start.line,
+                        col: col + name.chars().count() as u32,
+                    },
+                })
+            } else {
+                None
+            };
+            s = self.field_of(&s, name, span, site);
+            col += name.chars().count() as u32 + 1;
         }
         s
     }
@@ -1231,12 +1707,26 @@ impl<'a> Cx<'a> {
             .unwrap_or(false)
     }
 
-    fn field_of(&mut self, base: &S, name: &str, span: Span) -> S {
+    /// `site` is the field text's own precise span when the source form
+    /// allowed computing one; `None` records an imprecise site (a rename
+    /// touching it refuses and points at `ashlar fmt`).
+    fn field_of(&mut self, base: &S, name: &str, span: Span, site: Option<Span>) -> S {
         match base {
             S::Part(p) => match self.tables.part_props.get(p) {
                 Some(props) if props.is_empty() => S::Unknown, // opaque (std.Element)
                 Some(props) => match props.get(name) {
-                    Some(s) => s.clone(),
+                    Some(s) => {
+                        if !p.starts_with("std.") {
+                            self.sites.push(FieldSite {
+                                file: self.file.clone(),
+                                span: site.unwrap_or(span),
+                                part: p.clone(),
+                                field: name.to_string(),
+                                precise: site.is_some(),
+                            });
+                        }
+                        s.clone()
+                    }
                     None => {
                         let nearest = props
                             .keys()
@@ -1370,7 +1860,16 @@ impl<'a> Cx<'a> {
     /// table is polymorphic; permissive (`Unknown`) for the runtime-wiring
     /// functions whose payloads the runtime owns.
     fn check_std_call(&mut self, name: &str, args: &[SExpr], span: Span) -> S {
-        let shapes: Vec<S> = args.iter().map(|a| self.infer(a)).collect();
+        // Two positions defer inference so their arms can CHECK a literal
+        // against the shape the position expects instead of inferring it
+        // structurally (a plain map never fits a data shape): `put`'s value
+        // and `el`'s field map. Their arms below walk them exactly once.
+        let lazy = |i: usize| (name == "put" && i == 2) || (name == "el" && i == 1);
+        let shapes: Vec<S> = args
+            .iter()
+            .enumerate()
+            .map(|(i, a)| if lazy(i) { S::Unknown } else { self.infer(a) })
+            .collect();
         let arity = |cx: &mut Cx, n: usize| -> bool {
             if args.len() != n {
                 cx.err(
@@ -1432,14 +1931,19 @@ impl<'a> Cx<'a> {
                 if arity(self, 3) {
                     want(self, 0, &S::Map(Box::new(S::Unknown)));
                     want(self, 1, &S::Text);
-                    if let Some(S::Map(v)) = shapes.first() {
-                        let exp = (**v).clone();
-                        if !exp.is_unknown() {
-                            if let (Some(s), Some(a)) = (shapes.get(2), args.get(2)) {
-                                if !fits(self.tables, s, &exp) && !s.is_unknown() {
-                                    self.mismatch(a.span, &exp, s);
-                                }
-                            }
+                }
+                // The value position expects the map's element shape; a
+                // literal here CHECKS against it (so `put(m, k, {...})`
+                // with `m: {text: Shape}` builds the shape, records field
+                // sites, and never false-positives as a bare map).
+                if let Some(a2) = args.get(2) {
+                    match shapes.first() {
+                        Some(S::Map(v)) if !v.is_unknown() => {
+                            let exp = (**v).clone();
+                            self.check_against(a2, &exp);
+                        }
+                        _ => {
+                            self.infer(a2);
                         }
                     }
                 }
@@ -1573,7 +2077,124 @@ impl<'a> Cx<'a> {
                 }
                 S::Unknown
             }
-            "el" | "signup" | "login" | "logout" | "spawn" => S::Unknown,
+            // el(tag, attrs?, children?) / el(PartName, fields?, children?)
+            // — §9.4. The part form's field map is a checked construction
+            // site: keys must be properties of the part, values must fit
+            // their shapes, and every key lands in the field-site index
+            // (view fields rename through here). The tag form's attrs stay
+            // permissive (attr values are text or handler functions).
+            "el" => {
+                if args.is_empty() || args.len() > 3 {
+                    self.err(
+                        span,
+                        format!("`el` takes 1 to 3 arguments, found {}.", args.len()),
+                        "Write `el(tag, attrs?, children?)` or `el(PartName, fields?, children?)`."
+                            .to_string(),
+                        vec![],
+                    );
+                }
+                if let Some(a2) = args.get(2) {
+                    self.infer(a2);
+                }
+                match shapes.first() {
+                    Some(S::Part(p)) if !p.starts_with("std.") => {
+                        let p = p.clone();
+                        if let Some(a1) = args.get(1) {
+                            if let Expr::MapLit(items) = &a1.expr {
+                                let props = self
+                                    .tables
+                                    .part_props
+                                    .get(&p)
+                                    .cloned()
+                                    .unwrap_or_default();
+                                for it in items {
+                                    match it {
+                                        MapItem::Entry(k, kspan, v) => {
+                                            match props.get(k) {
+                                                Some(sh) => {
+                                                    let sh = sh.clone();
+                                                    self.sites.push(FieldSite {
+                                                        file: self.file.clone(),
+                                                        span: *kspan,
+                                                        part: p.clone(),
+                                                        field: k.clone(),
+                                                        precise: true,
+                                                    });
+                                                    if sh.is_unknown() {
+                                                        self.infer(v);
+                                                    } else {
+                                                        self.check_against(v, &sh);
+                                                    }
+                                                }
+                                                None if props.is_empty() => {
+                                                    self.infer(v);
+                                                }
+                                                None => {
+                                                    let nearest = props
+                                                        .keys()
+                                                        .min_by_key(|f| lev(f, k))
+                                                        .filter(|f| lev(f, k) <= 2);
+                                                    let note = match nearest {
+                                                        Some(f) => {
+                                                            format!("Did you mean `{}`?", f)
+                                                        }
+                                                        None => format!(
+                                                            "`{}` declares: {}.",
+                                                            p,
+                                                            props
+                                                                .keys()
+                                                                .map(|f| format!("`{}`", f))
+                                                                .collect::<Vec<_>>()
+                                                                .join(", ")
+                                                        ),
+                                                    };
+                                                    self.err(
+                                                        *kspan,
+                                                        format!(
+                                                            "`{}` is not a property of `{}`.",
+                                                            k, p
+                                                        ),
+                                                        note,
+                                                        vec![],
+                                                    );
+                                                    self.infer(v);
+                                                }
+                                            }
+                                        }
+                                        MapItem::Spread(x) => {
+                                            self.infer(x);
+                                        }
+                                    }
+                                }
+                            } else {
+                                self.infer(a1);
+                            }
+                        }
+                    }
+                    _ => {
+                        if let Some(a1) = args.get(1) {
+                            self.infer(a1);
+                        }
+                        if let Some(s0) = shapes.first() {
+                            if !s0.is_unknown()
+                                && !matches!(s0, S::Part(_) | S::Text)
+                            {
+                                self.err(
+                                    args[0].span,
+                                    format!(
+                                        "`el` builds from a tag text or a part name; found `{}`.",
+                                        render(s0)
+                                    ),
+                                    "Write `el(\"div\", ...)` or `el(PartName, ...)`.".to_string(),
+                                    vec![],
+                                );
+                            }
+                        }
+                    }
+                }
+                S::Unknown
+            }
+            "signup" | "login" | "logout" | "spawn" => S::Unknown,
             _ => S::Unknown,
         }
     }
@@ -1793,5 +2414,211 @@ mod route_tests {
             "space a\n\npart one {\n  route = \"/api/x\"\n  handle pipe = (req: std.Request) => req.path\n}\n\npart two {\n  route = \"/api/x/{id}\"\n  handle pipe = (req: std.Request) => req.path\n}\n\npart three {\n  route = \"/api/y\"\n  handle pipe = (req: std.Request) => req.path\n}\n",
         );
         assert!(ids.is_empty(), "{:?}", ids);
+    }
+
+    // -- increment 9: route capture rules --
+
+    #[test]
+    fn duplicate_route_capture_is_e021() {
+        let ids = diags_for(
+            "space a\n\npart item {\n  route = \"/x/{id}/{id}\"\n  handle pipe = (req: std.Request) => req.path\n}\n",
+        );
+        assert_eq!(ids, vec!["E021"]);
+    }
+
+    #[test]
+    fn illegal_route_capture_name_is_e021() {
+        let ids = diags_for(
+            "space a\n\npart item {\n  route = \"/x/{9id}\"\n  handle pipe = (req: std.Request) => req.path\n}\n",
+        );
+        assert_eq!(ids, vec!["E021"]);
+    }
+}
+
+/// Increment 9: cross-layer agreement, recursion refinement, construction
+/// sites (put/el), and the field-site index.
+#[cfg(test)]
+mod agreement_tests {
+    use crate::check_sources;
+    use crate::diag::Diag;
+
+    fn e006(src: &str) -> Vec<Diag> {
+        let r = check_sources(vec![("t.ash".to_string(), src.to_string())]);
+        let non_checker: Vec<_> = r.diags.iter().filter(|d| d.id != "E006").collect();
+        assert!(
+            non_checker.is_empty(),
+            "fixture should only produce E006, got: {:?}",
+            non_checker
+        );
+        r.diags
+    }
+
+    fn clean(src: &str) {
+        let r = check_sources(vec![("t.ash".to_string(), src.to_string())]);
+        assert!(r.diags.is_empty(), "expected clean, got: {:?}", r.diags);
+    }
+
+    #[test]
+    fn pipe_layers_disagreeing_in_param_shape_is_e006() {
+        let r = check_sources(vec![
+            (
+                "a.ash".to_string(),
+                "space a\n\npart P {\n  f pipe = (n: number) => n\n}\n".to_string(),
+            ),
+            (
+                "b.ash".to_string(),
+                "space b\nuse a\n\npart a.P {\n  f pipe = (t: text) => 1\n}\n".to_string(),
+            ),
+        ]);
+        let msgs: Vec<String> = r.diags.iter().map(|d| d.human()).collect();
+        assert!(
+            msgs.iter().any(|m| m.contains("agree in parameter shape")),
+            "{:?}",
+            msgs
+        );
+    }
+
+    #[test]
+    fn pipe_layers_disagreeing_in_return_shape_is_e006() {
+        let r = check_sources(vec![
+            (
+                "a.ash".to_string(),
+                "space a\n\npart P {\n  f pipe = (n: number) => n\n}\n".to_string(),
+            ),
+            (
+                "b.ash".to_string(),
+                "space b\nuse a\n\npart a.P {\n  f pipe = (n: number) => \"x\"\n}\n".to_string(),
+            ),
+        ]);
+        let msgs: Vec<String> = r.diags.iter().map(|d| d.human()).collect();
+        assert!(
+            msgs.iter().any(|m| m.contains("agree in return shape")),
+            "{:?}",
+            msgs
+        );
+    }
+
+    #[test]
+    fn agreeing_pipe_layers_are_clean() {
+        let r = check_sources(vec![
+            (
+                "a.ash".to_string(),
+                "space a\n\npart P {\n  f pipe = (n: number) => n + 1\n}\n".to_string(),
+            ),
+            (
+                "b.ash".to_string(),
+                "space b\nuse a\n\npart a.P {\n  f pipe = (n: number) => n * 2\n}\n".to_string(),
+            ),
+        ]);
+        assert!(r.diags.is_empty(), "{:?}", r.diags);
+    }
+
+    #[test]
+    fn stack_return_key_must_be_a_state_property() {
+        let d = e006(
+            "space a\n\npart P {\n  state ready: bool = false\n  start stack = () => {\n    return { redy: true }\n  }\n}\n",
+        );
+        assert_eq!(d.len(), 1);
+        assert!(d[0].human().contains("not a state property"), "{}", d[0].human());
+        assert!(d[0].human().contains("Did you mean `ready`?"), "{}", d[0].human());
+    }
+
+    #[test]
+    fn stack_return_value_must_fit_the_state_shape() {
+        let d = e006(
+            "space a\n\npart P {\n  state ready: bool = false\n  start stack = () => {\n    return { ready: 1 }\n  }\n}\n",
+        );
+        assert_eq!(d.len(), 1);
+        assert!(d[0].human().contains("expected `bool`"), "{}", d[0].human());
+    }
+
+    #[test]
+    fn good_stack_return_and_none_are_clean() {
+        clean(
+            "space a\n\npart P {\n  state ready: bool = false\n  start stack = () => {\n    return { ready: true }\n  }\n  stop stack reverse = () => {\n    return none\n  }\n}\n",
+        );
+    }
+
+    #[test]
+    fn nested_fn_map_return_is_not_a_stack_merge() {
+        // The inner lambda's returned map is a plain map, not a state
+        // merge — its `x` key must NOT be checked against `P`'s state.
+        clean(
+            "space a\n\npart P {\n  state ready: bool = false\n  start stack = () => {\n    let f = map([1], (n: number) => {\n      return { x: n }\n    })\n    return { ready: true }\n  }\n}\n",
+        );
+    }
+
+    #[test]
+    fn recursive_return_is_refined_for_callers() {
+        // Without refinement `fact(3) + \"x\"` would be Unknown + text and
+        // pass silently; with it the mixed `+` is caught.
+        let d = e006(
+            "space a\n\npart P {\n  fact = (n: number) => {\n    if n == 0 {\n      return 1\n    }\n    return n * fact(n - 1)\n  }\n  bad = () => fact(3) + \"x\"\n}\n",
+        );
+        assert!(!d.is_empty());
+        assert!(d[0].human().contains("mixes text and number"), "{}", d[0].human());
+    }
+
+    #[test]
+    fn put_with_a_literal_value_checks_against_the_element_shape() {
+        clean(
+            "space a\n\npart Msg {\n  id: text\n  body: text\n}\n\npart Store {\n  stored all: {text: Msg} = {}\n  add = (i: text) => {\n    all = put(all, i, { id: i, body: \"hi\" })\n  }\n}\n",
+        );
+        let d = e006(
+            "space a\n\npart Msg {\n  id: text\n  body: text\n}\n\npart Store {\n  stored all: {text: Msg} = {}\n  add = (i: text) => {\n    all = put(all, i, { id: i, body: 2 })\n  }\n}\n",
+        );
+        assert_eq!(d.len(), 1);
+        assert!(d[0].human().contains("expected `text`"), "{}", d[0].human());
+    }
+
+    #[test]
+    fn el_field_typo_is_caught_and_sites_are_recorded() {
+        let r = check_sources(vec![(
+            "t.ash".to_string(),
+            "space a\n\npart counter {\n  label: text\n  state n: number = 0\n  view = () => el(counter, { labl: \"hits\" })\n}\n"
+                .to_string(),
+        )]);
+        assert_eq!(r.diags.len(), 1, "{:?}", r.diags);
+        assert!(r.diags[0].human().contains("Did you mean `label`?"));
+
+        let r = check_sources(vec![(
+            "t.ash".to_string(),
+            "space a\n\npart counter {\n  label: text\n  state n: number = 0\n  view = () => el(counter, { label: \"hits\" })\n}\n"
+                .to_string(),
+        )]);
+        assert!(r.diags.is_empty(), "{:?}", r.diags);
+        assert!(
+            r.field_sites
+                .iter()
+                .any(|s| s.part == "a.counter" && s.field == "label" && s.precise),
+            "{:?}",
+            r.field_sites
+        );
+    }
+
+    #[test]
+    fn field_sites_cover_literals_and_accesses_with_exact_spans() {
+        let src = "space a\n\npart Msg {\n  id: text\n  body: text\n}\n\npart Api {\n  mk = (m: Msg) => m.body\n  go = () => mk({ id: \"a\", body: \"b\" })\n}\n";
+        let r = check_sources(vec![("t.ash".to_string(), src.to_string())]);
+        assert!(r.diags.is_empty(), "{:?}", r.diags);
+        // The literal's `id` and `body` keys plus the `m.body` access —
+        // and every recorded span must cover exactly the field's text.
+        let lines: Vec<&str> = src.lines().collect();
+        let mut found = Vec::new();
+        for s in &r.field_sites {
+            assert!(s.precise, "{:?}", s);
+            assert_eq!(s.span.start.line, s.span.end.line);
+            let line = lines[(s.span.start.line - 1) as usize];
+            let text: String = line
+                .chars()
+                .skip((s.span.start.col - 1) as usize)
+                .take((s.span.end.col - s.span.start.col) as usize)
+                .collect();
+            assert_eq!(text, s.field, "span text mismatch at {:?}", s);
+            found.push((s.field.clone(), s.span.start.line));
+        }
+        assert!(found.contains(&("id".to_string(), 10)), "{:?}", found);
+        assert!(found.contains(&("body".to_string(), 10)), "{:?}", found);
+        assert!(found.contains(&("body".to_string(), 9)), "{:?}", found);
     }
 }

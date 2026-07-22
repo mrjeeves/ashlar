@@ -19,7 +19,7 @@ Rules for every diagnostic (D1):
 | E003 | B4 | resolver | two names in one scope differ only by case or separator convention | note names both declarations; no edits (renaming is a judgment) |
 | E004 | C5 | composer | layer states a different merge kind than the property's identity | edits restating the declared kind |
 | E005 | C5 | composer | layer omits the kind on a property whose identity has one | edits inserting the declared kind after the property name |
-| E006 | A4 | checker | shape mismatch: cause states the expected and actual shape | mechanical edits where safe (`text(...)` wrap on mixed `+`, `!= none` on optional conditions); precise notes otherwise |
+| E006 | A4 | checker | shape mismatch: cause states the expected and actual shape — including pipe layers disagreeing in parameter/return shape (§4) and `stack` return keys that are not state properties | mechanical edits where safe (`text(...)` wrap on mixed `+`, `!= none` on optional conditions); precise notes otherwise |
 | E007 | A4 | parser | unexpected token (generic parse error) | note states what was expected |
 | E008 | B7 | resolver | `use` names a part or unknown space | edits rewriting to the part's space when that is the case |
 | E009 | A4 | lexer | `${` inside a text literal | note: Ashlar has no interpolation; join with `+` |
@@ -34,7 +34,7 @@ Rules for every diagnostic (D1):
 | E018 | A4 | parser | foreign top-level construct: `import`, `from`, `export`, `class`, `function`, `def`, `struct`, `interface`, `enum`, `mod`, `package` | note names the Ashlar construct to use instead (`use` / `part`) |
 | E019 | C4 | composer | stack function with parameters, or pipe function without exactly one | note states the arity rule |
 | E020 | C4 | parser | `reverse` after `append`/`deep`/no kind | edits deleting `reverse` |
-| E021 | A4 | checker | two `route` patterns can match one path (duplicates and capture overlaps alike) | note names both parts; changing a path is the author's choice |
+| E021 | A4 | checker | route rules: two patterns can match one path (duplicates and capture overlaps alike), a capture bound twice in one route, or an illegal capture name | note names both parts (or the offending capture); changing a path is the author's choice |
 | E022 | B6 | parser | file does not begin with a `space` header, or `space`/`use` appear after declarations | note: add `space <name>` as the first line (name is the author's choice — no edits) |
 | E023 | A4 | parser | foreign statement construct: `while`, `switch`, `match`, `try`, `catch`, `throw`, `var`, `const`, `elif` | note names the Ashlar construct to use instead (`for`/recursion, `if`, `??`/`none`, `let`) |
 | E024 | E2 | resolver | function literal outside the two legal positions (property value, call argument) | note: name it as a property, or inline it at the call |
