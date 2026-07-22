@@ -1,0 +1,3 @@
+part Widget {
+  label: text
+}

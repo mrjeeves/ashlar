@@ -1,0 +1,3 @@
+space demo
+
+class Message { }
