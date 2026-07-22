@@ -42,6 +42,8 @@ pub enum V {
 pub struct FnVal {
     /// The part whose scope the function body resolves against.
     pub part: String,
+    /// The view instance the function was created in, if any (§9.4).
+    pub instance: Option<String>,
     pub params: Vec<String>,
     pub body: FnBody,
     pub captured: BTreeMap<String, V>,
@@ -82,6 +84,15 @@ pub struct StateStore {
     pub dirty: bool,
 }
 
+/// A live view instance (§9.4): a view part used with `el` instantiates
+/// per use — fields from the call site, `state` per instance.
+#[derive(Debug, Clone, Default)]
+pub struct Instance {
+    pub part: String,
+    pub fields: BTreeMap<String, V>,
+    pub state: BTreeMap<String, V>,
+}
+
 /// One evaluation context over a checked program.
 pub struct Evaluator<'a> {
     pub program: &'a Program,
@@ -91,6 +102,24 @@ pub struct Evaluator<'a> {
     pub subs: BTreeMap<String, Vec<V>>,
     /// Log lines emitted (JSONL); the CLI drains this to stderr.
     pub log: Vec<String>,
+    /// Live view instances by id (§9.4).
+    pub instances: BTreeMap<String, Instance>,
+    /// Event handlers registered during renders: (instance, handler id) -> fn.
+    pub handlers: BTreeMap<(String, String), V>,
+    /// Instances whose state changed during the current event.
+    pub dirty_instances: Vec<String>,
+    /// Accounts: email -> (id, password hash). Persisted with `stored`.
+    pub users: BTreeMap<String, (String, String)>,
+    /// Sessions: token -> user id. Process-lifetime.
+    pub sessions: BTreeMap<String, String>,
+    /// The request's session context, set by the HTTP layer per dispatch.
+    pub current_session: Option<String>,
+    /// A session opened (Some(token)) or closed (Some empty) this request.
+    pub pending_cookie: Option<String>,
+    /// Functions queued by `spawn`, drained by the serve loop after the
+    /// current request completes (§9.7).
+    pub spawn_queue: Vec<V>,
+    counter: u64,
 }
 
 impl<'a> Evaluator<'a> {
@@ -101,9 +130,75 @@ impl<'a> Evaluator<'a> {
             state: StateStore::default(),
             subs: BTreeMap::new(),
             log: Vec::new(),
+            instances: BTreeMap::new(),
+            handlers: BTreeMap::new(),
+            dirty_instances: Vec::new(),
+            users: BTreeMap::new(),
+            sessions: BTreeMap::new(),
+            current_session: None,
+            pending_cookie: None,
+            spawn_queue: Vec::new(),
+            counter: 0,
         };
         ev.init_state();
         ev
+    }
+
+    fn fresh_id(&mut self, prefix: &str) -> String {
+        self.counter += 1;
+        format!("{}{}", prefix, self.counter)
+    }
+
+    /// Create a view instance of `part` with the given fields; `state`
+    /// properties initialize per instance (§9.4).
+    pub fn new_instance(&mut self, part: &str, fields: BTreeMap<String, V>) -> Result<String, Fault> {
+        let id = self.fresh_id("i");
+        let mut state = BTreeMap::new();
+        if let Some(cp) = self.composed.get(part) {
+            let names: Vec<String> = cp
+                .props
+                .iter()
+                .filter(|(_, p)| p.storage.is_some())
+                .map(|(n, _)| n.clone())
+                .collect();
+            for name in names {
+                let init = self
+                    .prop_value_expr(part, &name)
+                    .map(|e| self.eval_in_part(part, &e))
+                    .unwrap_or(Ok(V::None))?;
+                state.insert(name, init);
+            }
+        }
+        self.instances.insert(
+            id.clone(),
+            Instance {
+                part: part.to_string(),
+                fields,
+                state,
+            },
+        );
+        Ok(id)
+    }
+
+    /// Call a function property in an instance's scope.
+    pub fn call_instance_prop(&mut self, instance: &str, prop: &str, args: Vec<V>) -> R {
+        let part = match self.instances.get(instance) {
+            Some(i) => i.part.clone(),
+            None => return Err(Fault::new(format!("internal: no instance `{}`.", instance))),
+        };
+        let Some(e) = self.prop_value_expr(&part, prop) else {
+            return Err(Fault::new(format!(
+                "internal: `{}.{}` has no callable value.",
+                part, prop
+            )));
+        };
+        let mut env = Env {
+            part: part.clone(),
+            instance: Some(instance.to_string()),
+            frames: vec![BTreeMap::new()],
+        };
+        let f = self.eval(&mut env, &e)?;
+        self.call_with_instance(f, args, Some(instance.to_string()))
     }
 
     /// Initialize every state-class property to its declared initial value.
@@ -178,6 +273,7 @@ impl<'a> Evaluator<'a> {
     pub fn eval_in_part(&mut self, part: &str, e: &SExpr) -> R {
         let mut env = Env {
             part: part.to_string(),
+            instance: None,
             frames: vec![BTreeMap::new()],
         };
         self.eval(&mut env, e)
@@ -393,6 +489,7 @@ impl<'a> Evaluator<'a> {
             }
             Expr::FnLit(params, body) => Ok(V::Fn(Rc::new(FnVal {
                 part: env.part.clone(),
+                instance: env.instance.clone(),
                 params: params.iter().map(|p| p.name.clone()).collect(),
                 body: (**body).clone(),
                 captured: env.flatten(),
@@ -482,8 +579,19 @@ impl<'a> Evaluator<'a> {
             }
         }
         let n = &segs[0];
+        // Instance context first: fields and per-instance state (§9.4).
+        let instance_hit = env.instance.as_ref().and_then(|id| {
+            self.instances.get(id).and_then(|inst| {
+                inst.state
+                    .get(n)
+                    .or_else(|| inst.fields.get(n))
+                    .cloned()
+            })
+        });
         let mut v = if let Some(local) = env.get(n) {
             local.clone()
+        } else if let Some(iv) = instance_hit {
+            iv
         } else if self.part_has_prop(&env.part, n) {
             let part = env.part.clone();
             self.field(V::Part(part), n)?
@@ -550,8 +658,18 @@ impl<'a> Evaluator<'a> {
         }
     }
 
-    /// Call a function value.
+    /// Call a function value in its own captured instance context.
     pub fn call(&mut self, f: V, args: Vec<V>) -> R {
+        let instance = match &f {
+            V::Fn(fv) => fv.instance.clone(),
+            _ => None,
+        };
+        self.call_with_instance(f, args, instance)
+    }
+
+    /// Call a function value, overriding the instance context (event
+    /// dispatch runs a handler in the instance that rendered it).
+    pub fn call_with_instance(&mut self, f: V, args: Vec<V>, instance: Option<String>) -> R {
         let V::Fn(fv) = f else {
             return Err(Fault::new(format!(
                 "internal: {} is not callable.",
@@ -560,6 +678,7 @@ impl<'a> Evaluator<'a> {
         };
         let mut env = Env {
             part: fv.part.clone(),
+            instance: instance.or_else(|| fv.instance.clone()),
             frames: vec![fv.captured.clone(), BTreeMap::new()],
         };
         for (p, a) in fv.params.iter().zip(args) {
@@ -601,6 +720,24 @@ impl<'a> Evaluator<'a> {
             }
             Stmt::Assign(name, _, e) => {
                 let v = self.eval(env, e)?;
+                // In an instance context a state property is per-instance;
+                // the write marks the instance for re-render (§9.4).
+                if let Some(id) = env.instance.clone() {
+                    let is_instance_state = self
+                        .instances
+                        .get(&id)
+                        .map(|i| i.state.contains_key(name))
+                        .unwrap_or(false);
+                    if is_instance_state {
+                        if let Some(inst) = self.instances.get_mut(&id) {
+                            inst.state.insert(name.clone(), v);
+                        }
+                        if !self.dirty_instances.contains(&id) {
+                            self.dirty_instances.push(id);
+                        }
+                        return Ok(Flow::Normal);
+                    }
+                }
                 let key = format!("{}.{}", env.part, name);
                 self.assign_state(&key, v);
                 Ok(Flow::Normal)
@@ -888,30 +1025,113 @@ impl<'a> Evaluator<'a> {
                 Ok(V::Map(m))
             }
             "el" => {
-                let mut m = BTreeMap::new();
-                m.insert("__el".to_string(), arg(&mut args, 0));
-                m.insert("attrs".to_string(), arg(&mut args, 1));
-                m.insert("children".to_string(), arg(&mut args, 2));
-                Ok(V::Map(m))
+                match arg(&mut args, 0) {
+                    // el(PartName, fields, children): instantiate (§9.4).
+                    V::Part(part) => {
+                        let fields = match arg(&mut args, 1) {
+                            V::Map(m) => m,
+                            _ => BTreeMap::new(),
+                        };
+                        let id = self.new_instance(&part, fields)?;
+                        let mut m = BTreeMap::new();
+                        m.insert("__view_instance".to_string(), V::Text(id));
+                        Ok(V::Map(m))
+                    }
+                    tag => {
+                        let mut m = BTreeMap::new();
+                        m.insert("__el".to_string(), tag);
+                        m.insert("attrs".to_string(), arg(&mut args, 1));
+                        m.insert("children".to_string(), arg(&mut args, 2));
+                        Ok(V::Map(m))
+                    }
+                }
             }
             "spawn" => {
-                // v1: background tasks run to completion inline; the
-                // scheduling improvement is a runtime concern, not a
-                // semantic one (the task may not observe request state).
-                let f = arg(&mut args, 0);
-                self.call(f, vec![])?;
+                // Queued; the serve loop drains after the current request
+                // completes (§9.7).
+                self.spawn_queue.push(arg(&mut args, 0));
                 Ok(V::None)
             }
-            "signup" | "login" | "logout" => {
-                // Session wiring lives in the HTTP layer; the evaluator
-                // exposes the auth intent for it to act on.
-                let mut m = BTreeMap::new();
-                m.insert(format!("__{}", name), V::List(args));
-                Ok(V::Map(m))
+            "signup" => {
+                let (email, pw) = match (arg(&mut args, 0), arg(&mut args, 1)) {
+                    (V::Text(e), V::Text(p)) => (e, p),
+                    _ => return Err(Fault::new("internal: signup takes texts.".to_string())),
+                };
+                if self.users.contains_key(&email) {
+                    return Err(Fault {
+                        status: 409,
+                        message: "an account with that email exists.".to_string(),
+                    });
+                }
+                let id = self.fresh_id("u");
+                self.users
+                    .insert(email.clone(), (id.clone(), hash_password(&email, &pw)));
+                self.state.dirty = true; // accounts persist with stored state
+                self.open_session(&id);
+                Ok(user_value(&id, &email))
+            }
+            "login" => {
+                let (email, pw) = match (arg(&mut args, 0), arg(&mut args, 1)) {
+                    (V::Text(e), V::Text(p)) => (e, p),
+                    _ => return Err(Fault::new("internal: login takes texts.".to_string())),
+                };
+                match self.users.get(&email) {
+                    Some((id, hash)) if *hash == hash_password(&email, &pw) => {
+                        let id = id.clone();
+                        self.open_session(&id);
+                        Ok(user_value(&id, &email))
+                    }
+                    _ => Err(Fault {
+                        status: 401,
+                        message: "bad credentials.".to_string(),
+                    }),
+                }
+            }
+            "logout" => {
+                if let Some(tok) = self.current_session.take() {
+                    self.sessions.remove(&tok);
+                }
+                self.pending_cookie = Some(String::new()); // clears the cookie
+                Ok(V::None)
             }
             other => Err(Fault::new(format!("internal: unknown builtin `{}`.", other))),
         }
     }
+}
+
+impl<'a> Evaluator<'a> {
+    fn open_session(&mut self, user_id: &str) {
+        let token = self.fresh_id("s");
+        self.sessions.insert(token.clone(), user_id.to_string());
+        self.current_session = Some(token.clone());
+        self.pending_cookie = Some(token);
+    }
+
+    /// The user value for the current session, if any (`req.user`).
+    pub fn session_user(&self) -> V {
+        let Some(tok) = &self.current_session else { return V::None };
+        let Some(uid) = self.sessions.get(tok) else { return V::None };
+        for (email, (id, _)) in &self.users {
+            if id == uid {
+                return user_value(id, email);
+            }
+        }
+        V::None
+    }
+}
+
+fn user_value(id: &str, email: &str) -> V {
+    let mut m = BTreeMap::new();
+    m.insert("id".to_string(), V::Text(id.to_string()));
+    m.insert("email".to_string(), V::Text(email.to_string()));
+    V::Map(m)
+}
+
+/// Weak-by-construction v1 password hash (SHA-1 of email-salted input);
+/// zero-dependency, documented in the roadmap as an upgrade point.
+fn hash_password(email: &str, pw: &str) -> String {
+    let digest = crate::http::sha1(format!("{}\u{0}{}", email, pw).as_bytes());
+    digest.iter().map(|b| format!("{:02x}", b)).collect()
 }
 
 enum Flow {
@@ -965,9 +1185,11 @@ pub fn to_text(v: &V) -> String {
     }
 }
 
-/// Local scope: the enclosing part plus lexical frames.
+/// Local scope: the enclosing part, the view instance (if any), and
+/// lexical frames.
 pub struct Env {
     part: String,
+    instance: Option<String>,
     frames: Vec<BTreeMap<String, V>>,
 }
 

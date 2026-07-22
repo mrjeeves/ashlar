@@ -35,13 +35,17 @@ by full name (G3). Proof: **T-G**, five conformance tests including the
 G2 identity test — the same handler produces byte-identical results over
 HTTP and WebSocket envelopes.
 
-Remaining gaps, named: the live view protocol (server-side re-render and
-patch over the socket — `el` renders static HTML today), session-backed
-auth (`signup`/`login`/`logout` evaluate to intent markers the HTTP
-layer does not yet turn into cookies), foreign-function binding at run
-time (declared, checked, manifest-recorded, but a call faults), `spawn`
-running inline rather than backgrounded, and file serving (§9.8). Each
-is runtime depth, not language surface; none blocks the others.
+2026-07-22, second pass — the live view protocol (§9.4) is delivered:
+`el(PartName, fields)` instantiates per use with per-instance `state`;
+views render server-side with a ~20-line zero-dependency browser shim;
+events round-trip over the socket to run handlers in their instance;
+every instance whose state changed re-renders and patches in place.
+Session auth (§9.6: signup/login/logout with cookies, persisted
+accounts, `req.user`), static file serving with a traversal guard
+(§9.8), and queued `spawn` (§9.7) also landed. T-G is 9 conformance
+tests. Still open: foreign-function binding at run time (a call
+faults), and cross-instance reactivity for `synced` (a change patches
+instances that assigned it, not yet every view that read it).
 
 ## 3. Refactor commands — v1 DONE 2026-07-22 (scope below)
 
