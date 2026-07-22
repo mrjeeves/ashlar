@@ -6,5 +6,5 @@ part Message {
 }
 
 part Store {
-  stored messages: {chat.data.Message} = {}
+  stored messages: {text: chat.data.Message} = {}
 }

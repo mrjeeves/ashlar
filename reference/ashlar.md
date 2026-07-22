@@ -221,8 +221,10 @@ Every expression has a shape known at build time.
   `3.5`, `-1`.
 - `bool` — `true` or `false`.
 - `[shape]` — list, e.g. `[text]`. Literal: `[1, 2, 3]`.
-- `{shape}` — map with text keys, e.g. `{number}`. Literal:
-  `{ a: 1, b: 2 }`; keys are bare identifiers or text literals.
+- `{text: shape}` — map. Keys are always text and the key shape is written
+  literally as `text`, e.g. `{text: number}`. Literal: `{ a: 1, b: 2 }`;
+  keys are bare identifiers or text literals. Any other key shape is a
+  compile error with a correction.
 - `data` — any of: text, number, bool, none, list of data, map of data. The
   shape of decoded payloads.
 - A part name — the composed part (for a data shape, values matching its
@@ -412,8 +414,8 @@ part messages {
 ```
 
 `std.Request` has fields `path: text`, `method: text` (lowercase),
-`params: {text}`, `data: data` (the decoded JSON or form body, `none` when
-absent), `headers: {text}`, and `user: std.User?` (§9.6).
+`params: {text: text}`, `data: data` (the decoded JSON or form body, `none` when
+absent), `headers: {text: text}`, and `user: std.User?` (§9.6).
 
 The same handler serves HTTP and WebSocket; transport is not visible in
 handler code. Over HTTP the path is the URL; over the built-in socket a
@@ -434,7 +436,7 @@ space chat.data
 
 part Store {
   state draft: text = ""             // in memory
-  stored messages: {chat.data.Message} = {}   // on disk
+  stored messages: {text: chat.data.Message} = {}   // on disk
   synced online: number = 0          // pushed to connected views
 }
 ```
@@ -461,8 +463,8 @@ A part with a `view` property is a UI element. `view` is a zero-parameter
 function returning `std.Element`, built with `el`:
 
 ```
-el(tag: text, attrs: {text}?, children: [std.Element]?)
-el(PartName, fields: {data}?, children: [std.Element]?)
+el(tag: text, attrs: {text: text}?, children: [std.Element]?)
+el(PartName, fields: {text: data}?, children: [std.Element]?)
 ```
 
 Text values may appear in `children` and render escaped. A part used with
