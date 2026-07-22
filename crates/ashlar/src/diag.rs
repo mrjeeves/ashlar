@@ -28,7 +28,7 @@ pub const E017_STD_LAYER: Code = ("E017", "B3");
 pub const E018_FOREIGN_TOPLEVEL: Code = ("E018", "A4");
 pub const E019_STACK_PIPE_ARITY: Code = ("E019", "C4");
 pub const E020_BAD_REVERSE: Code = ("E020", "C4");
-// E021 reserved: route conflict (needs evaluated route values).
+pub const E021_ROUTE_CONFLICT: Code = ("E021", "A4");
 pub const E022_SPACE_HEADER: Code = ("E022", "B6");
 pub const E023_FOREIGN_STMT: Code = ("E023", "A4");
 pub const E024_FNLIT_POSITION: Code = ("E024", "E2");
