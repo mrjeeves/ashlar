@@ -23,7 +23,7 @@ Rules for every diagnostic (D1):
 | E007 | A4 | parser | unexpected token (generic parse error) | note states what was expected |
 | E008 | B7 | resolver | `use` names a part or unknown space | edits rewriting to the part's space when that is the case |
 | E009 | A4 | lexer | `${` inside a text literal | note: Ashlar has no interpolation; join with `+` |
-| E010 | A4 | lexer | `;` anywhere | edits deleting it |
+| E010 | A4 | lexer | `;` anywhere | edits replacing it with a newline (deletion would join `a; b` wrongly) |
 | E011 | A4 | lexer | `#` comment | edits replacing `#` with `//` |
 | E012 | A4 | lexer | raw newline inside a text literal | note: close the literal and join with `+` |
 | E013 | C5 | composer | property declared twice in one layer | note names both declarations |
