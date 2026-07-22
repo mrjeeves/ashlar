@@ -13,7 +13,7 @@ pub const E002_AMBIGUOUS_NAME: Code = ("E002", "B3");
 pub const E003_CASE_COLLISION: Code = ("E003", "B4");
 pub const E004_KIND_CHANGED: Code = ("E004", "C5");
 pub const E005_KIND_OMITTED: Code = ("E005", "C5");
-// E006 reserved: shape mismatch (checker, next increment).
+pub const E006_SHAPE: Code = ("E006", "A4");
 pub const E007_PARSE: Code = ("E007", "A4");
 pub const E008_USE_NOT_SPACE: Code = ("E008", "B7");
 pub const E009_INTERPOLATION: Code = ("E009", "A4");

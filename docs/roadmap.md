@@ -8,17 +8,19 @@ is done, it moves off this page and its test starts running for real,
 because a requirement with no passing test is not a satisfied requirement
 (T-META).
 
-## 1. Shape checker
+## 1. Shape checker — DONE 2026-07-22 (moves off this page next revision)
 
-Satisfies: **E006** (shape mismatch diagnostics), truthiness enforcement
-beyond the parser-level cases already caught, and the start of the **D3**
-inventory (every runtime-detectable condition either caught at compile
-time or documented as undetectable with a reason).
-
-Proof: an extended **T-A4** (plausible-but-wrong constructs that are shape
-errors specifically, not just syntax errors) plus a new **T-shape** suite
-covering the structural/nominal split of ADR-0004 — field presence, field
-extraness, per-field shape mismatch, and part-name-as-shape checks.
+Delivered as `crates/ashlar/src/check.rs`: E006 with expected/actual
+shapes stated, mechanical fixes where safe (`text(...)` wrap on mixed
+`+`, `!= none` on optional conditions), truthiness enforcement, data-
+shape literal checking (field presence/extraness/per-field shapes),
+optional-index misuse as a correction (the ADR-0008 F3 conversion), std
+and foreign call signatures, and `every` duration validation. Proof:
+13 checker unit tests + T-A4 fixtures 31–34 + every reference example
+checking clean under it (T-A2). Not yet covered (stays on the D3
+inventory): stack/pipe cross-layer shape agreement, route path shape
+rules (E021 territory), and deeper inference for unannotated recursion —
+all currently `Unknown`-permissive by design.
 
 ## 2. Evaluator and runtime
 

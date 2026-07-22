@@ -19,7 +19,7 @@ Rules for every diagnostic (D1):
 | E003 | B4 | resolver | two names in one scope differ only by case or separator convention | note names both declarations; no edits (renaming is a judgment) |
 | E004 | C5 | composer | layer states a different merge kind than the property's identity | edits restating the declared kind |
 | E005 | C5 | composer | layer omits the kind on a property whose identity has one | edits inserting the declared kind after the property name |
-| E006 | — | reserved | shape mismatch (checker, next increment) | — |
+| E006 | A4 | checker | shape mismatch: cause states the expected and actual shape | mechanical edits where safe (`text(...)` wrap on mixed `+`, `!= none` on optional conditions); precise notes otherwise |
 | E007 | A4 | parser | unexpected token (generic parse error) | note states what was expected |
 | E008 | B7 | resolver | `use` names a part or unknown space | edits rewriting to the part's space when that is the case |
 | E009 | A4 | lexer | `${` inside a text literal | note: Ashlar has no interpolation; join with `+` |
