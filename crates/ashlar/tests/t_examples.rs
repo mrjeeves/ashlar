@@ -422,6 +422,64 @@ fn t_examples_poll_channel_feeds_instances() {
 }
 
 #[test]
+fn t_examples_pong_syncs_across_two_windows() {
+    // Two pages, two sockets: A starting the game must flip B's button
+    // and animate B's ball; B pausing must reach A. The whole game is
+    // one synced state — windows are just observers with sliders.
+    let dir = staged("pong");
+    let (port, stop, join) = start(dir.clone());
+
+    let (_, _, html_a) = req(port, "GET", "/", None, None);
+    let page_a = attr_of(&html_a, "data-ash-page").unwrap();
+    let (_, _, html_b) = req(port, "GET", "/", None, None);
+    let page_b = attr_of(&html_b, "data-ash-page").unwrap();
+    let mut a = ws_open(port);
+    let mut b = ws_open(port);
+    ws_send(&mut a, &format!("{{\"page\":\"{}\"}}", page_a));
+    ws_send(&mut b, &format!("{{\"page\":\"{}\"}}", page_b));
+    std::thread::sleep(std::time::Duration::from_millis(80));
+
+    // A starts the game.
+    let (ainst, aflip) = event_target(&html_a, "onclick", 0).unwrap();
+    ws_send(
+        &mut a,
+        &format!("{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onclick\"}}}}", ainst, aflip),
+    );
+    // B's switch instance must receive its own 'pause' patch, and B's
+    // field must receive moving-ball patches from the schedule.
+    let (binst_switch, bflip) = event_target(&html_b, "onclick", 0).unwrap();
+    let b_flip_patch = ws_expect(&mut b, &binst_switch, 12);
+    assert!(b_flip_patch.contains("pause"), "{}", b_flip_patch);
+    let one = ws_expect(&mut b, "border-radius", 30);
+    let two = ws_expect(&mut b, "border-radius", 30);
+    assert_ne!(one, two, "B's ball must animate from A's start");
+
+    // B pauses; A must see 'start' again on ITS switch instance.
+    ws_send(
+        &mut b,
+        &format!("{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onclick\"}}}}", binst_switch, bflip),
+    );
+    let (ainst_switch, _) = event_target(&html_a, "onclick", 0).unwrap();
+    // A's socket carries its own earlier reply and 20fps ball frames;
+    // drain until the frame that patches A's switch back to "start".
+    let mut seen = String::new();
+    let mut flipped = false;
+    for _ in 0..200 {
+        seen = unescape(&ws_read(&mut a));
+        if seen.contains(&ainst_switch) && seen.contains(">start<") {
+            flipped = true;
+            break;
+        }
+    }
+    assert!(flipped, "A must see B's pause; last frame: {}", seen);
+    let _ = ainst;
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn t_examples_ticker_schedule_drives_state() {
     let dir = staged("ticker");
     let (port, stop, join) = start(dir.clone());
