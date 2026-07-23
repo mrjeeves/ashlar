@@ -40,7 +40,7 @@ pub enum V {
     ForeignFn(String),
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct FnVal {
     /// The part whose scope the function body resolves against.
     pub part: String,
@@ -815,7 +815,20 @@ impl<'a> Evaluator<'a> {
             iv
         } else if self.part_has_prop(&env.part, n) {
             let part = env.part.clone();
-            self.field(V::Part(part), n)?
+            let v = self.field(V::Part(part), n)?;
+            // A named function property referenced from instance scope
+            // carries that instance (§9.4/§9.5): `subscribe("c", note)`
+            // in a view's start stack must route `note`'s state writes
+            // to the subscribing instance, exactly as an inline literal
+            // would.
+            match (&env.instance, v) {
+                (Some(id), V::Fn(f)) if f.instance.is_none() && f.part == env.part => {
+                    let mut fv = (*f).clone();
+                    fv.instance = Some(id.clone());
+                    V::Fn(Rc::new(fv))
+                }
+                (_, v) => v,
+            }
         } else if let Some(full) = self.unique_bare_part(n) {
             V::Part(full)
         } else if let Some(full) = self.unique_bare_foreign(n) {
@@ -2053,6 +2066,35 @@ mod tests {
         let mut ev = Evaluator::new(&r.program, &r.composed);
         ev.call_prop("n.A", "go", vec![]).unwrap();
         assert_eq!(ev.state.values["n.A.seen"], V::Number(2.0));
+    }
+
+    #[test]
+    fn named_handler_subscribed_from_instance_carries_the_instance() {
+        // §9.5: a subscription made in a view's start stack subscribes
+        // THAT instance — including when the handler is a named function
+        // property rather than an inline literal. The named handler's
+        // state writes must land in the instance, not the singleton.
+        let src = "space n\n\npart B {\n  state latest: text = \"\"\n  start stack = () => {\n    subscribe(\"c\", note)\n    return none\n  }\n  note = (m: data) => {\n    latest = text(m)\n  }\n  view = () => el(\"span\", {}, [latest])\n}\n\npart A {\n  ping = (x: text) => {\n    publish(\"c\", x)\n  }\n}\n";
+        let r = check_sources(vec![("t.ash".to_string(), src.to_string())]);
+        assert!(r.diags.is_empty(), "{:?}", r.diags);
+        let mut ev = Evaluator::new(&r.program, &r.composed);
+        let id = ev.new_instance("n.B", BTreeMap::new()).unwrap();
+        ev.call_prop("n.A", "ping", vec![V::Text("granite".into())])
+            .unwrap();
+        assert_eq!(
+            ev.instances[&id].state["latest"],
+            V::Text("granite".into()),
+            "the named handler must write the subscribing instance's state"
+        );
+        assert_eq!(
+            ev.state.values["n.B.latest"],
+            V::Text("".into()),
+            "the part singleton's state must be untouched"
+        );
+        assert!(
+            ev.dirty_instances.contains(&id),
+            "the write must mark the instance for re-render"
+        );
     }
 
     #[test]
