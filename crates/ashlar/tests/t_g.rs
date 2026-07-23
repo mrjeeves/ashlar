@@ -1068,16 +1068,21 @@ part hello {
     let root = fixture("nostall", &[("app.ash", app)]);
     let (port, stop, join) = start(root);
 
-    // A speculative socket: opened, never sends a byte. Chrome does this
-    // on most page loads; it once froze the whole runtime.
-    let idle = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    // Six speculative sockets: opened, never send a byte. Chrome does
+    // this on most page loads; one of these once froze the whole
+    // runtime — and six make a serialized per-socket timeout (the lazy
+    // regression) blow the promptness bound below.
+    let idles: Vec<TcpStream> = (0..6)
+        .map(|_| TcpStream::connect(("127.0.0.1", port)).unwrap())
+        .collect();
 
     // A half request: the header cut mid-word, the rest withheld.
     let mut split = TcpStream::connect(("127.0.0.1", port)).unwrap();
     split.write_all(b"GET / HT").unwrap();
 
-    // With both misbehaving sockets open, a well-formed request must
-    // still answer promptly.
+    // With all seven misbehaving sockets open, a well-formed request
+    // must answer PROMPTLY — not merely inside a generous timeout.
+    let t0 = std::time::Instant::now();
     let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
     s.set_read_timeout(Some(std::time::Duration::from_secs(5)))
         .unwrap();
@@ -1085,9 +1090,19 @@ part hello {
     let mut buf = String::new();
     s.read_to_string(&mut buf).unwrap();
     assert!(buf.contains("still serving"), "{}", buf);
+    assert!(
+        t0.elapsed() < std::time::Duration::from_secs(2),
+        "request took {:?} with idle sockets open — the loop is waiting on them",
+        t0.elapsed()
+    );
 
-    // ...and the WebSocket envelope must still round-trip.
-    let reply = ws_roundtrip(port, "{\"path\":\"/\"}");
+    // ...and the WebSocket envelope must still round-trip, with a
+    // timeout so a stall fails the test instead of hanging the suite.
+    let mut w = ws_open(port);
+    w.set_read_timeout(Some(std::time::Duration::from_secs(5)))
+        .unwrap();
+    ws_send_frame(&mut w, "{\"path\":\"/\"}");
+    let reply = ws_read_frame(&mut w);
     assert!(reply.contains("still serving"), "{}", reply);
 
     // The split request completes late and still gets its answer.
@@ -1099,7 +1114,7 @@ part hello {
     split.read_to_string(&mut buf2).unwrap();
     assert!(buf2.contains("still serving"), "{}", buf2);
 
-    drop(idle);
+    drop(idles);
     stop.store(true, Ordering::Relaxed);
     join.join().unwrap();
 }
@@ -1140,15 +1155,15 @@ part board {{
     let (_, _, html_b) = http_req_full(port, "GET", "/", None, None);
     let ib = attr_of(&html_b, "data-ash-instance").unwrap();
     let hb = attr_of(&html_b, "data-ash-h").unwrap();
-    let _stalled = ws_open(port);
+    let mut stalled = ws_open(port);
     let mut live = ws_open(port);
     live.set_read_timeout(Some(std::time::Duration::from_secs(10)))
         .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(50));
 
-    // 200 growing broadcasts push well past kernel socket buffers and
-    // the server's outbound cap for the stalled peer (~20 MB total).
-    // Every one of B's replies must keep arriving promptly.
+    // 200 growing broadcasts (~41 MB total to the stalled peer; the old
+    // blocking send wedged at click ~65, when ~4.3 MB filled loopback's
+    // sndbuf + rcvbuf). Every one of B's replies must keep arriving.
     for k in 1..=200 {
         ws_send_frame(
             &mut live,
@@ -1169,6 +1184,208 @@ part board {{
     // Plain HTTP must also still answer.
     let (status, _) = http_get(port, "/");
     assert_eq!(status, 200, "HTTP dead after broadcasting past a stalled peer");
+
+    // The stalled peer must actually be SHED once it drains nothing for
+    // the stall window — otherwise its queue holds server memory
+    // forever. Wait past the window, then prove the socket was closed:
+    // draining it must end in EOF or a reset, never an open silence.
+    std::thread::sleep(std::time::Duration::from_secs(6));
+    let (status, _) = http_get(port, "/");
+    assert_eq!(status, 200, "server died shedding the stalled peer");
+    stalled
+        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+        .unwrap();
+    let mut sink = [0u8; 65536];
+    let mut drained = 0usize;
+    let shed = loop {
+        match stalled.read(&mut sink) {
+            Ok(0) => break true,
+            Ok(n) => {
+                drained += n;
+                if drained > 96 << 20 {
+                    break false;
+                }
+            }
+            Err(ref e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                break false;
+            }
+            Err(_) => break true,
+        }
+    };
+    assert!(
+        shed,
+        "stalled peer was never shed ({} bytes drained, socket still open)",
+        drained
+    );
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}
+
+#[test]
+fn t_g_oversized_body_gets_413_not_a_reset() {
+    // covers: the body cap answers with a correction (413 naming the
+    // limit), never a silent connection reset.
+    let app = r#"space capped
+
+part Server {
+  port = 0
+}
+
+part echo {
+  route = "/"
+  handle pipe = (req: std.Request) => "ok"
+}
+"#;
+    let root = fixture("cap413", &[("app.ash", app)]);
+    let (port, stop, join) = start(root);
+
+    let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    s.set_read_timeout(Some(std::time::Duration::from_secs(5)))
+        .unwrap();
+    // 20 MiB declared; the refusal must come from the headers alone,
+    // before any body is sent.
+    s.write_all(b"POST / HTTP/1.1\r\nhost: t\r\ncontent-length: 20971520\r\n\r\n")
+        .unwrap();
+    let mut buf = String::new();
+    s.read_to_string(&mut buf).unwrap();
+    assert!(buf.starts_with("HTTP/1.1 413"), "{}", buf);
+    assert!(buf.contains("16 MiB limit"), "the correction must name the limit: {}", buf);
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}
+
+#[test]
+fn t_g_slow_reader_download_never_stalls_the_loop() {
+    // covers: the no-stall contract on HTTP responses. A client that
+    // requests a file bigger than the kernel buffers and then reads
+    // nothing must not pause anyone (the old blocking response write
+    // held the loop for the whole transfer); when it finally drains, it
+    // still gets every byte.
+    let app = r#"space bulky
+
+part Server {
+  port = 0
+}
+
+part hello {
+  route = "/"
+  handle pipe = (req: std.Request) => "still serving"
+}
+
+part blobs {
+  route = "/static"
+  files = "public"
+}
+"#;
+    let root = fixture("slowread", &[("app.ash", app)]);
+    std::fs::create_dir_all(root.join("assets/public")).unwrap();
+    let big = vec![0x61u8; 24 << 20];
+    std::fs::write(root.join("assets/public/big.bin"), &big).unwrap();
+    let (port, stop, join) = start(root);
+
+    // Request the file, read nothing: kernel buffers fill (~4-5 MB on
+    // loopback), the rest must park server-side without blocking.
+    let mut slow = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    slow.write_all(b"GET /static/big.bin HTTP/1.1\r\nhost: t\r\n\r\n")
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(400));
+
+    // Everyone else stays prompt while 24 MB sits half-delivered.
+    let t0 = std::time::Instant::now();
+    let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    s.set_read_timeout(Some(std::time::Duration::from_secs(5)))
+        .unwrap();
+    s.write_all(b"GET / HTTP/1.1\r\nhost: t\r\n\r\n").unwrap();
+    let mut buf = String::new();
+    s.read_to_string(&mut buf).unwrap();
+    assert!(buf.contains("still serving"), "{}", buf);
+    assert!(
+        t0.elapsed() < std::time::Duration::from_secs(2),
+        "request took {:?} while a big download dribbled",
+        t0.elapsed()
+    );
+
+    // The slow reader wakes up and still receives the entire file.
+    slow.set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .unwrap();
+    let mut total = 0usize;
+    let mut first = Vec::new();
+    let mut sink = [0u8; 65536];
+    loop {
+        match slow.read(&mut sink) {
+            Ok(0) => break,
+            Ok(n) => {
+                if first.len() < 64 {
+                    first.extend_from_slice(&sink[..n.min(64)]);
+                }
+                total += n;
+            }
+            Err(e) => panic!("download died after {} bytes: {}", total, e),
+        }
+    }
+    assert!(
+        String::from_utf8_lossy(&first).starts_with("HTTP/1.1 200"),
+        "{}",
+        String::from_utf8_lossy(&first)
+    );
+    assert!(
+        total > 24 << 20,
+        "expected headers + 24 MiB body, got {} bytes",
+        total
+    );
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}
+
+#[test]
+fn t_g_large_ping_pongs_well_formed() {
+    // covers: RFC 6455 length encoding on the pong path — a ping over
+    // 125 bytes must come back with the 126/u16 extended length, not a
+    // truncated length byte that desyncs the client's frame reader.
+    let app = r#"space pinger
+
+part Server {
+  port = 0
+}
+
+part hello {
+  route = "/"
+  handle pipe = (req: std.Request) => "ok"
+}
+"#;
+    let root = fixture("bigping", &[("app.ash", app)]);
+    let (port, stop, join) = start(root);
+
+    let mut s = ws_open(port);
+    s.set_read_timeout(Some(std::time::Duration::from_secs(5)))
+        .unwrap();
+    let payload = [0x42u8; 300];
+    let mask = [0x0Au8, 0x0B, 0x0C, 0x0D];
+    let mut frame = vec![0x89u8, 0x80 | 126, (300u16 >> 8) as u8, 300u16 as u8];
+    frame.extend_from_slice(&mask);
+    for (i, b) in payload.iter().enumerate() {
+        frame.push(b ^ mask[i % 4]);
+    }
+    s.write_all(&frame).unwrap();
+
+    let mut h2 = [0u8; 2];
+    s.read_exact(&mut h2).unwrap();
+    assert_eq!(h2[0], 0x8A, "expected a pong frame, got 0x{:02x}", h2[0]);
+    assert_eq!(h2[1] & 0x7F, 126, "300-byte pong must use the u16 length");
+    let mut ext = [0u8; 2];
+    s.read_exact(&mut ext).unwrap();
+    assert_eq!(u16::from_be_bytes(ext), 300);
+    let mut back = vec![0u8; 300];
+    s.read_exact(&mut back).unwrap();
+    assert_eq!(back, payload, "pong payload must echo the ping's");
 
     stop.store(true, Ordering::Relaxed);
     join.join().unwrap();

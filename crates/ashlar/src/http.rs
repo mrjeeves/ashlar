@@ -176,14 +176,24 @@ fn decode_form(body: &str) -> V {
     V::Map(m)
 }
 
-/// Read one HTTP/1.1 request. `None` on connection close or malformed
-/// input (the connection is simply dropped; a server never panics).
+/// A request body larger than this is refused with 413 — the cap keeps
+/// one client from holding megabytes of loop memory, and the refusal
+/// names the limit instead of resetting the connection.
+pub const BODY_CAP: usize = 16 << 20;
+
+/// Hard bound on one socket's buffered request bytes (headers + body +
+/// slack); the pump stops reading past it so a flood cannot grow a
+/// buffer without limit inside a single tick.
+const REQ_MAX: usize = BODY_CAP + (1 << 20) + 4096;
+
 /// The state of one socket's buffered bytes as a request-in-progress.
 /// `Incomplete` means keep the socket and read more; `Bad` means the
-/// bytes can never become a request — drop the socket.
+/// bytes can never become a request — drop the socket; `TooLarge`
+/// deserves a 413 before the drop.
 pub enum Parse {
     Incomplete,
     Bad,
+    TooLarge,
     Ready(HttpRequest),
 }
 
@@ -216,8 +226,8 @@ pub fn parse_request(buf: &[u8]) -> Parse {
         .get("content-length")
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
-    if content_length > 1 << 20 {
-        return Parse::Bad;
+    if content_length > BODY_CAP {
+        return Parse::TooLarge;
     }
     let avail = &buf[header_end + 4..];
     if avail.len() < content_length {
@@ -239,18 +249,21 @@ fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
         .position(|w| w == needle)
 }
 
-pub fn write_response(
-    stream: &mut TcpStream,
+/// Build one complete response as bytes. Writing is the caller's
+/// problem — on the event loop nothing may block, so the bytes drain
+/// through the closing list as the peer accepts them.
+pub fn response_bytes(
     status: u16,
     content_type: &str,
     extra_headers: &[(String, String)],
     body: &[u8],
-) {
+) -> Vec<u8> {
     let reason = match status {
         200 => "OK",
         302 => "Found",
         403 => "Forbidden",
         404 => "Not Found",
+        413 => "Payload Too Large",
         _ => "Error",
     };
     // Every response is live output of the running program: a cached
@@ -269,8 +282,9 @@ pub fn write_response(
         head.push_str(&format!("{}: {}\r\n", k, v));
     }
     head.push_str("connection: close\r\n\r\n");
-    let _ = stream.write_all(head.as_bytes());
-    let _ = stream.write_all(body);
+    let mut out = head.into_bytes();
+    out.extend_from_slice(body);
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -926,6 +940,7 @@ pub fn serve(
         let mut last_scan = std::time::Instant::now();
         let mut ws_conns: Vec<WsConn> = Vec::new();
         let mut pending: Vec<PendingConn> = Vec::new();
+        let mut closing: Vec<CloseConn> = Vec::new();
         let exit = 'inner: loop {
             if stop.load(Ordering::Relaxed) {
                 break 'inner Exit::Stop;
@@ -966,12 +981,22 @@ pub fn serve(
                 let mut eof = false;
                 if !drop_pending {
                     loop {
+                        if pending[p].buf.len() > REQ_MAX {
+                            break;
+                        }
                         match pending[p].stream.read(&mut tmp) {
                             Ok(0) => {
                                 eof = true;
                                 break;
                             }
-                            Ok(n) => pending[p].buf.extend_from_slice(&tmp[..n]),
+                            Ok(n) => {
+                                pending[p].buf.extend_from_slice(&tmp[..n]);
+                                // Progress is liveness: a slow uploader
+                                // that keeps sending keeps its socket;
+                                // only silence runs out the deadline.
+                                pending[p].deadline =
+                                    now + std::time::Duration::from_secs(10);
+                            }
                             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
                             Err(_) => {
                                 drop_pending = true;
@@ -984,27 +1009,68 @@ pub fn serve(
                     match parse_request(&pending[p].buf) {
                         Parse::Ready(req) => {
                             let conn = pending.remove(p).stream;
-                            // The response write is bounded work against
-                            // a peer that just proved live: blocking with
-                            // a timeout keeps large bodies simple without
-                            // reintroducing a stall.
-                            let _ = conn.set_nonblocking(false);
-                            let _ = conn
-                                .set_write_timeout(Some(std::time::Duration::from_secs(5)));
-                            if let Some(ws) = handle_request(&mut ev, &root, conn, req) {
-                                ws_conns.push(ws);
+                            match handle_request(&mut ev, &root, conn, req) {
+                                Handled::Ws(ws) => ws_conns.push(ws),
+                                Handled::Close(c) => closing.push(c),
+                                Handled::Done => {}
                             }
                             ev.current_page = None;
                             continue;
                         }
+                        Parse::TooLarge => {
+                            // Refusal is still a correction: name the
+                            // limit instead of resetting the socket.
+                            let conn = pending.remove(p).stream;
+                            let msg = format!(
+                                "request body exceeds the {} MiB limit; send less per request",
+                                BODY_CAP >> 20
+                            );
+                            let resp =
+                                response_bytes(413, "text/plain", &[], msg.as_bytes());
+                            if let Handled::Close(c) = finish(conn, resp) {
+                                closing.push(c);
+                            }
+                            continue;
+                        }
                         Parse::Bad => drop_pending = true,
-                        Parse::Incomplete => drop_pending = eof,
+                        Parse::Incomplete => {
+                            drop_pending = eof || pending[p].buf.len() > REQ_MAX;
+                        }
                     }
                 }
                 if drop_pending {
                     pending.remove(p);
                 } else {
                     p += 1;
+                }
+            }
+            // Drain responses still leaving: whatever each socket
+            // accepts now, never more than the deadline allows.
+            let mut c = 0;
+            while c < closing.len() {
+                let cc = &mut closing[c];
+                let mut done = now >= cc.deadline;
+                if !done {
+                    while !cc.out.is_empty() {
+                        match cc.stream.write(&cc.out) {
+                            Ok(0) => break,
+                            Ok(n) => {
+                                cc.out.drain(..n);
+                            }
+                            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                            Err(_) => {
+                                cc.out.clear();
+                                break;
+                            }
+                        }
+                    }
+                    done = cc.out.is_empty();
+                }
+                if done {
+                    closing.remove(c);
+                } else {
+                    c += 1;
                 }
             }
             // Poll live sockets: read available bytes, process complete
@@ -1056,9 +1122,7 @@ pub fn serve(
                             drop_conn = true;
                         }
                         9 => {
-                            let mut pong = vec![0x8Au8, payload.len() as u8];
-                            pong.extend_from_slice(&payload);
-                            ws_conns[i].out.extend_from_slice(&pong);
+                            ws_enqueue_frame(&mut ws_conns[i], 0x0A, &payload);
                         }
                         _ => {}
                     }
@@ -1223,13 +1287,9 @@ fn flush_state(path: &std::path::Path, ev: &Evaluator) {
 }
 
 /// Static file parts (§9.8): route is a prefix; `files` names a
-/// directory under `assets/`.
-fn try_serve_files(
-    ev: &mut Evaluator,
-    root: &std::path::Path,
-    path: &str,
-    conn: &mut TcpStream,
-) -> bool {
+/// directory under `assets/`. Returns the full response bytes when a
+/// file part claims the path; the caller drains them without blocking.
+fn try_serve_files(ev: &mut Evaluator, root: &std::path::Path, path: &str) -> Option<Vec<u8>> {
     for (full, cp) in ev.composed.iter() {
         let (Some(route_prop), Some(files_prop)) = (cp.props.get("route"), cp.props.get("files"))
         else {
@@ -1260,11 +1320,10 @@ fn try_serve_files(
         };
         let rest = rest.trim_start_matches('/');
         if rest.is_empty() || rest.split('/').any(|s| s == "..") {
-            write_response(conn, 404, "text/plain", &[], b"not found");
-            return true;
+            return Some(response_bytes(404, "text/plain", &[], b"not found"));
         }
         let file = root.join("assets").join(&dir).join(rest);
-        match std::fs::read(&file) {
+        let resp = match std::fs::read(&file) {
             Ok(bytes) => {
                 let ct = match file.extension().and_then(|e| e.to_str()) {
                     Some("html") => "text/html",
@@ -1275,14 +1334,14 @@ fn try_serve_files(
                     Some("svg") => "image/svg+xml",
                     _ => "application/octet-stream",
                 };
-                write_response(conn, 200, ct, &[], &bytes);
+                response_bytes(200, ct, &[], &bytes)
             }
-            Err(_) => write_response(conn, 404, "text/plain", &[], b"not found"),
-        }
+            Err(_) => response_bytes(404, "text/plain", &[], b"not found"),
+        };
         let _ = full;
-        return true;
+        return Some(resp);
     }
-    false
+    None
 }
 
 fn session_from_headers(headers: &BTreeMap<String, String>) -> Option<String> {
@@ -1302,8 +1361,13 @@ pub struct WsConn {
     pub stream: TcpStream,
     pub buf: Vec<u8>,
     /// Outbound bytes not yet accepted by the socket; `ws_flush` drains
-    /// this every tick and sheds the connection past `WS_OUT_CAP`.
+    /// this every tick and sheds the peer when it stops draining.
     pub out: Vec<u8>,
+    /// Last moment the peer accepted bytes (or the queue was empty).
+    /// A queue that stays untouched past `WS_STALL` marks a dead peer;
+    /// judging by time-without-progress, not queue size, keeps a healthy
+    /// client that just received one huge patch from being shed.
+    pub last_drain: std::time::Instant,
     pub session: Option<String>,
     pub headers: BTreeMap<String, String>,
     /// The page render this socket belongs to (the shim announces it on
@@ -1312,12 +1376,55 @@ pub struct WsConn {
 }
 
 /// An accepted socket that has not yet delivered a complete request.
-/// The event loop reads it without blocking; one that never completes a
-/// request is dropped at its deadline instead of stalling everyone.
+/// The event loop reads it without blocking; one that stops making
+/// progress is dropped at its deadline instead of stalling everyone.
 struct PendingConn {
     stream: TcpStream,
     buf: Vec<u8>,
     deadline: std::time::Instant,
+}
+
+/// A socket whose response is still draining. The loop pushes the rest
+/// out as the peer accepts bytes, then closes; a peer that trickles
+/// (or stops) is cut at the deadline. This is what keeps a slow reader
+/// downloading a big file from ever pausing the runtime.
+struct CloseConn {
+    stream: TcpStream,
+    out: Vec<u8>,
+    deadline: std::time::Instant,
+}
+
+/// What one complete request turned into.
+enum Handled {
+    /// An upgraded live socket for the loop to poll.
+    Ws(WsConn),
+    /// A response that did not fit the socket buffer; drain and close.
+    Close(CloseConn),
+    /// Fully answered (or unanswerable); the socket closes now.
+    Done,
+}
+
+/// Push a finished response at the socket without blocking: whatever
+/// the kernel accepts now goes out now, and the remainder — if any —
+/// parks on the closing list.
+fn finish(mut conn: TcpStream, bytes: Vec<u8>) -> Handled {
+    let mut off = 0usize;
+    while off < bytes.len() {
+        match conn.write(&bytes[off..]) {
+            Ok(0) => return Handled::Done,
+            Ok(n) => off += n,
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                return Handled::Close(CloseConn {
+                    stream: conn,
+                    out: bytes[off..].to_vec(),
+                    deadline: std::time::Instant::now() + std::time::Duration::from_secs(30),
+                });
+            }
+            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(_) => return Handled::Done,
+        }
+    }
+    Handled::Done
 }
 
 /// Serve one complete request. An HTTP request is answered in place; a
@@ -1328,7 +1435,7 @@ fn handle_request(
     root: &std::path::Path,
     mut conn: TcpStream,
     req: HttpRequest,
-) -> Option<WsConn> {
+) -> Handled {
     if req
         .headers
         .get("upgrade")
@@ -1341,14 +1448,16 @@ fn handle_request(
             "HTTP/1.1 101 Switching Protocols\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-accept: {}\r\n\r\n",
             accept
         );
+        // A fresh socket's send buffer is empty; this small head cannot
+        // block or short-write.
         let _ = conn.write_all(head.as_bytes());
-        let _ = conn.set_nonblocking(true);
-        return Some(WsConn {
+        return Handled::Ws(WsConn {
             session: session_from_headers(&req.headers),
             headers: req.headers,
             stream: conn,
             buf: Vec::new(),
             out: Vec::new(),
+            last_drain: std::time::Instant::now(),
             page: None,
         });
     }
@@ -1359,8 +1468,10 @@ fn handle_request(
     ev.begin_page();
 
     // Static files (§9.8) match by route prefix before dynamic dispatch.
-    if req.method == "GET" && try_serve_files(ev, root, &req.path, &mut conn) {
-        return None;
+    if req.method == "GET" {
+        if let Some(resp) = try_serve_files(ev, root, &req.path) {
+            return finish(conn, resp);
+        }
     }
 
     // §9.2: `data` is the decoded JSON or form body, `none` when absent.
@@ -1385,7 +1496,7 @@ fn handle_request(
     // Session context in, cookie intent out (§9.6).
     ev.current_session = session_from_headers(&req.headers);
     ev.pending_cookie = None;
-    match dispatch(ev, &req.method, &req.path, data, &req.headers) {
+    let resp = match dispatch(ev, &req.method, &req.path, data, &req.headers) {
         Ok(v) => match render_response(ev, &v) {
             Ok((status, ct, body, mut extra)) => {
                 if let Some(tok) = ev.pending_cookie.take() {
@@ -1396,11 +1507,9 @@ fn handle_request(
                     };
                     extra.push(("set-cookie".to_string(), cookie));
                 }
-                write_response(&mut conn, status, &ct, &extra, &body);
+                response_bytes(status, &ct, &extra, &body)
             }
-            Err(f) => {
-                write_response(&mut conn, f.status, "text/plain", &[], f.message.as_bytes());
-            }
+            Err(f) => response_bytes(f.status, "text/plain", &[], f.message.as_bytes()),
         },
         Err(f) => {
             let body = format!(
@@ -1411,10 +1520,10 @@ fn handle_request(
                     s
                 }
             );
-            write_response(&mut conn, f.status, "application/json", &[], body.as_bytes());
+            response_bytes(f.status, "application/json", &[], body.as_bytes())
         }
-    }
-    None
+    };
+    finish(conn, resp)
 }
 
 /// Process one text envelope from a live socket; the reply JSON goes
@@ -1486,19 +1595,22 @@ fn patches_json(patches: &[(String, String)]) -> String {
     to_json(&V::Map(m))
 }
 
-/// Write a text frame on a non-blocking stream, retrying on WouldBlock.
-/// Queued outbound bytes past which a socket is judged a dead or
-/// stalled consumer and shed. Generous enough to ride out a paused tab;
-/// small enough that one dead peer never holds the server's memory.
-const WS_OUT_CAP: usize = 2 << 20;
+/// How long a non-empty outbound queue may sit with the peer accepting
+/// nothing before the peer is judged dead and shed. Time without
+/// progress — not queue size — is the test, so one huge patch to a
+/// healthy client never gets it disconnected.
+const WS_STALL: std::time::Duration = std::time::Duration::from_secs(5);
 
-/// Frame `text` and queue it on `conn`; bytes leave in `ws_flush`.
+/// Absolute outbound queue bound: a runaway backlog is shed at once so
+/// one dead peer can never hold this much of the server's memory.
+const WS_OUT_MAX: usize = 64 << 20;
+
+/// Frame a payload and queue it on `conn`; bytes leave in `ws_flush`.
 /// Queueing never blocks, so a broadcast to a stalled peer costs the
 /// loop nothing — the old direct write here retried a full socket
 /// forever, freezing every client because one stopped reading.
-fn ws_enqueue(conn: &mut WsConn, text: &str) {
-    let payload = text.as_bytes();
-    conn.out.push(0x81);
+fn ws_enqueue_frame(conn: &mut WsConn, opcode: u8, payload: &[u8]) {
+    conn.out.push(0x80 | opcode);
     let len = payload.len();
     if len < 126 {
         conn.out.push(len as u8);
@@ -1512,19 +1624,29 @@ fn ws_enqueue(conn: &mut WsConn, text: &str) {
     conn.out.extend_from_slice(payload);
 }
 
+fn ws_enqueue(conn: &mut WsConn, text: &str) {
+    ws_enqueue_frame(conn, 0x01, text.as_bytes());
+}
+
 /// Write as much queued outbound data as the socket accepts right now.
-/// `false` means the connection is dead or hopelessly behind — drop it.
+/// `false` means the connection is dead — closed, stalled past
+/// `WS_STALL` with bytes waiting, or `WS_OUT_MAX` behind — drop it.
 fn ws_flush(conn: &mut WsConn) -> bool {
     while !conn.out.is_empty() {
         match conn.stream.write(&conn.out) {
             Ok(0) => return false,
             Ok(n) => {
                 conn.out.drain(..n);
+                conn.last_drain = std::time::Instant::now();
             }
             Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
             Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {}
             Err(_) => return false,
         }
     }
-    conn.out.len() <= WS_OUT_CAP
+    if conn.out.is_empty() {
+        conn.last_drain = std::time::Instant::now();
+        return true;
+    }
+    conn.out.len() <= WS_OUT_MAX && conn.last_drain.elapsed() < WS_STALL
 }
