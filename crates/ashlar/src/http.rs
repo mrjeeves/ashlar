@@ -518,21 +518,45 @@ pub fn dispatch(
 /// The browser runs no program code — only this transport shim.
 const CLIENT_JS: &str = r#"(function(){
 var ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/');
+var sent={};
 function send(o){if(ws.readyState===1)ws.send(JSON.stringify(o));}
 ws.onopen=function(){send({page:document.body.getAttribute('data-ash-page')});};
+function fieldKey(inst,el){var box=document.querySelector('[data-ash-instance="'+inst+'"]');
+ if(!box)return null;var all=box.querySelectorAll(el.tagName);
+ return inst+':'+el.tagName+':'+Array.prototype.indexOf.call(all,el);}
 function fire(kind,e){var t=e.target.closest('[data-ash-h]');
  if(!t||t.getAttribute('data-ash-on')!==kind)return;
  if(kind==='onsubmit')e.preventDefault();
  var v=(e.target&&'value'in e.target)?e.target.value:null;
- send({event:{instance:t.closest('[data-ash-instance]').getAttribute('data-ash-instance'),
-  h:t.getAttribute('data-ash-h'),name:kind,value:v}});}
+ var inst=t.closest('[data-ash-instance]').getAttribute('data-ash-instance');
+ if(v!==null){var k=fieldKey(inst,e.target);if(k)sent[k]=v;}
+ send({event:{instance:inst,h:t.getAttribute('data-ash-h'),name:kind,value:v}});}
 document.addEventListener('click',function(e){fire('onclick',e)});
 document.addEventListener('input',function(e){fire('oninput',e)});
 document.addEventListener('submit',function(e){fire('onsubmit',e)});
 ws.onmessage=function(m){var d=JSON.parse(m.data);if(!d.patches)return;
  d.patches.forEach(function(p){
   var n=document.querySelector('[data-ash-instance="'+p.instance+'"]');
-  if(n)n.outerHTML=p.html;});};
+  if(!n)return;
+  // A patch must not eat the user's focus, caret, or typing still in
+  // flight: remember the focused field (by tag + index inside the
+  // instance), swap, then restore. The server's value wins only when it
+  // DIFFERS from what we last sent (an intentional change, e.g. a
+  // cleared draft); an echo of our own event keeps the live value.
+  var f=document.activeElement,idx=-1,tag='',val=null,s=0,en=0;
+  if(f&&n.contains(f)&&('value'in f)){
+   tag=f.tagName;var all=n.querySelectorAll(tag);
+   idx=Array.prototype.indexOf.call(all,f);
+   val=f.value;s=f.selectionStart;en=f.selectionEnd;}
+  n.outerHTML=p.html;
+  if(idx>=0){
+   var n2=document.querySelector('[data-ash-instance="'+p.instance+'"]');
+   var f2=n2&&n2.querySelectorAll(tag)[idx];
+   if(f2){var k=p.instance+':'+tag+':'+idx;
+    if(sent[k]!==undefined&&f2.value===sent[k]){f2.value=val;}
+    else{delete sent[k];s=en=f2.value.length;}
+    f2.focus();try{f2.setSelectionRange(s,en);}catch(_){}}}
+ });};
 })();"#;
 
 /// Render a handler's return value as an HTTP response (§9.2).

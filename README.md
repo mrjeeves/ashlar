@@ -34,7 +34,7 @@ part greet {
 ```
 
 A UI element is a part with a `view`. It renders server-side; the browser
-runs a ~20-line transport shim and no program code. Handlers run on the
+runs a small transport shim and no program code. Handlers run on the
 server, and every view that read a changed state property re-renders and
 patches in place — across every connected client (`examples/counter`):
 
