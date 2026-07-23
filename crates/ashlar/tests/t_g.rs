@@ -1567,3 +1567,110 @@ part seeder {
     stop.store(true, Ordering::Relaxed);
     join.join().unwrap();
 }
+
+#[test]
+fn t_g_state_flush_is_atomic() {
+    // Stored state flushes through a temp file that is renamed over the
+    // live one, so a crash mid-write can never truncate it. After a
+    // write the real file is complete valid JSON and no `.tmp` lingers —
+    // even if a stale temp was left behind by an earlier crash.
+    let app = r#"space demo
+
+part Server {
+  port = 0
+}
+
+part counter {
+  route = "/bump"
+  stored n: number = 0
+  handle pipe = (req: std.Request) => {
+    bump()
+    return n
+  }
+  bump = () => { n = n + 1 }
+}
+"#;
+    let root = fixture("atomic", &[("app.ash", app)]);
+    // A stale temp from a hypothetical earlier crash must not confuse the
+    // next flush.
+    std::fs::write(root.join(".ashlar-state.json.tmp"), b"garbage{{").unwrap();
+
+    let (port, stop, join) = start(root.clone());
+    let (_, b) = http_get(port, "/bump");
+    assert_eq!(b, "1");
+    // Let the loop flush the dirty state.
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    let state = root.join(".ashlar-state.json");
+    let body = std::fs::read_to_string(&state).expect("state file exists after a stored write");
+    assert!(
+        body.contains("demo.counter.n") && body.trim_start().starts_with('{'),
+        "the live file is whole valid JSON, never a half-write: {}",
+        body
+    );
+    assert!(
+        !root.join(".ashlar-state.json.tmp").exists(),
+        "the temp file is renamed away, never left behind"
+    );
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}
+
+/// A raw request with one extra header line (the helpers don't take
+/// arbitrary headers; the forwarded-scheme test needs one).
+fn http_req_hdr(port: u16, method: &str, path: &str, header: &str, body: &str) -> String {
+    let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    s.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
+    let req = format!(
+        "{} {} HTTP/1.1\r\nhost: t\r\n{}\r\ncontent-length: {}\r\n\r\n{}",
+        method, path, header, body.len(), body
+    );
+    s.write_all(req.as_bytes()).unwrap();
+    let mut buf = String::new();
+    s.read_to_string(&mut buf).unwrap();
+    buf
+}
+
+#[test]
+fn t_g_session_cookie_is_hardened_behind_tls() {
+    // The session cookie is HttpOnly + SameSite=Lax always, and gains
+    // Secure only when a terminating proxy reports the request arrived
+    // over TLS (X-Forwarded-Proto: https) — so it never rides a plaintext
+    // hop, and a plain-HTTP origin still works in development.
+    let app = r#"space auth
+
+part Server {
+  port = 0
+}
+
+part reg {
+  route = "/api/signup"
+  handle pipe = (req: std.Request) => signup(text(req.data.email), text(req.data.password))
+}
+"#;
+    let root = fixture("cookie", &[("app.ash", app)]);
+    let (port, stop, join) = start(root);
+
+    let plain = http_req_hdr(port, "POST", "/api/signup", "x-nothing: 1",
+        "{\"email\":\"a@x.dev\",\"password\":\"pw\"}");
+    let setc = plain
+        .lines()
+        .find(|l| l.to_ascii_lowercase().starts_with("set-cookie:"))
+        .expect("signup sets a cookie");
+    assert!(setc.contains("HttpOnly"), "{}", setc);
+    assert!(setc.contains("SameSite=Lax"), "{}", setc);
+    assert!(!setc.contains("Secure"), "plain HTTP must NOT mark the cookie Secure: {}", setc);
+
+    let tls = http_req_hdr(port, "POST", "/api/signup", "x-forwarded-proto: https",
+        "{\"email\":\"b@x.dev\",\"password\":\"pw\"}");
+    let setc2 = tls
+        .lines()
+        .find(|l| l.to_ascii_lowercase().starts_with("set-cookie:"))
+        .expect("signup sets a cookie");
+    assert!(setc2.contains("Secure"), "behind TLS the cookie must be Secure: {}", setc2);
+    assert!(setc2.contains("HttpOnly") && setc2.contains("SameSite=Lax"), "{}", setc2);
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}

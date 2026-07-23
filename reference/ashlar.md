@@ -535,6 +535,10 @@ The runtime provides accounts, sessions, and the request identity.
 - `req.user: std.User?` — the session's account. `std.User` has `id: text`
   and `email: text`.
 
+The session cookie is `HttpOnly` and `SameSite=Lax`, and gains `Secure`
+when the request arrived over TLS — an `X-Forwarded-Proto: https` from a
+terminating proxy in front of the server (ADR-0013).
+
 Authorization is the `allow` property (§9.2): any routed part may declare
 `allow = (req: std.Request) => bool`; `false` ends the request with 403
 before `handle` runs. `allow` composes as replace unless a kind is declared.
