@@ -518,9 +518,13 @@ pub fn dispatch(
 /// The browser runs no program code — only this transport shim.
 const CLIENT_JS: &str = r#"(function(){
 var ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/');
-var sent={};
-function send(o){if(ws.readyState===1)ws.send(JSON.stringify(o));}
-ws.onopen=function(){send({page:document.body.getAttribute('data-ash-page')});};
+var sent={},queue=[];
+// Clicks before the socket opens must not vanish: queue and flush.
+function send(o){var t=JSON.stringify(o);
+ if(ws.readyState===1)ws.send(t);else queue.push(t);}
+ws.onopen=function(){
+ ws.send(JSON.stringify({page:document.body.getAttribute('data-ash-page')}));
+ queue.forEach(function(t){ws.send(t)});queue=[];};
 function fieldKey(inst,el){var box=document.querySelector('[data-ash-instance="'+inst+'"]');
  if(!box)return null;var all=box.querySelectorAll(el.tagName);
  return inst+':'+el.tagName+':'+Array.prototype.indexOf.call(all,el);}
@@ -537,30 +541,46 @@ document.addEventListener('submit',function(e){fire('onsubmit',e)});
 ws.onclose=function(){
  (function again(){fetch('/',{cache:'no-store'}).then(function(){location.reload();})
   .catch(function(){setTimeout(again,400);});})();};
+// A patch must not eat the user's focus, caret, or typing still in
+// flight: remember the focused field (by tag + index inside the
+// instance), swap, then restore. The server's value wins only when it
+// DIFFERS from what we last sent (an intentional change, e.g. a
+// cleared draft); an echo of our own event keeps the live value.
+function apply(inst,html){
+ var n=document.querySelector('[data-ash-instance="'+inst+'"]');
+ if(!n)return;
+ var f=document.activeElement,idx=-1,tag='',val=null,s=0,en=0;
+ if(f&&n.contains(f)&&('value'in f)){
+  tag=f.tagName;var all=n.querySelectorAll(tag);
+  idx=Array.prototype.indexOf.call(all,f);
+  val=f.value;s=f.selectionStart;en=f.selectionEnd;}
+ n.outerHTML=html;
+ if(idx>=0){
+  var n2=document.querySelector('[data-ash-instance="'+inst+'"]');
+  var f2=n2&&n2.querySelectorAll(tag)[idx];
+  if(f2){var k=inst+':'+tag+':'+idx;
+   if(sent[k]!==undefined&&f2.value===sent[k]){f2.value=val;}
+   else{delete sent[k];s=en=f2.value.length;}
+   f2.focus();try{f2.setSelectionRange(s,en);}catch(_){}}}}
+// Replacing a node mid-gesture kills the gesture: while a pointer is
+// held (a drag on a slider, a press on a button), patches to THAT
+// element's instance defer — latest wins — and flush on release.
+// Everything else keeps updating live.
+var held=null,deferred={};
+document.addEventListener('pointerdown',function(e){held=e.target;});
+function release(){held=null;
+ for(var id in deferred){apply(id,deferred[id]);}
+ deferred={};}
+document.addEventListener('pointerup',release);
+document.addEventListener('pointercancel',release);
 ws.onmessage=function(m){var d=JSON.parse(m.data);
  if(d.error&&/no (instance|handler)/.test(d.error)){ws.close();return;}
  if(!d.patches)return;
  d.patches.forEach(function(p){
   var n=document.querySelector('[data-ash-instance="'+p.instance+'"]');
   if(!n)return;
-  // A patch must not eat the user's focus, caret, or typing still in
-  // flight: remember the focused field (by tag + index inside the
-  // instance), swap, then restore. The server's value wins only when it
-  // DIFFERS from what we last sent (an intentional change, e.g. a
-  // cleared draft); an echo of our own event keeps the live value.
-  var f=document.activeElement,idx=-1,tag='',val=null,s=0,en=0;
-  if(f&&n.contains(f)&&('value'in f)){
-   tag=f.tagName;var all=n.querySelectorAll(tag);
-   idx=Array.prototype.indexOf.call(all,f);
-   val=f.value;s=f.selectionStart;en=f.selectionEnd;}
-  n.outerHTML=p.html;
-  if(idx>=0){
-   var n2=document.querySelector('[data-ash-instance="'+p.instance+'"]');
-   var f2=n2&&n2.querySelectorAll(tag)[idx];
-   if(f2){var k=p.instance+':'+tag+':'+idx;
-    if(sent[k]!==undefined&&f2.value===sent[k]){f2.value=val;}
-    else{delete sent[k];s=en=f2.value.length;}
-    f2.focus();try{f2.setSelectionRange(s,en);}catch(_){}}}
+  if(held&&n.contains(held)){deferred[p.instance]=p.html;return;}
+  apply(p.instance,p.html);
  });};
 })();"#;
 
@@ -615,6 +635,11 @@ pub fn render_instance(ev: &mut Evaluator, id: &str) -> Result<String, Fault> {
     for k in stale {
         ev.handlers.remove(&k);
     }
+    // Handler ids are the render POSITION within this instance, so the
+    // same view shape mints the same ids every render — an event from a
+    // not-yet-patched page still names the right handler. Rotating ids
+    // made every interactive burst race its own re-render.
+    ev.render_handler_seq = 0;
     ev.begin_render(id);
     let v = ev.call_instance_prop(id, "view", vec![]);
     ev.end_render();
@@ -646,7 +671,8 @@ fn render_el(ev: &mut Evaluator, v: &V, instance: &str) -> Result<String, Fault>
                 for (k, val) in attrs {
                     match val {
                         V::Fn(_) => {
-                            let hid = format!("h{}", ev.handlers.len() + 1);
+                            ev.render_handler_seq += 1;
+                            let hid = format!("h{}", ev.render_handler_seq);
                             ev.handlers
                                 .insert((instance.to_string(), hid.clone()), val.clone());
                             out.push_str(&format!(
