@@ -586,6 +586,38 @@ impl<'a> Evaluator<'a> {
                 }
             }
             Expr::Call(callee, args) => {
+                // Chain properties run every layer when CALLED (§4): a
+                // callee resolving to a `stack`/`pipe` prop dispatches to
+                // the chain runners — a chain has no single value to eval.
+                if let Expr::NameRef(segs) = &callee.expr {
+                    if env.get(&segs[0]).is_none() {
+                        if let Some((part, prop, kind, reverse)) = self.chain_target(env, segs) {
+                            let mut vals = Vec::new();
+                            for a in args {
+                                vals.push(self.eval(env, a)?);
+                            }
+                            return match kind {
+                                crate::ast::MergeKind::Pipe => {
+                                    let first = vals.into_iter().next().unwrap_or(V::None);
+                                    self.run_pipe(&part, &prop, reverse, first)
+                                }
+                                _ => {
+                                    // A stack call returns the part (§4).
+                                    // A bare call inside an instance runs
+                                    // the instance's own stack.
+                                    match (&env.instance, segs.len()) {
+                                        (Some(id), 1) => {
+                                            let id = id.clone();
+                                            self.run_instance_stack(&id, &prop, reverse)?;
+                                        }
+                                        _ => self.run_stack(&part, &prop, reverse)?,
+                                    }
+                                    Ok(V::Part(part))
+                                }
+                            };
+                        }
+                    }
+                }
                 // std builtins and log.* dispatch by name before value eval.
                 if let Expr::NameRef(segs) = &callee.expr {
                     if segs.len() == 2 && segs[0] == "log" && env.get("log").is_none() {
@@ -783,6 +815,41 @@ impl<'a> Evaluator<'a> {
             .get(part)
             .map(|cp| cp.props.contains_key(prop))
             .unwrap_or(false)
+    }
+
+    /// Resolve a call target to a chain (`stack`/`pipe`) property:
+    /// `prop(...)` in the enclosing part, `Part.prop(...)` by unique bare
+    /// name, or `full.name.Part.prop(...)` by longest part prefix.
+    fn chain_target(
+        &self,
+        env: &Env,
+        segs: &[String],
+    ) -> Option<(String, String, crate::ast::MergeKind, bool)> {
+        let chain_kind = |part: &str, prop: &str| -> Option<(crate::ast::MergeKind, bool)> {
+            let (kind, rev) = self.composed.get(part)?.props.get(prop)?.kind?;
+            matches!(kind, crate::ast::MergeKind::Stack | crate::ast::MergeKind::Pipe)
+                .then_some((kind, rev))
+        };
+        if segs.len() == 1 {
+            let (kind, rev) = chain_kind(&env.part, &segs[0])?;
+            return Some((env.part.clone(), segs[0].clone(), kind, rev));
+        }
+        let (head, last) = segs.split_at(segs.len() - 1);
+        let prop = &last[0];
+        if head.len() == 1 {
+            if let Some(full) = self.unique_bare_part(&head[0]) {
+                if let Some((kind, rev)) = chain_kind(&full, prop) {
+                    return Some((full, prop.clone(), kind, rev));
+                }
+            }
+        }
+        let prefix = head.join(".");
+        if self.composed.contains_key(&prefix) {
+            if let Some((kind, rev)) = chain_kind(&prefix, prop) {
+                return Some((prefix, prop.clone(), kind, rev));
+            }
+        }
+        None
     }
 
     fn unique_bare_foreign(&self, bare: &str) -> Option<String> {
@@ -1836,6 +1903,43 @@ mod tests {
         assert_eq!(
             eval_prop(src, "a.W", "g", vec![V::List(vec![V::Text("x".into())])]).unwrap(),
             V::List(vec![V::Text("x".into()), V::Text("end".into())])
+        );
+    }
+
+    #[test]
+    fn calling_a_chain_property_runs_every_layer() {
+        // §4: "Calling the property runs every layer's function in
+        // composition order" — through the ORDINARY call syntax, layered
+        // across spaces. The pipe threads both layers; the stack call
+        // merges onto state and returns the part.
+        let r = check_sources(vec![
+            (
+                "a.ash".to_string(),
+                "space a\n\npart P {\n  state hits: number = 0\n  boot stack = () => {\n    return { hits: hits + 1 }\n  }\n  shape pipe = (t: text) => t + \"-base\"\n}\n\npart caller {\n  go = () => P.shape(\"x\")\n  kick = () => P.boot()\n  peek = () => P.hits\n}\n"
+                    .to_string(),
+            ),
+            (
+                "b.ash".to_string(),
+                "space b\nuse a\n\npart a.P {\n  boot stack = () => {\n    return { hits: hits + 1 }\n  }\n  shape pipe = (t: text) => t + \"-layer\"\n}\n"
+                    .to_string(),
+            ),
+        ]);
+        assert!(r.diags.is_empty(), "fixture must be clean: {:?}", r.diags);
+        let mut ev = Evaluator::new(&r.program, &r.composed);
+        assert_eq!(
+            ev.call_prop("a.caller", "go", vec![]).unwrap(),
+            V::Text("x-base-layer".to_string()),
+            "both pipe layers must run, base first"
+        );
+        assert_eq!(
+            ev.call_prop("a.caller", "kick", vec![]).unwrap(),
+            V::Part("a.P".to_string()),
+            "a stack call returns the part"
+        );
+        assert_eq!(
+            ev.call_prop("a.caller", "peek", vec![]).unwrap(),
+            V::Number(2.0),
+            "both stack layers must have merged onto state"
         );
     }
 
