@@ -58,13 +58,18 @@ Every item this page has carried is delivered, tested, and moved off:
   7.5%, distribution printed on every run.
 - **T-A3 surface findings** — resolved by ADR-0008, validated by gate
   run 2 (23/24 cold-read PASS).
-- **Showcase corpus** — twelve complete projects, now crowned by
+- **Showcase corpus** — thirteen complete projects, crowned by
   `commons`: a full team chat (auth, rooms, DMs, live messaging,
   presence-by-lifecycle, unread counts, plus moderation and mentions as
   independently owned layers) that exercises the whole language as one
-  product, styled by a named sheet (ADR-0010). T-Examples compiles,
-  format-checks, serves, and drives every project — commons included —
-  over its real HTTP/WebSocket surface.
+  product, styled by a named sheet (ADR-0010). `ledger` is the first to
+  exercise the `foreign` boundary for real: its datastore is a genuine
+  SQLite database file, reached through a std-only cdylib shim that links
+  the system libsqlite3 — the SQL lives outside Ashlar, the way CSS does.
+  T-Examples compiles, format-checks, serves, and drives every project —
+  commons and ledger included — over its real HTTP/WebSocket surface (the
+  ledger driving test builds its shim and skips loudly where libsqlite3 is
+  absent, since a SQLite integration cannot be tested without SQLite).
 - **Deployment posture** — the binary is an origin; TLS and HTTP/2/3 are
   terminated at a reverse proxy (ADR-0013). The origin carries only the
   small correct pieces to sit behind one: `stored` state flushes
@@ -79,3 +84,13 @@ positives, check.rs module docs), `move`'s byte-identity class
 file. (The once-weak v1 password hash is gone: v2 is salted, iterated
 PBKDF2, and v1 hashes upgrade transparently on login.) New requirements
 enter here as new numbered items; none are open today.
+
+One proposed trajectory is on the table but not yet accepted: **ADR-0014**
+(status: proposed) sketches the data layer beyond the `foreign` shim the
+`ledger` example already demonstrates — a database backend for `stored`
+(the collection is the table, the Shape is the schema, the location bound
+in deployment not source), a hand-rolled non-blocking Postgres client that
+never blocks the single loop, and horizontal scale by process count. Its
+Stage 1 (the SQLite-over-`foreign` example) is delivered; Stages 2–4 wait
+on a design decision before any runtime code, and will land here as
+tested items if accepted.
