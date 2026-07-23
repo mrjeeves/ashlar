@@ -131,20 +131,59 @@ fn handler_for(html: &str, kind: &str) -> Option<String> {
     attr_of(&html[at..], "data-ash-h")
 }
 
-/// The instance owning the handler wired for `kind`: the CLOSEST
-/// enclosing `data-ash-instance`, exactly as the browser shim resolves
-/// it with `.closest()` — nested views own their own handlers.
-fn instance_for(html: &str, kind: &str) -> Option<String> {
+/// The instance owning the `nth` handler wired for `kind`: the nearest
+/// ANCESTOR carrying `data-ash-instance`, exactly as the browser shim
+/// resolves it with `.closest()`. A sibling instance that closed before
+/// the element must not win, so this walks real tag nesting (the
+/// renderer closes every element explicitly).
+fn event_target(html: &str, kind: &str, nth: usize) -> Option<(String, String)> {
     let marker = format!("data-ash-on=\"{}\"", kind);
-    let at = html.find(&marker)?;
-    let before = &html[..at];
-    let inst_at = before.rfind("data-ash-instance=\"")?;
-    attr_of(&before[inst_at..], "data-ash-instance")
+    let mut at = 0;
+    for _ in 0..=nth {
+        at = html[at..].find(&marker)? + at + marker.len();
+    }
+    let h = attr_of(&html[at..], "data-ash-h")?;
+    // Walk tags before the element's own opening `<` to build the
+    // ancestor stack.
+    let open_at = html[..at].rfind('<')?;
+    let mut stack: Vec<Option<String>> = Vec::new();
+    let mut i = 0;
+    while i < open_at {
+        let Some(lt) = html[i..open_at].find('<').map(|p| p + i) else {
+            break;
+        };
+        let Some(gt) = html[lt..].find('>').map(|p| p + lt) else {
+            break;
+        };
+        let tag = &html[lt..=gt];
+        if tag.starts_with("</") {
+            stack.pop();
+        } else if !tag.starts_with("<!") {
+            stack.push(attr_of(tag, "data-ash-instance"));
+        }
+        i = gt + 1;
+    }
+    let instance = stack.iter().rev().find_map(|s| s.clone())?;
+    Some((instance, h))
 }
 
 /// WS payloads carry JSON-escaped HTML; unescape before attr searches.
 fn unescape(s: &str) -> String {
     s.replace("\\\"", "\"")
+}
+
+/// Read frames until one contains `needle` (the runtime broadcasts every
+/// patch set; clients filter by instance id, so a watcher may see other
+/// pages' patches first).
+fn ws_expect(s: &mut TcpStream, needle: &str, max_frames: usize) -> String {
+    let mut last = String::new();
+    for _ in 0..max_frames {
+        last = unescape(&ws_read(s));
+        if last.contains(needle) {
+            return last;
+        }
+    }
+    panic!("no frame contained `{}`; last was: {}", needle, last);
 }
 
 fn ws_open(port: u16) -> TcpStream {
@@ -203,8 +242,7 @@ fn t_examples_counter_clicks() {
     let (port, stop, join) = start(dir.clone());
     let (_, _, html) = req(port, "GET", "/", None, None);
     assert!(html.contains("clicks: 0"), "{}", html);
-    let inst = instance_for(&html, "onclick").unwrap();
-    let h = handler_for(&html, "onclick").unwrap();
+    let (inst, h) = event_target(&html, "onclick", 0).unwrap();
     let mut ws = ws_open(port);
     ws_send(
         &mut ws,
@@ -228,6 +266,33 @@ fn t_examples_chat_posts_persist_and_react() {
     assert!(list.contains("first stone"), "{}", list);
     let (_, _, page) = req(port, "GET", "/", None, None);
     assert!(page.contains("messages: 1"), "{}", page);
+    assert!(page.contains("m: first stone"), "the feed must render rows: {}", page);
+
+    // Drive the compose form as client A while client B watches: name,
+    // message, submit — B's feed re-renders from A's post (§9.3).
+    let (_, _, html_a) = req(port, "GET", "/", None, None);
+    let page_a = attr_of(&html_a, "data-ash-page").unwrap();
+    let (_, _, html_b) = req(port, "GET", "/", None, None);
+    let page_b = attr_of(&html_b, "data-ash-page").unwrap();
+    let mut a = ws_open(port);
+    let mut b = ws_open(port);
+    ws_send(&mut a, &format!("{{\"page\":\"{}\"}}", page_a));
+    ws_send(&mut b, &format!("{{\"page\":\"{}\"}}", page_b));
+    std::thread::sleep(std::time::Duration::from_millis(80));
+
+    let (inst, named) = event_target(&html_a, "oninput", 0).unwrap();
+    ws_send(&mut a, &format!("{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"oninput\",\"value\":\"ada\"}}}}", inst, named));
+    let after_name = unescape(&ws_read(&mut a));
+    let (_, typed) = event_target(&after_name, "oninput", 1).unwrap();
+    ws_send(&mut a, &format!("{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"oninput\",\"value\":\"hello stone\"}}}}", inst, typed));
+    let after_draft = unescape(&ws_read(&mut a));
+    let (_, submit) = event_target(&after_draft, "onsubmit", 0).unwrap();
+    ws_send(&mut a, &format!("{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onsubmit\"}}}}", inst, submit));
+    let posted = ws_expect(&mut a, "ada: hello stone", 5);
+    assert!(posted.contains("ada: hello stone"), "{}", posted);
+    ws_expect(&mut b, "ada: hello stone", 8);
+    drop(a);
+    drop(b);
 
     // `stored` survives a restart (§9.3).
     stop.store(true, Ordering::Relaxed);
@@ -245,8 +310,7 @@ fn t_examples_todo_form_round_trip() {
     let dir = staged("todo");
     let (port, stop, join) = start(dir.clone());
     let (_, _, html) = req(port, "GET", "/", None, None);
-    let inst = instance_for(&html, "oninput").unwrap();
-    let typed = handler_for(&html, "oninput").unwrap();
+    let (inst, typed) = event_target(&html, "oninput", 0).unwrap();
     let mut ws = ws_open(port);
     ws_send(
         &mut ws,
@@ -257,7 +321,7 @@ fn t_examples_todo_form_round_trip() {
     );
     let after_typing = unescape(&ws_read(&mut ws));
     // The patched form carries the fresh handler ids; submit through them.
-    let submit = handler_for(&after_typing, "onsubmit").unwrap();
+    let (_, submit) = event_target(&after_typing, "onsubmit", 0).unwrap();
     ws_send(
         &mut ws,
         &format!("{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onsubmit\"}}}}", inst, submit),

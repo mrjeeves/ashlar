@@ -37,8 +37,11 @@ The composition story in four files:
   `prepare` pipe layer runs after the base's (use order is composition
   order), and its `start` stack joins the boot sequence. No base file
   was edited.
-- `ui.ash` — a view that reads the store; any post re-renders every
-  connected client that read it (§9.3 reactivity).
+- `ui.ash` — the full interface: a compose form (name + message over
+  `oninput`/`onsubmit`), a feed sorted by send time, and a live counter.
+  Any post — this client's form, another client's, or the HTTP API —
+  re-renders every connected feed (§9.3 reactivity). The suite drives
+  it with two concurrent socket clients.
 
 ## diary
 
