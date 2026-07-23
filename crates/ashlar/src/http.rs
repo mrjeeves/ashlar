@@ -1364,7 +1364,16 @@ fn flush_state(path: &std::path::Path, ev: &Evaluator) {
         users.insert(email.clone(), V::Map(u));
     }
     m.insert("__users".to_string(), V::Map(users));
-    let _ = std::fs::write(path, to_json(&V::Map(m)));
+    // Atomic write: a crash mid-write must never truncate the live state
+    // file. Write a sibling temp, then rename — atomic on one filesystem
+    // — so a reader (or a restart) sees either the whole old file or the
+    // whole new one, never a half-written one.
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let tmp = std::path::PathBuf::from(tmp);
+    if std::fs::write(&tmp, to_json(&V::Map(m))).is_ok() {
+        let _ = std::fs::rename(&tmp, path);
+    }
 }
 
 /// Static file parts (§9.8): route is a prefix; `files` names a
@@ -1603,10 +1612,26 @@ fn handle_request(
         Ok(v) => match render_response(ev, &v) {
             Ok((status, ct, body, mut extra)) => {
                 if let Some(tok) = ev.pending_cookie.take() {
-                    let cookie = if tok.is_empty() {
-                        "ashsession=; Path=/; Max-Age=0".to_string()
+                    // Session cookie hardening: HttpOnly always, SameSite=Lax
+                    // to blunt CSRF on the state-changing routes, and Secure
+                    // when the request reached a TLS-terminating proxy in
+                    // front (X-Forwarded-Proto: https) so the cookie never
+                    // rides a plaintext hop. The clear carries the same
+                    // attributes so browsers reliably drop it.
+                    let secure = req
+                        .headers
+                        .get("x-forwarded-proto")
+                        .map(|p| p.eq_ignore_ascii_case("https"))
+                        .unwrap_or(false);
+                    let flags = if secure {
+                        "; HttpOnly; SameSite=Lax; Secure"
                     } else {
-                        format!("ashsession={}; Path=/; HttpOnly", tok)
+                        "; HttpOnly; SameSite=Lax"
+                    };
+                    let cookie = if tok.is_empty() {
+                        format!("ashsession=; Path=/; Max-Age=0{}", flags)
+                    } else {
+                        format!("ashsession={}; Path=/{}", tok, flags)
                     };
                     extra.push(("set-cookie".to_string(), cookie));
                 }

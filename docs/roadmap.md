@@ -65,6 +65,12 @@ Every item this page has carried is delivered, tested, and moved off:
   product, styled by a named sheet (ADR-0010). T-Examples compiles,
   format-checks, serves, and drives every project — commons included —
   over its real HTTP/WebSocket surface.
+- **Deployment posture** — the binary is an origin; TLS and HTTP/2/3 are
+  terminated at a reverse proxy (ADR-0013). The origin carries only the
+  small correct pieces to sit behind one: `stored` state flushes
+  atomically (temp + rename, so a crash never truncates it), and the
+  session cookie is `HttpOnly` + `SameSite=Lax`, gaining `Secure` when
+  `X-Forwarded-Proto` reports TLS. Both pinned in T-G.
 
 What remains is not debt but doctrine, named where it lives:
 `Unknown`-permissiveness for what the checker cannot prove (no false
