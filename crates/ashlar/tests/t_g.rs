@@ -580,6 +580,10 @@ fn ws_read_frame(s: &mut TcpStream) -> String {
         let mut ext = [0u8; 2];
         s.read_exact(&mut ext).unwrap();
         len = u16::from_be_bytes(ext) as u64;
+    } else if len == 127 {
+        let mut ext = [0u8; 8];
+        s.read_exact(&mut ext).unwrap();
+        len = u64::from_be_bytes(ext);
     }
     let mut payload = vec![0u8; len as usize];
     s.read_exact(&mut payload).unwrap();
@@ -1040,6 +1044,132 @@ part page {
             html
         );
     }
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}
+
+#[test]
+fn t_g_idle_and_split_sockets_never_stall_the_loop() {
+    // covers: the loop's no-stall contract. Real browsers open
+    // speculative sockets that never send a request, and split requests
+    // across packets; neither may delay anyone else. (A loop that blocks
+    // reading one connection fails this by timing out.)
+    let app = r#"space quiet
+
+part Server {
+  port = 0
+}
+
+part hello {
+  route = "/"
+  handle pipe = (req: std.Request) => "still serving"
+}
+"#;
+    let root = fixture("nostall", &[("app.ash", app)]);
+    let (port, stop, join) = start(root);
+
+    // A speculative socket: opened, never sends a byte. Chrome does this
+    // on most page loads; it once froze the whole runtime.
+    let idle = TcpStream::connect(("127.0.0.1", port)).unwrap();
+
+    // A half request: the header cut mid-word, the rest withheld.
+    let mut split = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    split.write_all(b"GET / HT").unwrap();
+
+    // With both misbehaving sockets open, a well-formed request must
+    // still answer promptly.
+    let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    s.set_read_timeout(Some(std::time::Duration::from_secs(5)))
+        .unwrap();
+    s.write_all(b"GET / HTTP/1.1\r\nhost: t\r\n\r\n").unwrap();
+    let mut buf = String::new();
+    s.read_to_string(&mut buf).unwrap();
+    assert!(buf.contains("still serving"), "{}", buf);
+
+    // ...and the WebSocket envelope must still round-trip.
+    let reply = ws_roundtrip(port, "{\"path\":\"/\"}");
+    assert!(reply.contains("still serving"), "{}", reply);
+
+    // The split request completes late and still gets its answer.
+    split
+        .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+        .unwrap();
+    split.write_all(b"TP/1.1\r\nhost: t\r\n\r\n").unwrap();
+    let mut buf2 = String::new();
+    split.read_to_string(&mut buf2).unwrap();
+    assert!(buf2.contains("still serving"), "{}", buf2);
+
+    drop(idle);
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}
+
+#[test]
+fn t_g_stalled_ws_reader_never_stalls_others() {
+    // covers: the loop's no-stall contract on the write side. A peer
+    // that stops reading (suspended laptop, half-open socket) fills its
+    // kernel buffers; broadcasts to it must queue and eventually shed
+    // the peer — never block the loop. (A blocking send-retry here
+    // freezes every client the moment the buffers fill.)
+    let filler = "x".repeat(1024);
+    let app = format!(
+        r#"space noisy
+
+part Server {{
+  port = 0
+}}
+
+part Feed {{
+  synced body: text = ""
+  grow = () => {{ body = body + "{}" }}
+}}
+
+part board {{
+  route = "/"
+  view = () => el("button", {{ onclick: poke }}, [noisy.Feed.body])
+  poke = () => {{ noisy.Feed.grow() }}
+}}
+"#,
+        filler
+    );
+    let root = fixture("stalled", &[("app.ash", &app)]);
+    let (port, stop, join) = start(root);
+
+    // Two pages, two sockets. A never reads; B clicks and reads.
+    let (_, _, _html_a) = http_req_full(port, "GET", "/", None, None);
+    let (_, _, html_b) = http_req_full(port, "GET", "/", None, None);
+    let ib = attr_of(&html_b, "data-ash-instance").unwrap();
+    let hb = attr_of(&html_b, "data-ash-h").unwrap();
+    let _stalled = ws_open(port);
+    let mut live = ws_open(port);
+    live.set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(50));
+
+    // 200 growing broadcasts push well past kernel socket buffers and
+    // the server's outbound cap for the stalled peer (~20 MB total).
+    // Every one of B's replies must keep arriving promptly.
+    for k in 1..=200 {
+        ws_send_frame(
+            &mut live,
+            &format!(
+                "{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onclick\"}}}}",
+                ib, hb
+            ),
+        );
+        let reply = ws_read_frame(&mut live);
+        assert!(
+            reply.contains(&ib),
+            "click {} lost its reply while a peer was stalled: {}",
+            k,
+            reply
+        );
+    }
+
+    // Plain HTTP must also still answer.
+    let (status, _) = http_get(port, "/");
+    assert_eq!(status, 200, "HTTP dead after broadcasting past a stalled peer");
+
     stop.store(true, Ordering::Relaxed);
     join.join().unwrap();
 }

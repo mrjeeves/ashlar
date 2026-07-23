@@ -3,8 +3,13 @@
 //! Architecture: one single-threaded event loop owns the whole runtime —
 //! the evaluator is deliberately `!Send` (function values are `Rc`), so
 //! requests, scheduled tasks, hot reload, and shutdown all interleave on
-//! one thread via a non-blocking accept loop. Correct first; F1 governs
-//! build latency, not request throughput.
+//! one thread. Nothing on the loop may ever block on one socket: requests
+//! assemble in a pending list read without blocking (a socket that never
+//! completes one — a browser's speculative preconnect, a stalled client —
+//! is dropped at a deadline), and outbound WebSocket bytes queue per
+//! connection and flush as each peer drains, with a cap that sheds
+//! consumers who stopped reading. Correct first; F1 governs build
+//! latency, not request throughput.
 //!
 //! Transport invisibility (G2): HTTP requests and WebSocket `{path, data}`
 //! envelopes dispatch through the same `dispatch()` — handlers cannot
@@ -173,28 +178,33 @@ fn decode_form(body: &str) -> V {
 
 /// Read one HTTP/1.1 request. `None` on connection close or malformed
 /// input (the connection is simply dropped; a server never panics).
-pub fn read_request(stream: &mut TcpStream) -> Option<HttpRequest> {
-    let mut buf: Vec<u8> = Vec::new();
-    let mut tmp = [0u8; 4096];
-    let header_end = loop {
-        if let Some(i) = find_subslice(&buf, b"\r\n\r\n") {
-            break i;
-        }
-        let n = stream.read(&mut tmp).ok()?;
-        if n == 0 {
-            return None;
-        }
-        buf.extend_from_slice(&tmp[..n]);
-        if buf.len() > 1 << 20 {
-            return None;
-        }
+/// The state of one socket's buffered bytes as a request-in-progress.
+/// `Incomplete` means keep the socket and read more; `Bad` means the
+/// bytes can never become a request — drop the socket.
+pub enum Parse {
+    Incomplete,
+    Bad,
+    Ready(HttpRequest),
+}
+
+/// Try to assemble one complete request from buffered bytes, consuming
+/// nothing. The event loop calls this after every non-blocking read, so
+/// a socket that never completes a request (a browser's speculative
+/// preconnect sends no bytes at all) costs the loop nothing.
+pub fn parse_request(buf: &[u8]) -> Parse {
+    let Some(header_end) = find_subslice(buf, b"\r\n\r\n") else {
+        return if buf.len() > 1 << 20 { Parse::Bad } else { Parse::Incomplete };
     };
     let head = String::from_utf8_lossy(&buf[..header_end]).to_string();
     let mut lines = head.split("\r\n");
-    let request_line = lines.next()?;
+    let Some(request_line) = lines.next() else {
+        return Parse::Bad;
+    };
     let mut rl = request_line.split(' ');
-    let method = rl.next()?.to_string();
-    let target = rl.next()?.to_string();
+    let (Some(method), Some(target)) = (rl.next(), rl.next()) else {
+        return Parse::Bad;
+    };
+    let method = method.to_string();
     let path = target.split('?').next().unwrap_or("").to_string();
     let mut headers = BTreeMap::new();
     for line in lines {
@@ -206,16 +216,16 @@ pub fn read_request(stream: &mut TcpStream) -> Option<HttpRequest> {
         .get("content-length")
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
-    let mut body = buf[header_end + 4..].to_vec();
-    while body.len() < content_length {
-        let n = stream.read(&mut tmp).ok()?;
-        if n == 0 {
-            break;
-        }
-        body.extend_from_slice(&tmp[..n]);
+    if content_length > 1 << 20 {
+        return Parse::Bad;
     }
+    let avail = &buf[header_end + 4..];
+    if avail.len() < content_length {
+        return Parse::Incomplete;
+    }
+    let mut body = avail.to_vec();
     body.truncate(content_length);
-    Some(HttpRequest {
+    Parse::Ready(HttpRequest {
         method,
         path,
         headers,
@@ -915,28 +925,91 @@ pub fn serve(
         let mut last_mtime = source_mtime(&root);
         let mut last_scan = std::time::Instant::now();
         let mut ws_conns: Vec<WsConn> = Vec::new();
+        let mut pending: Vec<PendingConn> = Vec::new();
         let exit = 'inner: loop {
             if stop.load(Ordering::Relaxed) {
                 break 'inner Exit::Stop;
             }
-            // Accept one connection if pending.
-            match listener.as_ref().unwrap().accept() {
-                Ok((conn, _)) => {
-                    let _ = conn.set_nonblocking(false);
-                    if let Some(ws) = handle_conn(&mut ev, &root, conn) {
-                        ws_conns.push(ws);
+            // Accept every waiting connection; each joins the pending
+            // list and reads without ever blocking the loop. Browsers
+            // open sockets speculatively and send nothing on them — one
+            // blocking read here once froze the whole runtime.
+            let mut accepted = false;
+            loop {
+                match listener.as_ref().unwrap().accept() {
+                    Ok((conn, _)) => {
+                        let _ = conn.set_nonblocking(true);
+                        pending.push(PendingConn {
+                            stream: conn,
+                            buf: Vec::new(),
+                            deadline: std::time::Instant::now()
+                                + std::time::Duration::from_secs(10),
+                        });
+                        accepted = true;
                     }
-                    ev.current_page = None;
+                    Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                    Err(_) => break,
                 }
-                Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            if !accepted {
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+            let mut tmp = [0u8; 4096];
+            // Pump pending sockets: read what has arrived, answer every
+            // complete request, drop the closed, the malformed, and the
+            // overdue (a socket that sent nothing for 10s is a
+            // speculative preconnect or a scan, not a request).
+            let now = std::time::Instant::now();
+            let mut p = 0;
+            while p < pending.len() {
+                let mut drop_pending = now >= pending[p].deadline;
+                let mut eof = false;
+                if !drop_pending {
+                    loop {
+                        match pending[p].stream.read(&mut tmp) {
+                            Ok(0) => {
+                                eof = true;
+                                break;
+                            }
+                            Ok(n) => pending[p].buf.extend_from_slice(&tmp[..n]),
+                            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+                            Err(_) => {
+                                drop_pending = true;
+                                break;
+                            }
+                        }
+                    }
                 }
-                Err(_) => {}
+                if !drop_pending {
+                    match parse_request(&pending[p].buf) {
+                        Parse::Ready(req) => {
+                            let conn = pending.remove(p).stream;
+                            // The response write is bounded work against
+                            // a peer that just proved live: blocking with
+                            // a timeout keeps large bodies simple without
+                            // reintroducing a stall.
+                            let _ = conn.set_nonblocking(false);
+                            let _ = conn
+                                .set_write_timeout(Some(std::time::Duration::from_secs(5)));
+                            if let Some(ws) = handle_request(&mut ev, &root, conn, req) {
+                                ws_conns.push(ws);
+                            }
+                            ev.current_page = None;
+                            continue;
+                        }
+                        Parse::Bad => drop_pending = true,
+                        Parse::Incomplete => drop_pending = eof,
+                    }
+                }
+                if drop_pending {
+                    pending.remove(p);
+                } else {
+                    p += 1;
+                }
             }
             // Poll live sockets: read available bytes, process complete
             // frames, drop closed connections. An open socket never
             // blocks the loop (§9.4's protocol depends on this).
-            let mut tmp = [0u8; 4096];
             let mut i = 0;
             while i < ws_conns.len() {
                 let mut drop_conn = false;
@@ -985,22 +1058,20 @@ pub fn serve(
                         9 => {
                             let mut pong = vec![0x8Au8, payload.len() as u8];
                             pong.extend_from_slice(&payload);
-                            let _ = ws_conns[i].stream.write_all(&pong);
+                            ws_conns[i].out.extend_from_slice(&pong);
                         }
                         _ => {}
                     }
                 }
                 for (reply, patches) in replies {
-                    if !ws_send(&mut ws_conns[i].stream, &reply) {
-                        drop_conn = true;
-                    }
+                    ws_enqueue(&mut ws_conns[i], &reply);
                     // View patches broadcast to every OTHER live socket
                     // (§9.4: every view that read a changed property).
                     if !patches.is_empty() {
                         let msg = patches_json(&patches);
                         for (j, other) in ws_conns.iter_mut().enumerate() {
                             if j != i {
-                                let _ = ws_send(&mut other.stream, &msg);
+                                ws_enqueue(other, &msg);
                             }
                         }
                     }
@@ -1051,8 +1122,23 @@ pub fn serve(
                 if !patches.is_empty() {
                     let msg = patches_json(&patches);
                     for conn in ws_conns.iter_mut() {
-                        let _ = ws_send(&mut conn.stream, &msg);
+                        ws_enqueue(conn, &msg);
                     }
+                }
+            }
+            // Flush queued outbound frames. A peer that stopped draining
+            // (a suspended laptop, a half-open socket) is dropped rather
+            // than ever stalling the loop; its page unmounts like any
+            // other close.
+            let mut f = 0;
+            while f < ws_conns.len() {
+                if ws_flush(&mut ws_conns[f]) {
+                    f += 1;
+                } else {
+                    if let Some(page) = ws_conns[f].page.clone() {
+                        ev.unmount_page(&page);
+                    }
+                    ws_conns.remove(f);
                 }
             }
             // Flush stored state.
@@ -1209,11 +1295,15 @@ fn session_from_headers(headers: &BTreeMap<String, String>) -> Option<String> {
 }
 
 /// A live WebSocket connection multiplexed on the event loop: the loop
-/// polls its buffer for complete frames, so an open socket never blocks
-/// other requests, schedules, or reloads.
+/// polls its buffer for complete frames and drains its outbound queue as
+/// the peer accepts bytes, so an open socket never blocks other
+/// requests, schedules, or reloads — in either direction.
 pub struct WsConn {
     pub stream: TcpStream,
     pub buf: Vec<u8>,
+    /// Outbound bytes not yet accepted by the socket; `ws_flush` drains
+    /// this every tick and sheds the connection past `WS_OUT_CAP`.
+    pub out: Vec<u8>,
     pub session: Option<String>,
     pub headers: BTreeMap<String, String>,
     /// The page render this socket belongs to (the shim announces it on
@@ -1221,16 +1311,24 @@ pub struct WsConn {
     pub page: Option<String>,
 }
 
-/// Serve one accepted connection. An HTTP request is answered in place;
-/// a WebSocket upgrade completes its handshake and returns the
-/// connection for the event loop to poll.
-fn handle_conn(
+/// An accepted socket that has not yet delivered a complete request.
+/// The event loop reads it without blocking; one that never completes a
+/// request is dropped at its deadline instead of stalling everyone.
+struct PendingConn {
+    stream: TcpStream,
+    buf: Vec<u8>,
+    deadline: std::time::Instant,
+}
+
+/// Serve one complete request. An HTTP request is answered in place; a
+/// WebSocket upgrade completes its handshake and returns the connection
+/// for the event loop to poll.
+fn handle_request(
     ev: &mut Evaluator,
     root: &std::path::Path,
     mut conn: TcpStream,
+    req: HttpRequest,
 ) -> Option<WsConn> {
-    let req = read_request(&mut conn)?;
-
     if req
         .headers
         .get("upgrade")
@@ -1250,6 +1348,7 @@ fn handle_conn(
             headers: req.headers,
             stream: conn,
             buf: Vec::new(),
+            out: Vec::new(),
             page: None,
         });
     }
@@ -1388,30 +1487,44 @@ fn patches_json(patches: &[(String, String)]) -> String {
 }
 
 /// Write a text frame on a non-blocking stream, retrying on WouldBlock.
-fn ws_send(conn: &mut TcpStream, text: &str) -> bool {
+/// Queued outbound bytes past which a socket is judged a dead or
+/// stalled consumer and shed. Generous enough to ride out a paused tab;
+/// small enough that one dead peer never holds the server's memory.
+const WS_OUT_CAP: usize = 2 << 20;
+
+/// Frame `text` and queue it on `conn`; bytes leave in `ws_flush`.
+/// Queueing never blocks, so a broadcast to a stalled peer costs the
+/// loop nothing — the old direct write here retried a full socket
+/// forever, freezing every client because one stopped reading.
+fn ws_enqueue(conn: &mut WsConn, text: &str) {
     let payload = text.as_bytes();
-    let mut frame = vec![0x81u8];
+    conn.out.push(0x81);
     let len = payload.len();
     if len < 126 {
-        frame.push(len as u8);
+        conn.out.push(len as u8);
     } else if len < 1 << 16 {
-        frame.push(126);
-        frame.extend_from_slice(&(len as u16).to_be_bytes());
+        conn.out.push(126);
+        conn.out.extend_from_slice(&(len as u16).to_be_bytes());
     } else {
-        frame.push(127);
-        frame.extend_from_slice(&(len as u64).to_be_bytes());
+        conn.out.push(127);
+        conn.out.extend_from_slice(&(len as u64).to_be_bytes());
     }
-    frame.extend_from_slice(payload);
-    let mut written = 0usize;
-    while written < frame.len() {
-        match conn.write(&frame[written..]) {
+    conn.out.extend_from_slice(payload);
+}
+
+/// Write as much queued outbound data as the socket accepts right now.
+/// `false` means the connection is dead or hopelessly behind — drop it.
+fn ws_flush(conn: &mut WsConn) -> bool {
+    while !conn.out.is_empty() {
+        match conn.stream.write(&conn.out) {
             Ok(0) => return false,
-            Ok(n) => written += n,
-            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                std::thread::sleep(std::time::Duration::from_millis(1));
+            Ok(n) => {
+                conn.out.drain(..n);
             }
+            Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
+            Err(ref e) if e.kind() == std::io::ErrorKind::Interrupted => {}
             Err(_) => return false,
         }
     }
-    true
+    conn.out.len() <= WS_OUT_CAP
 }
