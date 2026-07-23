@@ -17,10 +17,10 @@ mod cli {
 
     pub const USAGE: &str = "usage:\n  \
         ashlar check [path] [--human]\n  \
-        ashlar fix [path]\n  \
+        ashlar fix [id] [path]\n  \
         ashlar build [path]\n  \
         ashlar fmt [path] [--check]\n  \
-        ashlar run [path]\n  \
+        ashlar run [part] [path]\n  \
         ashlar rename <space-part-or-prop> <new-name> [path] [--plan]\n  \
         ashlar rekind <part.prop> <kind> [path] [--plan]\n  \
         ashlar move <part> <space> [path] [--plan]\n  \
@@ -30,10 +30,10 @@ mod cli {
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum Cmd {
         Check { path: String, human: bool },
-        Fix { path: String },
+        Fix { path: String, id: Option<String> },
         Build { path: String },
         Fmt { path: String, check_only: bool },
-        Run { path: String },
+        Run { path: String, part: Option<String> },
         Rename { target: String, new_name: String, path: String, plan_only: bool },
         Rekind { target: String, kind: String, path: String, plan_only: bool },
         Move { part: String, space: String, path: String, plan_only: bool },
@@ -69,9 +69,31 @@ mod cli {
                     human,
                 })
             }
-            "fix" => Ok(Cmd::Fix {
-                path: one_path(rest)?,
-            }),
+            "fix" => {
+                // `fix [id] [path]`: a diagnostic id (E006, W001) filters
+                // which machine fixes apply (reference §11).
+                let mut id: Option<String> = None;
+                let mut path: Option<String> = None;
+                for a in rest {
+                    if a.starts_with("--") {
+                        return Err(format!("unknown flag `{}`", a));
+                    }
+                    let looks_like_id = a.len() == 4
+                        && (a.starts_with('E') || a.starts_with('W'))
+                        && a[1..].chars().all(|c| c.is_ascii_digit());
+                    if looks_like_id && id.is_none() {
+                        id = Some(a.clone());
+                    } else if path.is_none() {
+                        path = Some(a.clone());
+                    } else {
+                        return Err("too many arguments".to_string());
+                    }
+                }
+                Ok(Cmd::Fix {
+                    path: path.unwrap_or_else(default_path),
+                    id,
+                })
+            }
             "build" => Ok(Cmd::Build {
                 path: one_path(rest)?,
             }),
@@ -144,9 +166,40 @@ mod cli {
                     path: positionals.get(1).cloned().unwrap_or_else(default_path),
                 })
             }
-            "run" => Ok(Cmd::Run {
-                path: one_path(rest)?,
-            }),
+            "run" => {
+                // `run [part] [path]` (reference §9.1): one argument is a
+                // part name unless it names a directory on disk; two are
+                // part then path.
+                let mut positionals: Vec<String> = Vec::new();
+                for a in rest {
+                    if a.starts_with("--") {
+                        return Err(format!("unknown flag `{}`", a));
+                    }
+                    positionals.push(a.clone());
+                }
+                match positionals.len() {
+                    0 => Ok(Cmd::Run {
+                        path: default_path(),
+                        part: None,
+                    }),
+                    1 => {
+                        let a = positionals[0].clone();
+                        if Path::new(&a).is_dir() {
+                            Ok(Cmd::Run { path: a, part: None })
+                        } else {
+                            Ok(Cmd::Run {
+                                path: default_path(),
+                                part: Some(a),
+                            })
+                        }
+                    }
+                    2 => Ok(Cmd::Run {
+                        path: positionals[1].clone(),
+                        part: Some(positionals[0].clone()),
+                    }),
+                    _ => Err("`run` takes an optional part and an optional path".to_string()),
+                }
+            }
             "fmt" => {
                 let mut path: Option<String> = None;
                 let mut check_only = false;
@@ -200,10 +253,10 @@ mod cli {
     pub fn run(cmd: Cmd) -> i32 {
         match cmd {
             Cmd::Check { path, human } => run_check(&path, human),
-            Cmd::Fix { path } => run_fix(&path),
+            Cmd::Fix { path, id } => run_fix(&path, id.as_deref()),
             Cmd::Build { path } => run_build(&path),
             Cmd::Fmt { path, check_only } => run_fmt(&path, check_only),
-            Cmd::Run { path } => run_serve(&path),
+            Cmd::Run { path, part } => run_serve(&path, part),
             Cmd::Rename { target, new_name, path, plan_only } => {
                 run_refactor(&path, plan_only, |srcs| plan_rename(srcs, &target, &new_name))
             }
@@ -649,10 +702,11 @@ mod cli {
         Ok(())
     }
 
-    fn run_serve(path: &str) -> i32 {
+    fn run_serve(path: &str, part: Option<String>) -> i32 {
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         match ashlar::http::serve(
             std::path::PathBuf::from(path),
+            part,
             None,
             |port| eprintln!("serving on http://127.0.0.1:{}", port),
             stop,
@@ -733,11 +787,16 @@ mod cli {
         }
     }
 
-    fn run_fix(path: &str) -> i32 {
+    fn run_fix(path: &str, id: Option<&str>) -> i32 {
         let root = Path::new(path);
         let result = ashlar::check_project(root);
 
-        match ashlar::fixup::apply_fixes(root, &result.diags) {
+        // `fix E006` applies only that id's machine edits (§11).
+        let diags: Vec<ashlar::diag::Diag> = match id {
+            Some(want) => result.diags.iter().filter(|d| d.id == want).cloned().collect(),
+            None => result.diags.clone(),
+        };
+        match ashlar::fixup::apply_fixes(root, &diags) {
             Ok(files) => {
                 for f in &files {
                     eprintln!("fixed: {}", f);
@@ -829,7 +888,8 @@ mod cli {
             assert_eq!(
                 cmd,
                 Cmd::Fix {
-                    path: ".".to_string()
+                    path: ".".to_string(),
+                    id: None
                 }
             );
         }
@@ -840,7 +900,8 @@ mod cli {
             assert_eq!(
                 cmd,
                 Cmd::Fix {
-                    path: "some/proj".to_string()
+                    path: "some/proj".to_string(),
+                    id: None
                 }
             );
         }
@@ -900,6 +961,47 @@ mod cli {
         #[test]
         fn two_positional_paths_is_an_error() {
             assert!(parse(&args(&["check", "a", "b"])).is_err());
+        }
+
+        #[test]
+        fn fix_takes_an_optional_id() {
+            let cmd = parse(&args(&["fix", "E006"])).unwrap();
+            assert_eq!(
+                cmd,
+                Cmd::Fix {
+                    path: ".".to_string(),
+                    id: Some("E006".to_string())
+                }
+            );
+            let cmd = parse(&args(&["fix", "W001", "proj"])).unwrap();
+            assert_eq!(
+                cmd,
+                Cmd::Fix {
+                    path: "proj".to_string(),
+                    id: Some("W001".to_string())
+                }
+            );
+        }
+
+        #[test]
+        fn run_takes_an_optional_part() {
+            // A non-directory argument is a part name (§9.1).
+            let cmd = parse(&args(&["run", "chat.app"])).unwrap();
+            assert_eq!(
+                cmd,
+                Cmd::Run {
+                    path: ".".to_string(),
+                    part: Some("chat.app".to_string())
+                }
+            );
+            let cmd = parse(&args(&["run", "chat.app", "."])).unwrap();
+            assert_eq!(
+                cmd,
+                Cmd::Run {
+                    path: ".".to_string(),
+                    part: Some("chat.app".to_string())
+                }
+            );
         }
 
         #[test]

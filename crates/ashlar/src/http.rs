@@ -472,6 +472,7 @@ pub fn dispatch(
 const CLIENT_JS: &str = r#"(function(){
 var ws=new WebSocket((location.protocol==='https:'?'wss://':'ws://')+location.host+'/');
 function send(o){if(ws.readyState===1)ws.send(JSON.stringify(o));}
+ws.onopen=function(){send({page:document.body.getAttribute('data-ash-page')});};
 function fire(kind,e){var t=e.target.closest('[data-ash-h]');
  if(!t||t.getAttribute('data-ash-on')!==kind)return;
  if(kind==='onsubmit')e.preventDefault();
@@ -503,9 +504,10 @@ pub fn render_response(
         }
         if let Some(V::Text(id)) = m.get("__view_instance") {
             let inner = render_instance(ev, id)?;
+            let page = ev.current_page.clone().unwrap_or_default();
             let html = format!(
-                "<!doctype html>\n<html><head><meta charset=\"utf-8\"></head><body>{}<script>{}</script></body></html>",
-                inner, CLIENT_JS
+                "<!doctype html>\n<html><head><meta charset=\"utf-8\"></head><body data-ash-page=\"{}\">{}<script>{}</script></body></html>",
+                page, inner, CLIENT_JS
             );
             return Ok((200, "text/html".to_string(), html.into_bytes(), vec![]));
         }
@@ -661,6 +663,7 @@ fn html_escape(s: &str) -> String {
 /// loop from another thread.
 pub fn serve(
     root: PathBuf,
+    root_part: Option<String>,
     override_port: Option<u16>,
     ready: impl FnOnce(u16),
     stop: Arc<AtomicBool>,
@@ -680,13 +683,43 @@ pub fn serve(
                 .join("\n"));
         }
 
-        // The server root is the part that declares `port` (§9.1).
-        let port_part = result
+        // The server root is the part that declares `port` (§9.1): the
+        // named one, or the program's SINGLE candidate — anything else
+        // errors listing the candidates.
+        let candidates: Vec<String> = result
             .composed
             .iter()
-            .find(|(_, cp)| cp.props.contains_key("port"))
+            .filter(|(_, cp)| cp.props.contains_key("port"))
             .map(|(full, _)| full.clone())
-            .ok_or_else(|| "no part declares `port`; nothing to run.".to_string())?;
+            .collect();
+        let port_part = match &root_part {
+            Some(name) => {
+                if candidates.iter().any(|c| c == name) {
+                    name.clone()
+                } else if result.composed.contains_key(name) {
+                    return Err(format!(
+                        "`{}` declares no `port`; it cannot be a server root.",
+                        name
+                    ));
+                } else {
+                    return Err(format!("`{}` is not a part in this program.", name));
+                }
+            }
+            None => match candidates.len() {
+                0 => return Err("no part declares `port`; nothing to run.".to_string()),
+                1 => candidates[0].clone(),
+                _ => {
+                    return Err(format!(
+                        "more than one part declares `port`; name one: {}.",
+                        candidates
+                            .iter()
+                            .map(|c| format!("`ashlar run {}`", c))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ))
+                }
+            },
+        };
 
         let mut ev = Evaluator::new(&result.program, &result.composed);
         ev.foreign_root = Some(root.clone());
@@ -786,6 +819,7 @@ pub fn serve(
                     if let Some(ws) = handle_conn(&mut ev, &root, conn) {
                         ws_conns.push(ws);
                     }
+                    ev.current_page = None;
                 }
                 Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => {
                     std::thread::sleep(std::time::Duration::from_millis(5));
@@ -818,10 +852,23 @@ pub fn serve(
                     match opcode {
                         1 => {
                             if let Ok(text) = String::from_utf8(payload) {
+                                // The shim's hello binds this socket to
+                                // its page (§9.5); it needs no reply.
+                                if let Some(V::Map(m)) = from_json(&text) {
+                                    if let Some(V::Text(p)) = m.get("page") {
+                                        ws_conns[i].page = Some(p.clone());
+                                        continue;
+                                    }
+                                }
                                 let headers = ws_conns[i].headers.clone();
                                 let session = ws_conns[i].session.clone();
+                                // Instances created while handling this
+                                // event (re-renders) belong to the
+                                // socket's page.
+                                ev.current_page = ws_conns[i].page.clone();
                                 let (reply, patches) =
                                     process_ws_text(&mut ev, &text, &headers, &session);
+                                ev.current_page = None;
                                 replies.push((reply, patches));
                             }
                         }
@@ -852,6 +899,12 @@ pub fn serve(
                     }
                 }
                 if drop_conn {
+                    // The socket's page unmounts with it: stop stacks run,
+                    // then instances, handlers, dependency edges, and
+                    // their channel subscriptions go (§9.5).
+                    if let Some(page) = ws_conns[i].page.clone() {
+                        ev.unmount_page(&page);
+                    }
                     ws_conns.remove(i);
                 } else {
                     i += 1;
@@ -1056,6 +1109,9 @@ pub struct WsConn {
     pub buf: Vec<u8>,
     pub session: Option<String>,
     pub headers: BTreeMap<String, String>,
+    /// The page render this socket belongs to (the shim announces it on
+    /// open); its instances unmount when the socket closes (§9.5).
+    pub page: Option<String>,
 }
 
 /// Serve one accepted connection. An HTTP request is answered in place;
@@ -1087,8 +1143,14 @@ fn handle_conn(
             headers: req.headers,
             stream: conn,
             buf: Vec::new(),
+            page: None,
         });
     }
+
+    // Every HTTP dispatch is a page context: instances created while
+    // handling it (el in the route handler, nested views in the render)
+    // belong to this page and unmount when its socket closes (§9.5).
+    ev.begin_page();
 
     // Static files (§9.8) match by route prefix before dynamic dispatch.
     if req.method == "GET" && try_serve_files(ev, root, &req.path, &mut conn) {
