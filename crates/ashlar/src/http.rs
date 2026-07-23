@@ -1449,6 +1449,11 @@ pub struct WsConn {
     /// judging by time-without-progress, not queue size, keeps a healthy
     /// client that just received one huge patch from being shed.
     pub last_drain: std::time::Instant,
+    /// Set when a single tick tried to queue past `WS_OUT_MAX` — a burst
+    /// of events broadcasting faster than this peer drains. Enqueue then
+    /// stops growing the buffer and the peer is shed at the next flush,
+    /// so one tick can never materialize unbounded memory.
+    pub overflow: bool,
     pub session: Option<String>,
     pub headers: BTreeMap<String, String>,
     /// The page render this socket belongs to (the shim announces it on
@@ -1539,6 +1544,7 @@ fn handle_request(
             buf: Vec::new(),
             out: Vec::new(),
             last_drain: std::time::Instant::now(),
+            overflow: false,
             page: None,
         });
     }
@@ -1707,6 +1713,15 @@ const WS_OUT_MAX: usize = 64 << 20;
 /// loop nothing — the old direct write here retried a full socket
 /// forever, freezing every client because one stopped reading.
 fn ws_enqueue_frame(conn: &mut WsConn, opcode: u8, payload: &[u8]) {
+    // Cap at enqueue time, not just at flush: a client that packs
+    // thousands of events into one TCP burst has each one broadcast to
+    // every peer before the tick's single flush runs, so an unchecked
+    // append could grow gigabytes before any drain. Past the bound this
+    // peer is doomed — stop feeding it and shed it next flush.
+    if conn.overflow || conn.out.len() > WS_OUT_MAX {
+        conn.overflow = true;
+        return;
+    }
     conn.out.push(0x80 | opcode);
     let len = payload.len();
     if len < 126 {
@@ -1729,6 +1744,9 @@ fn ws_enqueue(conn: &mut WsConn, text: &str) {
 /// `false` means the connection is dead — closed, stalled past
 /// `WS_STALL` with bytes waiting, or `WS_OUT_MAX` behind — drop it.
 fn ws_flush(conn: &mut WsConn) -> bool {
+    if conn.overflow {
+        return false;
+    }
     while !conn.out.is_empty() {
         match conn.stream.write(&conn.out) {
             Ok(0) => return false,

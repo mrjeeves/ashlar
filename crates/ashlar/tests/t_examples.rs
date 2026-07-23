@@ -137,11 +137,13 @@ fn attr_of(html: &str, attr: &str) -> Option<String> {
     Some(html[start..end].to_string())
 }
 
-/// The instance owning the `nth` handler wired for `kind`: the nearest
-/// ANCESTOR carrying `data-ash-instance`, exactly as the browser shim
-/// resolves it with `.closest()`. A sibling instance that closed before
-/// the element must not win, so this walks real tag nesting (the
-/// renderer closes every element explicitly).
+/// The instance owning the `nth` handler wired for `kind`, resolved
+/// exactly as the browser shim does with `.closest('[data-ash-instance]')`:
+/// the handler element ITSELF if it carries the marker (a view whose root
+/// is the interactive element — a bare button, a link), otherwise the
+/// nearest ancestor. A sibling instance that closed before the element
+/// must not win, so this walks real tag nesting (the renderer closes
+/// every element explicitly).
 fn event_target(html: &str, kind: &str, nth: usize) -> Option<(String, String)> {
     let marker = format!("data-ash-on=\"{}\"", kind);
     let mut at = 0;
@@ -149,9 +151,15 @@ fn event_target(html: &str, kind: &str, nth: usize) -> Option<(String, String)> 
         at = html[at..].find(&marker)? + at + marker.len();
     }
     let h = attr_of(&html[at..], "data-ash-h")?;
-    // Walk tags before the element's own opening `<` to build the
-    // ancestor stack.
     let open_at = html[..at].rfind('<')?;
+    // The handler element's own opening tag may carry the instance
+    // marker (stamped onto a view's root element) — `.closest` starts
+    // at the element, so check it first.
+    let self_gt = html[open_at..].find('>').map(|p| p + open_at)?;
+    if let Some(id) = attr_of(&html[open_at..=self_gt], "data-ash-instance") {
+        return Some((id, h));
+    }
+    // Otherwise walk the tags before it for the nearest open ancestor.
     let mut stack: Vec<Option<String>> = Vec::new();
     let mut i = 0;
     while i < open_at {
