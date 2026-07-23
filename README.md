@@ -105,6 +105,9 @@ mechanical, and each has teeth:
   (`reference/ashlar.md`), and guessability is *gate-tested*: fresh models
   cold-read program snippets and their misreads are design bugs
   (`suites/t_a3/`, last run 23/24).
+- **Derivable.** Ashlar minimizes semantic freedom so the toolchain can
+  compute and explain what names mean, which implementations run, and what
+  a change affects ([ADR-0010](docs/decisions/0010-semantic-freedom-and-derivability.md)).
 - **Diagnostics are corrections.** Stable ids, precise spans, and machine
   edits that always leave the program better: the round-trip metric
   (check → apply fixes → check) converges in a mean of **1.00 rounds**
