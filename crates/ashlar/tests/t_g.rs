@@ -46,6 +46,10 @@ fn http_get(port: u16, path: &str) -> (u16, String) {
 
 fn http_req(port: u16, method: &str, path: &str, body: Option<&str>) -> (u16, String) {
     let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    // A no-stall test must FAIL on a stall, not hang the whole binary
+    // (cargo test has no per-test timeout): every probe reads with a
+    // deadline.
+    s.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
     let body = body.unwrap_or("");
     let req = format!(
         "{} {} HTTP/1.1\r\nhost: t\r\ncontent-length: {}\r\n\r\n{}",
@@ -74,6 +78,9 @@ fn http_req(port: u16, method: &str, path: &str, body: Option<&str>) -> (u16, St
 /// text frame in.
 fn ws_roundtrip(port: u16, envelope: &str) -> String {
     let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    // Bound every read so a wedged socket fails the test instead of
+    // hanging the binary forever.
+    s.set_read_timeout(Some(std::time::Duration::from_secs(10))).unwrap();
     let req = "GET / HTTP/1.1\r\nhost: t\r\nupgrade: websocket\r\nconnection: Upgrade\r\nsec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==\r\nsec-websocket-version: 13\r\n\r\n";
     s.write_all(req.as_bytes()).unwrap();
     // Read the 101 response headers.
@@ -1458,6 +1465,104 @@ part kid {
         assert!(patch.contains("mounts 1"), "child must NOT re-mount (loop guard): {}", patch);
         assert!(patch.contains(&kid), "child instance must be reused, not replaced: {}", patch);
     }
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}
+
+#[test]
+fn t_g_overflowing_peer_is_shed_not_buffered_without_bound() {
+    // A peer that stops reading while broadcasts pile up must be shed
+    // once its queue passes the outbound bound — not grown without limit
+    // inside a tick. Large patches reach the cap fast; the server must
+    // stay responsive throughout and drop the doomed peer. (Before the
+    // enqueue-time cap, one busy tick could materialize gigabytes.)
+    let big = "x".repeat(256 * 1024);
+    let app = r#"space burst
+
+part Server {
+  port = 0
+}
+
+part Store {
+  synced n: number = 0
+  stored blob: text = ""
+  bump = () => { n = n + 1 }
+  seed = (b: text) => { blob = b }
+}
+
+part page {
+  route = "/"
+  view = () => el("div", {}, ["v" + text(Store.n), Store.blob])
+}
+
+part pump {
+  route = "/bump"
+  handle pipe = (req: std.Request) => {
+    Store.bump()
+    return "ok"
+  }
+}
+
+part seeder {
+  route = "/seed"
+  handle pipe = (req: std.Request) => {
+    Store.seed(text(req.data.b))
+    return "ok"
+  }
+}
+"#;
+    let root = fixture("burst", &[("app.ash", app)]);
+    let (port, stop, join) = start(root);
+
+    // Seed a 256 KiB body so every re-render is a large patch.
+    let (s, _) = http_req(port, "POST", "/seed", Some(&format!("{{\"b\":\"{}\"}}", big)));
+    assert_eq!(s, 200);
+
+    // A stalled peer loads the page (its instance reads n + blob) and
+    // binds a socket, then never reads again.
+    let (_, _, html) = http_req_full(port, "GET", "/", None, None);
+    let page = attr_of(&html, "data-ash-page").unwrap();
+    let mut stalled = ws_open(port);
+    ws_send_frame(&mut stalled, &format!("{{\"page\":\"{}\"}}", page));
+    std::thread::sleep(std::time::Duration::from_millis(40));
+
+    // Bump the synced counter many times: each re-render broadcasts a
+    // 256 KiB patch to the stalled peer, far past the 64 MiB bound. The
+    // server must keep answering plain HTTP the whole time.
+    for k in 0..400 {
+        let (bs, _) = http_req(port, "POST", "/bump", None);
+        assert_eq!(bs, 200, "server unresponsive at bump {}", k);
+    }
+    let (alive, _) = http_req(port, "GET", "/bump", None);
+    assert_eq!(alive, 200, "server hung after the burst");
+
+    // The stalled peer is shed: draining ends in EOF/reset, bounded well
+    // under the gigabytes an uncapped queue would have buffered.
+    stalled.set_read_timeout(Some(std::time::Duration::from_secs(3))).unwrap();
+    let mut sink = [0u8; 65536];
+    let mut drained = 0usize;
+    let shed = loop {
+        match stalled.read(&mut sink) {
+            Ok(0) => break true,
+            Ok(n) => {
+                drained += n;
+                if drained > 200 << 20 {
+                    break false;
+                }
+            }
+            Err(ref e)
+                if matches!(
+                    e.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                break false;
+            }
+            Err(_) => break true,
+        }
+    };
+    assert!(shed, "overflowing peer was never shed ({} bytes drained)", drained);
 
     stop.store(true, Ordering::Relaxed);
     join.join().unwrap();
