@@ -74,3 +74,11 @@ connected view whose `latest` no code in that request assigns.
 Server-driven reactivity (§9.7 + §9.3): a scheduled part's `run` bumps
 a `synced` counter on an `every` interval, and every connected view
 that read it re-renders — no user event anywhere in the loop.
+
+## pong
+
+A real-time game with zero client code: a 20fps `every` schedule advances
+the ball server-side, sliders steer the paddles over `oninput`, and both
+players' pages re-render from the same `synced` state. Each control is
+its own view instance, so the field's twenty-patches-a-second never
+replace a slider mid-drag. Open it in two windows and play.
