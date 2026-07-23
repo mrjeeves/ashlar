@@ -1,5 +1,7 @@
 space diary
 
+// Auth end to end: signup/login/logout builtins, an `allow` guard, and
+// a per-user page — sessions ride an HttpOnly cookie (§9.6).
 part app {
   port = 8080
 }

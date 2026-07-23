@@ -28,10 +28,12 @@ Every item this page has carried is delivered, tested, and moved off:
   stacks on mount, page-scoped unmount with subscription cleanup),
   §9.1's root selection (`run <part>`, candidates listed when
   ambiguous), and `fix <id>`. Hardened 2026-07-23 against real browser
-  socket behavior: requests assemble without ever blocking the loop (a
-  speculative preconnect socket that sends nothing once froze the whole
-  runtime), and outbound WebSocket frames queue per connection, shedding
-  peers that stop reading — both no-stall properties pinned in T-G.
+  socket behavior: requests assemble and responses drain without ever
+  blocking the loop (a speculative preconnect socket that sends nothing
+  once froze the whole runtime), outbound WebSocket frames queue per
+  connection and shed peers by time-without-progress — never burst
+  size — and an oversized body gets a 413 naming the limit instead of a
+  reset. All of it pinned in T-G with hostile-socket tests.
 - **Refactor commands** — `refactor.rs` + `rename`/`rekind`/`move`/
   `radius`, proven by T-E's 13 tests. The E6 residuals closed in
   increment 9: data-shape and view fields rename through the checker's
