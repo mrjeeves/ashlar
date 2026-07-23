@@ -124,13 +124,6 @@ fn attr_of(html: &str, attr: &str) -> Option<String> {
     Some(html[start..end].to_string())
 }
 
-/// The handler id attached to the element wired for `kind`.
-fn handler_for(html: &str, kind: &str) -> Option<String> {
-    let marker = format!("data-ash-on=\"{}\"", kind);
-    let at = html.find(&marker)?;
-    attr_of(&html[at..], "data-ash-h")
-}
-
 /// The instance owning the `nth` handler wired for `kind`: the nearest
 /// ANCESTOR carrying `data-ash-instance`, exactly as the browser shim
 /// resolves it with `.closest()`. A sibling instance that closed before
