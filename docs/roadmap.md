@@ -47,6 +47,10 @@ Every item this page has carried is delivered, tested, and moved off:
   7.5%, distribution printed on every run.
 - **T-A3 surface findings** — resolved by ADR-0008, validated by gate
   run 2 (23/24 cold-read PASS).
+- **Showcase corpus** — ten complete projects now include typed
+  multi-space policy composition and background work driving a live
+  view. T-Examples compiles, format-checks, serves, and drives both
+  additions over their real HTTP/WebSocket surfaces.
 
 What remains is not debt but doctrine, named where it lives:
 `Unknown`-permissiveness for what the checker cannot prove (no false
