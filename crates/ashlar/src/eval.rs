@@ -93,6 +93,9 @@ pub struct Instance {
     pub part: String,
     pub fields: BTreeMap<String, V>,
     pub state: BTreeMap<String, V>,
+    /// The page render this instance belongs to; when that page's socket
+    /// closes, the instance unmounts (§9.5).
+    pub page: Option<String>,
 }
 
 /// One evaluation context over a checked program.
@@ -127,6 +130,9 @@ pub struct Evaluator<'a> {
     pub deps: BTreeMap<String, std::collections::BTreeSet<String>>,
     /// The instance currently rendering (reads record into `deps`).
     pub current_render: Option<String>,
+    /// The page whose request/socket is being served; instances created
+    /// now belong to it and unmount when its socket closes (§9.5).
+    pub current_page: Option<String>,
     /// Project root for `foreign/<space>.so` resolution (§9.10).
     pub foreign_root: Option<std::path::PathBuf>,
     /// dlopen handles by space, opened lazily.
@@ -152,6 +158,7 @@ impl<'a> Evaluator<'a> {
             spawn_queue: Vec::new(),
             deps: BTreeMap::new(),
             current_render: None,
+            current_page: None,
             foreign_root: None,
             foreign_libs: BTreeMap::new(),
             counter: 0,
@@ -163,6 +170,26 @@ impl<'a> Evaluator<'a> {
     fn fresh_id(&mut self, prefix: &str) -> String {
         self.counter += 1;
         format!("{}{}", prefix, self.counter)
+    }
+
+    /// Open a fresh page context: subsequently created instances belong
+    /// to it until the next `begin_page`/clear (§9.5).
+    pub fn begin_page(&mut self) -> String {
+        let p = self.fresh_id("p");
+        self.current_page = Some(p.clone());
+        p
+    }
+
+    /// A unique 8-byte salt: process clock plus the monotone counter,
+    /// mixed through SHA-1. Uniqueness (not secrecy) is what a salt needs.
+    fn fresh_salt(&mut self) -> Vec<u8> {
+        self.counter += 1;
+        let ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let seed = format!("{}:{}", ms, self.counter);
+        crate::http::sha1(seed.as_bytes())[..8].to_vec()
     }
 
     /// Create a view instance of `part` with the given fields; `state`
@@ -191,9 +218,84 @@ impl<'a> Evaluator<'a> {
                 part: part.to_string(),
                 fields,
                 state,
+                page: self.current_page.clone(),
             },
         );
+        // Mounting runs the instance's `start` stack (§9.4/§9.5):
+        // subscriptions made there carry the instance and die with it.
+        self.run_instance_stack(&id, "start", false)?;
         Ok(id)
+    }
+
+    /// Run a stack property in an INSTANCE's scope: every layer in
+    /// composition order (reverse for teardown), returned maps merging
+    /// onto the instance's own state (§9.4: state is per-instance).
+    pub fn run_instance_stack(
+        &mut self,
+        id: &str,
+        prop: &str,
+        reverse: bool,
+    ) -> Result<(), Fault> {
+        let part = match self.instances.get(id) {
+            Some(i) => i.part.clone(),
+            None => return Ok(()),
+        };
+        let mut chain = self.prop_chain(&part, prop);
+        if reverse {
+            chain.reverse();
+        }
+        for e in chain {
+            let mut env = Env {
+                part: part.clone(),
+                instance: Some(id.to_string()),
+                frames: vec![BTreeMap::new()],
+            };
+            let f = self.eval(&mut env, &e)?;
+            let out = self.call_with_instance(f, vec![], Some(id.to_string()))?;
+            if let V::Map(m) = out {
+                for (k, v) in m {
+                    if let Some(inst) = self.instances.get_mut(id) {
+                        if inst.state.contains_key(&k) {
+                            inst.state.insert(k.clone(), v);
+                            self.dirty_readers(&format!("instance:{}.{}", id, k));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Unmount every instance belonging to `page` (§9.5): run their `stop`
+    /// stacks (teardown order), then remove the instances, their event
+    /// handlers, their dependency edges, and every channel subscription
+    /// their lifetime created.
+    pub fn unmount_page(&mut self, page: &str) {
+        let ids: Vec<String> = self
+            .instances
+            .iter()
+            .filter(|(_, i)| i.page.as_deref() == Some(page))
+            .map(|(id, _)| id.clone())
+            .collect();
+        for id in &ids {
+            let _ = self.run_instance_stack(id, "stop", true);
+        }
+        for id in &ids {
+            self.instances.remove(id);
+            self.handlers.retain(|(inst, _), _| inst != id);
+            let prefix = format!("instance:{}.", id);
+            self.deps.retain(|k, _| !k.starts_with(&prefix));
+            for readers in self.deps.values_mut() {
+                readers.remove(id);
+            }
+            self.dirty_instances.retain(|d| d != id);
+            for handlers in self.subs.values_mut() {
+                handlers.retain(|h| match h {
+                    V::Fn(f) => f.instance.as_deref() != Some(id.as_str()),
+                    _ => true,
+                });
+            }
+        }
     }
 
     /// Call a function property in an instance's scope.
@@ -1152,8 +1254,9 @@ impl<'a> Evaluator<'a> {
                     });
                 }
                 let id = self.fresh_id("u");
+                let salt = self.fresh_salt();
                 self.users
-                    .insert(email.clone(), (id.clone(), hash_password(&email, &pw)));
+                    .insert(email.clone(), (id.clone(), hash_password_v2(&pw, &salt)));
                 self.state.dirty = true; // accounts persist with stored state
                 self.open_session(&id);
                 Ok(user_value(&id, &email))
@@ -1163,13 +1266,27 @@ impl<'a> Evaluator<'a> {
                     (V::Text(e), V::Text(p)) => (e, p),
                     _ => return Err(Fault::new("internal: login takes texts.".to_string())),
                 };
-                match self.users.get(&email) {
-                    Some((id, hash)) if *hash == hash_password(&email, &pw) => {
-                        let id = id.clone();
+                match self.users.get(&email).cloned() {
+                    Some((id, hash)) => {
+                        let (ok, needs_upgrade) = verify_password(&email, &pw, &hash);
+                        if !ok {
+                            return Err(Fault {
+                                status: 401,
+                                message: "bad credentials.".to_string(),
+                            });
+                        }
+                        // Legacy v1 hashes upgrade transparently on the
+                        // first successful login (§9.6).
+                        if needs_upgrade {
+                            let salt = self.fresh_salt();
+                            self.users
+                                .insert(email.clone(), (id.clone(), hash_password_v2(&pw, &salt)));
+                            self.state.dirty = true;
+                        }
                         self.open_session(&id);
                         Ok(user_value(&id, &email))
                     }
-                    _ => Err(Fault {
+                    None => Err(Fault {
                         status: 401,
                         message: "bad credentials.".to_string(),
                     }),
@@ -1307,9 +1424,70 @@ fn user_value(id: &str, email: &str) -> V {
 
 /// Weak-by-construction v1 password hash (SHA-1 of email-salted input);
 /// zero-dependency, documented in the roadmap as an upgrade point.
-fn hash_password(email: &str, pw: &str) -> String {
+/// v1 (legacy): unsalted `sha1(email \0 pw)` hex. Still verified so
+/// existing accounts keep working; upgraded to v2 on the next login.
+fn hash_password_v1(email: &str, pw: &str) -> String {
     let digest = crate::http::sha1(format!("{}\u{0}{}", email, pw).as_bytes());
     digest.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+/// HMAC-SHA1 (RFC 2104) over the zero-dependency SHA-1.
+fn hmac_sha1(key: &[u8], msg: &[u8]) -> [u8; 20] {
+    let mut k = [0u8; 64];
+    if key.len() > 64 {
+        k[..20].copy_from_slice(&crate::http::sha1(key));
+    } else {
+        k[..key.len()].copy_from_slice(key);
+    }
+    let mut inner: Vec<u8> = k.iter().map(|b| b ^ 0x36).collect();
+    inner.extend_from_slice(msg);
+    let ih = crate::http::sha1(&inner);
+    let mut outer: Vec<u8> = k.iter().map(|b| b ^ 0x5c).collect();
+    outer.extend_from_slice(&ih);
+    crate::http::sha1(&outer)
+}
+
+/// PBKDF2-HMAC-SHA1 (RFC 2898), single 20-byte block.
+fn pbkdf2_sha1(pw: &[u8], salt: &[u8], iterations: u32) -> [u8; 20] {
+    let mut block = salt.to_vec();
+    block.extend_from_slice(&[0, 0, 0, 1]);
+    let mut u = hmac_sha1(pw, &block);
+    let mut out = u;
+    for _ in 1..iterations {
+        u = hmac_sha1(pw, &u);
+        for (o, b) in out.iter_mut().zip(u.iter()) {
+            *o ^= b;
+        }
+    }
+    out
+}
+
+const PBKDF2_ITERATIONS: u32 = 10_000;
+
+fn hex(bytes: &[u8]) -> String {
+    bytes.iter().map(|b| format!("{:02x}", b)).collect()
+}
+
+/// v2: `2$<salt hex>$<pbkdf2 hex>`, salted and iterated (§9.6).
+fn hash_password_v2(pw: &str, salt: &[u8]) -> String {
+    let h = pbkdf2_sha1(pw.as_bytes(), salt, PBKDF2_ITERATIONS);
+    format!("2${}${}", hex(salt), hex(&h))
+}
+
+/// Verify against either format. Returns (ok, needs_upgrade).
+fn verify_password(email: &str, pw: &str, stored: &str) -> (bool, bool) {
+    if let Some(rest) = stored.strip_prefix("2$") {
+        if let Some((salt_hex, hash_hex)) = rest.split_once('$') {
+            let salt: Vec<u8> = (0..salt_hex.len())
+                .step_by(2)
+                .filter_map(|i| u8::from_str_radix(salt_hex.get(i..i + 2)?, 16).ok())
+                .collect();
+            let h = pbkdf2_sha1(pw.as_bytes(), &salt, PBKDF2_ITERATIONS);
+            return (hex(&h) == hash_hex, false);
+        }
+        return (false, false);
+    }
+    (hash_password_v1(email, pw) == stored, true)
 }
 
 enum Flow {

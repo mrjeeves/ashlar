@@ -31,7 +31,7 @@ fn start(root: PathBuf) -> (u16, Arc<AtomicBool>, std::thread::JoinHandle<()>) {
     let stop2 = stop.clone();
     let (tx, rx) = mpsc::channel();
     let join = std::thread::spawn(move || {
-        let r = http::serve(root, Some(0), move |port| tx.send(port).unwrap(), stop2);
+        let r = http::serve(root, None, Some(0), move |port| tx.send(port).unwrap(), stop2);
         if let Err(e) = r {
             panic!("serve failed: {}", e);
         }
@@ -763,4 +763,202 @@ char* lies(const char* args) {
 
     stop.store(true, Ordering::Relaxed);
     join.join().unwrap();
+}
+
+#[test]
+fn t_g_instance_start_subscribes_and_unmount_unsubscribes() {
+    // covers: reference 9.5 — "`subscribe` in a view part's `start stack`
+    // subscribes that instance and unsubscribes it automatically when the
+    // instance unmounts." The instance's handler bumps an observable
+    // singleton; after the page's socket closes, publishing reaches
+    // nothing.
+    let app = r#"space live
+
+part Count {
+  state n: number = 0
+  bump = () => { n = n + 1 }
+}
+
+part Server {
+  port = 0
+}
+
+part board {
+  route = "/"
+  state seen: number = 0
+  start stack = () => {
+    subscribe("pokes", (m: data) => react())
+    return none
+  }
+  react = () => {
+    seen = seen + 1
+    live.Count.bump()
+  }
+  view = () => el("span", {}, ["seen: " + text(seen)])
+}
+
+part kick {
+  route = "/kick"
+  handle pipe = (req: std.Request) => {
+    publish("pokes", 1)
+    return "ok"
+  }
+}
+
+part tally {
+  route = "/count"
+  handle pipe = (req: std.Request) => live.Count.n
+}
+"#;
+    let root = fixture("unmount", &[("app.ash", app)]);
+    let (port, stop, join) = start(root);
+
+    let (_, _, html) = http_req_full(port, "GET", "/", None, None);
+    let page = attr_of(&html, "data-ash-page").expect("page id in body");
+    let mut ws = ws_open(port);
+    ws_send_frame(&mut ws, &format!("{{\"page\":\"{}\"}}", page));
+    std::thread::sleep(std::time::Duration::from_millis(80));
+
+    // The mounted instance's subscription reacts to a publish.
+    let (_, _, body) = http_req_full(port, "GET", "/kick", None, None);
+    assert_eq!(body, "ok");
+    let (_, _, n) = http_req_full(port, "GET", "/count", None, None);
+    assert_eq!(n, "1", "the instance's start-stack subscription must fire");
+
+    // Close the page's socket; the instance unmounts and its
+    // subscription dies with it.
+    drop(ws);
+    std::thread::sleep(std::time::Duration::from_millis(120));
+    let (_, _, _) = http_req_full(port, "GET", "/kick", None, None);
+    let (_, _, n2) = http_req_full(port, "GET", "/count", None, None);
+    assert_eq!(
+        n2, "1",
+        "after unmount the subscription must be gone (§9.5)"
+    );
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}
+
+#[test]
+fn t_g_run_names_root_or_lists_candidates() {
+    // covers: reference 9.1 — one server root runs; more than one errors
+    // listing the candidates; `run <part>` names one explicitly.
+    let app = r#"space multi
+
+part alpha {
+  port = 0
+}
+
+part beta {
+  port = 0
+}
+
+part ping {
+  route = "/ping"
+  handle pipe = (req: std.Request) => "pong"
+}
+"#;
+    let root = fixture("multiroot", &[("app.ash", app)]);
+
+    // Unnamed with two candidates: an error naming both.
+    let stop = Arc::new(AtomicBool::new(false));
+    let err = http::serve(root.clone(), None, Some(0), |_| {}, stop).unwrap_err();
+    assert!(err.contains("more than one part declares `port`"), "{}", err);
+    assert!(err.contains("multi.alpha") && err.contains("multi.beta"), "{}", err);
+
+    // Naming a part without `port` refuses with the reason.
+    let stop = Arc::new(AtomicBool::new(false));
+    let err = http::serve(
+        root.clone(),
+        Some("multi.ping".to_string()),
+        Some(0),
+        |_| {},
+        stop,
+    )
+    .unwrap_err();
+    assert!(err.contains("declares no `port`"), "{}", err);
+
+    // Naming a candidate runs it.
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop2 = stop.clone();
+    let (tx, rx) = mpsc::channel();
+    let join = std::thread::spawn(move || {
+        http::serve(
+            root,
+            Some("multi.beta".to_string()),
+            Some(0),
+            move |port| tx.send(port).unwrap(),
+            stop2,
+        )
+        .unwrap();
+    });
+    let port = rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap();
+    let (status, _, body) = http_req_full(port, "GET", "/ping", None, None);
+    assert_eq!((status, body.as_str()), (200, "pong"));
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}
+
+#[test]
+fn t_g_legacy_password_hash_upgrades_on_login() {
+    // covers: reference 9.6 hardening — v1 (unsalted) hashes still verify
+    // and upgrade to salted iterated v2 on the first successful login.
+    let app = r#"space auth
+
+part Server {
+  port = 0
+}
+
+part signin {
+  route = "/login"
+  handle pipe = (req: std.Request) => login(text(req.data.email), text(req.data.password))
+}
+"#;
+    let root = fixture("authv2", &[("app.ash", app)]);
+    // Seed a legacy account: v1 = sha1(email \0 pw) hex.
+    let v1: String = ashlar::http::sha1("old@u.x\u{0}secret".as_bytes())
+        .iter()
+        .map(|b| format!("{:02x}", b))
+        .collect();
+    std::fs::write(
+        root.join(".ashlar-state.json"),
+        format!(
+            "{{\"__users\":{{\"old@u.x\":{{\"id\":\"u1\",\"hash\":\"{}\"}}}}}}",
+            v1
+        ),
+    )
+    .unwrap();
+    let (port, stop, join) = start(root.clone());
+
+    let (bad, _, _) =
+        http_req_full(port, "POST", "/login", Some("{\"email\":\"old@u.x\",\"password\":\"no\"}"), None);
+    assert_eq!(bad, 401);
+    let (ok, _, _) = http_req_full(
+        port,
+        "POST",
+        "/login",
+        Some("{\"email\":\"old@u.x\",\"password\":\"secret\"}"),
+        None,
+    );
+    assert_eq!(ok, 200, "the legacy hash must still verify");
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+
+    // The flush after upgrade persisted a v2 hash — and it verifies on a
+    // fresh boot.
+    let state = std::fs::read_to_string(root.join(".ashlar-state.json")).unwrap();
+    assert!(state.contains("\"hash\":\"2$"), "{}", state);
+    let (port2, stop2, join2) = start(root);
+    let (ok2, _, _) = http_req_full(
+        port2,
+        "POST",
+        "/login",
+        Some("{\"email\":\"old@u.x\",\"password\":\"secret\"}"),
+        None,
+    );
+    assert_eq!(ok2, 200, "the upgraded v2 hash must verify");
+    stop2.store(true, Ordering::Relaxed);
+    join2.join().unwrap();
 }

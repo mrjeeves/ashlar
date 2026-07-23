@@ -21,9 +21,13 @@ Every item this page has carried is delivered, tested, and moved off:
   values, captures must be legal names bound once, and `-> ?` returns
   refine from concrete branches so recursive callers check (ADR-0009).
 - **Evaluator and runtime** — `eval.rs` + `http.rs` + `ashlar run`,
-  proven by T-G's 12 conformance tests (G2 byte-identity, G3 hot
+  proven by T-G's 15 conformance tests (G2 byte-identity, G3 hot
   reload, multiplexed sockets, cross-client reactivity, foreign binding
-  with runtime shape faults). Its residual list emptied in increment 8.
+  with runtime shape faults). Its residual list emptied in increment 8;
+  the conformance pass then closed §9.5's instance lifecycle (start
+  stacks on mount, page-scoped unmount with subscription cleanup),
+  §9.1's root selection (`run <part>`, candidates listed when
+  ambiguous), and `fix <id>`.
 - **Refactor commands** — `refactor.rs` + `rename`/`rekind`/`move`/
   `radius`, proven by T-E's 13 tests. The E6 residuals closed in
   increment 9: data-shape and view fields rename through the checker's
@@ -47,7 +51,7 @@ Every item this page has carried is delivered, tested, and moved off:
 What remains is not debt but doctrine, named where it lives:
 `Unknown`-permissiveness for what the checker cannot prove (no false
 positives, check.rs module docs), `move`'s byte-identity class
-(ADR-0009), the v1 password hash (documented weak, §9.6 evaluator
-notes), and the open cold-read thread recorded in the run-2 results
-file. New requirements enter here as new numbered items; none are open
-today.
+(ADR-0009), and the open cold-read thread recorded in the run-2 results
+file. (The once-weak v1 password hash is gone: v2 is salted, iterated
+PBKDF2, and v1 hashes upgrade transparently on login.) New requirements
+enter here as new numbered items; none are open today.
