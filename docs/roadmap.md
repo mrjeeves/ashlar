@@ -21,13 +21,17 @@ Every item this page has carried is delivered, tested, and moved off:
   values, captures must be legal names bound once, and `-> ?` returns
   refine from concrete branches so recursive callers check (ADR-0009).
 - **Evaluator and runtime** — `eval.rs` + `http.rs` + `ashlar run`,
-  proven by T-G's 15 conformance tests (G2 byte-identity, G3 hot
+  proven by T-G's 19 conformance tests (G2 byte-identity, G3 hot
   reload, multiplexed sockets, cross-client reactivity, foreign binding
   with runtime shape faults). Its residual list emptied in increment 8;
   the conformance pass then closed §9.5's instance lifecycle (start
   stacks on mount, page-scoped unmount with subscription cleanup),
   §9.1's root selection (`run <part>`, candidates listed when
-  ambiguous), and `fix <id>`.
+  ambiguous), and `fix <id>`. Hardened 2026-07-23 against real browser
+  socket behavior: requests assemble without ever blocking the loop (a
+  speculative preconnect socket that sends nothing once froze the whole
+  runtime), and outbound WebSocket frames queue per connection, shedding
+  peers that stop reading — both no-stall properties pinned in T-G.
 - **Refactor commands** — `refactor.rs` + `rename`/`rekind`/`move`/
   `radius`, proven by T-E's 13 tests. The E6 residuals closed in
   increment 9: data-shape and view fields rename through the checker's
