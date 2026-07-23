@@ -96,6 +96,11 @@ pub struct Instance {
     /// The page render this instance belongs to; when that page's socket
     /// closes, the instance unmounts (§9.5).
     pub page: Option<String>,
+    /// Child instances this instance produced, in render order, from its
+    /// last render. Re-rendering reuses them by position so nested views
+    /// keep their per-instance state and `start` runs once, not per
+    /// parent render (§9.4).
+    pub children: Vec<String>,
 }
 
 /// One evaluation context over a checked program.
@@ -138,6 +143,18 @@ pub struct Evaluator<'a> {
     pub current_page: Option<String>,
     /// Project root for `foreign/<space>.so` resolution (§9.10).
     pub foreign_root: Option<std::path::PathBuf>,
+    /// The server root's declared stylesheet name (§9.4): the runtime
+    /// serves `assets/<name>.css` and links it into every served page's
+    /// head, so `class` names in views bind to its rules by name — the
+    /// presentation peer of `foreign`, named in source, located by the
+    /// build. `None` when the root declares no `style`.
+    pub style_name: Option<String>,
+    /// Child-instance position within the current render; reset per
+    /// render like `render_handler_seq`, so the Nth `el(Part)` reuses the
+    /// same instance every render (§9.4 reconciliation).
+    pub render_child_seq: usize,
+    /// Child instances produced so far in the current render, in order.
+    pub render_children: Vec<String>,
     /// dlopen handles by space, opened lazily.
     foreign_libs: BTreeMap<String, usize>,
     counter: u64,
@@ -162,8 +179,11 @@ impl<'a> Evaluator<'a> {
             deps: BTreeMap::new(),
             current_render: None,
             render_handler_seq: 0,
+            render_child_seq: 0,
+            render_children: Vec::new(),
             current_page: None,
             foreign_root: None,
+            style_name: None,
             foreign_libs: BTreeMap::new(),
             counter: 0,
         };
@@ -223,11 +243,56 @@ impl<'a> Evaluator<'a> {
                 fields,
                 state,
                 page: self.current_page.clone(),
+                children: Vec::new(),
             },
         );
         // Mounting runs the instance's `start` stack (§9.4/§9.5):
         // subscriptions made there carry the instance and die with it.
-        self.run_instance_stack(&id, "start", false)?;
+        // The start stack runs OUTSIDE the parent's render tracking — a
+        // read it makes (a presence counter reading its own tally) must
+        // not make the parent depend on that state, or mutating it would
+        // re-render the parent and re-mount this child forever.
+        let outer = self.current_render.take();
+        let r = self.run_instance_stack(&id, "start", false);
+        self.current_render = outer;
+        r?;
+        Ok(id)
+    }
+
+    /// Resolve the child instance for the current position in a render:
+    /// reuse the instance that sat here last render (same part) so its
+    /// state and subscriptions survive and `start` does not re-run;
+    /// otherwise mount a fresh one. Outside a render (a route returning
+    /// `el(view)`) there is no parent to key against, so always mount.
+    pub fn reconcile_child(&mut self, part: &str, fields: BTreeMap<String, V>) -> Result<String, Fault> {
+        let Some(parent) = self.current_render.clone() else {
+            return self.new_instance(part, fields);
+        };
+        let seq = self.render_child_seq;
+        self.render_child_seq += 1;
+        let prev = self
+            .instances
+            .get(&parent)
+            .and_then(|p| p.children.get(seq))
+            .cloned();
+        if let Some(prev_id) = prev {
+            if self.instances.get(&prev_id).map(|i| i.part.as_str()) == Some(part) {
+                if let Some(i) = self.instances.get_mut(&prev_id) {
+                    i.fields = fields;
+                }
+                self.render_children.push(prev_id.clone());
+                return Ok(prev_id);
+            }
+        }
+        // Suspend the parent's child cursor while a freshly mounted child
+        // runs its own start stack (which must not consume the parent's
+        // positions); restore it after.
+        let saved_seq = self.render_child_seq;
+        let saved_kids = std::mem::take(&mut self.render_children);
+        let id = self.new_instance(part, fields)?;
+        self.render_children = saved_kids;
+        self.render_child_seq = saved_seq;
+        self.render_children.push(id.clone());
         Ok(id)
     }
 
@@ -285,21 +350,45 @@ impl<'a> Evaluator<'a> {
             let _ = self.run_instance_stack(id, "stop", true);
         }
         for id in &ids {
-            self.instances.remove(id);
-            self.handlers.retain(|(inst, _), _| inst != id);
-            let prefix = format!("instance:{}.", id);
-            self.deps.retain(|k, _| !k.starts_with(&prefix));
-            for readers in self.deps.values_mut() {
-                readers.remove(id);
-            }
-            self.dirty_instances.retain(|d| d != id);
-            for handlers in self.subs.values_mut() {
-                handlers.retain(|h| match h {
-                    V::Fn(f) => f.instance.as_deref() != Some(id.as_str()),
-                    _ => true,
-                });
-            }
+            self.remove_instance(id);
         }
+    }
+
+    /// Table cleanup for one instance — event handlers, dependency edges,
+    /// dirty marks, and the subscriptions it owns. Does not run `stop` or
+    /// touch its children.
+    fn remove_instance(&mut self, id: &str) {
+        self.instances.remove(id);
+        self.handlers.retain(|(inst, _), _| inst != id);
+        let prefix = format!("instance:{}.", id);
+        self.deps.retain(|k, _| !k.starts_with(&prefix));
+        for readers in self.deps.values_mut() {
+            readers.remove(id);
+        }
+        self.dirty_instances.retain(|d| d != id);
+        for handlers in self.subs.values_mut() {
+            handlers.retain(|h| match h {
+                V::Fn(f) => f.instance.as_deref() != Some(id),
+                _ => true,
+            });
+        }
+    }
+
+    /// Unmount one instance and its whole subtree (a reconciliation
+    /// removal): `stop` stacks run children-first, then each instance's
+    /// tables are cleared — the same teardown a page unmount performs,
+    /// scoped to one departed child.
+    pub fn unmount_instance(&mut self, id: &str) {
+        let kids = self
+            .instances
+            .get(id)
+            .map(|i| i.children.clone())
+            .unwrap_or_default();
+        for k in &kids {
+            self.unmount_instance(k);
+        }
+        let _ = self.run_instance_stack(id, "stop", true);
+        self.remove_instance(id);
     }
 
     /// Call a function property in an instance's scope.
@@ -492,16 +581,39 @@ impl<'a> Evaluator<'a> {
     }
 
     /// Begin dependency tracking for one instance's render: its old edges
-    /// drop so a render that stopped reading a key stops depending on it.
+    /// drop so a render that stopped reading a key stops depending on it,
+    /// and the child cursor resets so this render's `el(Part)` calls key
+    /// against the same instances last render produced.
     pub fn begin_render(&mut self, id: &str) {
         for readers in self.deps.values_mut() {
             readers.remove(id);
         }
         self.current_render = Some(id.to_string());
+        self.render_child_seq = 0;
+        self.render_children = Vec::new();
     }
 
+    /// End the render: children present last time but not produced now
+    /// have departed, so unmount them (their `stop` stacks run); the rest
+    /// become this instance's child set for next time's reconciliation.
     pub fn end_render(&mut self) {
-        self.current_render = None;
+        let now = std::mem::take(&mut self.render_children);
+        if let Some(parent) = self.current_render.take() {
+            let was = self
+                .instances
+                .get(&parent)
+                .map(|i| i.children.clone())
+                .unwrap_or_default();
+            for old in was {
+                if !now.contains(&old) {
+                    self.unmount_instance(&old);
+                }
+            }
+            if let Some(p) = self.instances.get_mut(&parent) {
+                p.children = now;
+            }
+        }
+        self.render_child_seq = 0;
     }
 
     /// One structured entry (§9.9): timestamp, level, message, data, and
@@ -1328,7 +1440,7 @@ impl<'a> Evaluator<'a> {
                             V::Map(m) => m,
                             _ => BTreeMap::new(),
                         };
-                        let id = self.new_instance(&part, fields)?;
+                        let id = self.reconcile_child(&part, fields)?;
                         let mut m = BTreeMap::new();
                         m.insert("__view_instance".to_string(), V::Text(id));
                         Ok(V::Map(m))

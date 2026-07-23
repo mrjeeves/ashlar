@@ -94,6 +94,11 @@ that catch agents who guess instead:
   layer; pipe layers must agree in parameter AND return shape.
 - Event handlers get `std.Event`; the input's text is `e.data.value`.
 - Map shapes are written `{text: Shape}`; computed keys reach data only.
+- Views: an instance IS its root element and nested `el(Part)` children
+  reuse their instance across re-renders (`start` once, `stop` on
+  removal) — so nest freely and lean on the lifecycle. Style by `class`
+  name bound to the root's declared `style = "sheet"`
+  (`assets/sheet.css`); a `style="..."` attribute is the wrong tool.
 
 ## Sync duties — what must move together
 

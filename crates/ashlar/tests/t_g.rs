@@ -1390,3 +1390,75 @@ part hello {
     stop.store(true, Ordering::Relaxed);
     join.join().unwrap();
 }
+
+#[test]
+fn t_g_nested_child_is_reused_across_parent_rerenders() {
+    // A child view with a `start` stack must mount ONCE and be reused
+    // when its parent re-renders — not re-instantiated every render.
+    // Before reconciliation, `el(child)` minted a fresh instance each
+    // parent render, re-running the child's lifecycle; when that
+    // lifecycle touched state the parent read, it was an unbounded loop.
+    let app = r#"space recon
+
+part Server {
+  port = 0
+}
+
+part Mounts {
+  synced count: number = 0
+  bump = () => { count = count + 1 }
+}
+
+part parent {
+  route = "/"
+  state tick: number = 0
+  view = () => el("div", {}, [el("button", { onclick: poke }, ["tick " + text(tick)]), el(kid, {})])
+  poke = () => { tick = tick + 1 }
+}
+
+part kid {
+  view = () => el("span", {}, ["mounts " + text(Mounts.count)])
+  start stack = () => {
+    Mounts.bump()
+    return none
+  }
+}
+"#;
+    let root = fixture("recon", &[("app.ash", app)]);
+    let (port, stop, join) = start(root);
+
+    let (_, _, html) = http_req_full(port, "GET", "/", None, None);
+    assert!(html.contains("mounts 1"), "the child mounts once on load: {}", html);
+    let page = attr_of(&html, "data-ash-page").unwrap();
+    let parent = attr_of(&html, "data-ash-instance").unwrap();
+    let hid = attr_of(&html, "data-ash-h").unwrap();
+    // The kid instance is the second data-ash-instance in the document.
+    let kid = {
+        let m = "data-ash-instance=\"";
+        let a = html.find(m).unwrap() + m.len();
+        let b = html[a..].find(m).unwrap() + a + m.len();
+        let e = html[b..].find('"').unwrap() + b;
+        html[b..e].to_string()
+    };
+
+    let mut ws = ws_open(port);
+    ws_send_frame(&mut ws, &format!("{{\"page\":\"{}\"}}", page));
+    std::thread::sleep(std::time::Duration::from_millis(40));
+
+    // Poke the parent repeatedly: it re-renders each time (tick climbs),
+    // but the child is reused — its mount count never grows and its
+    // instance id never changes.
+    for expect in 1..=4 {
+        ws_send_frame(
+            &mut ws,
+            &format!("{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onclick\"}}}}", parent, hid),
+        );
+        let patch = ws_read_frame(&mut ws);
+        assert!(patch.contains(&format!("tick {}", expect)), "parent must re-render: {}", patch);
+        assert!(patch.contains("mounts 1"), "child must NOT re-mount (loop guard): {}", patch);
+        assert!(patch.contains(&kid), "child instance must be reused, not replaced: {}", patch);
+    }
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}

@@ -68,21 +68,34 @@ fn t_examples_are_canonically_formatted() {
 
 // -- runtime depth: every example served and driven -------------------------
 
-/// Copy an example into a temp dir (runtime writes state files; the
-/// tree ships source only).
+/// Copy an example into a temp dir (runtime writes state files; the tree
+/// ships source only). The whole project copies — `.ash` and any
+/// `assets/` (a declared stylesheet must be present or the server
+/// refuses to start), minus runtime artifacts.
 fn staged(name: &str) -> PathBuf {
     let src = examples_root().join(name);
     let dst = std::env::temp_dir().join(format!("ashlar_ex_{}_{}", name, std::process::id()));
     let _ = std::fs::remove_dir_all(&dst);
     std::fs::create_dir_all(&dst).unwrap();
-    for f in ashlar::find_ash_files(&src) {
-        let rel = f.strip_prefix(&src).unwrap();
-        if let Some(dir) = dst.join(rel).parent() {
-            std::fs::create_dir_all(dir).unwrap();
-        }
-        std::fs::copy(&f, dst.join(rel)).unwrap();
-    }
+    copy_tree(&src, &dst);
     dst
+}
+
+fn copy_tree(src: &std::path::Path, dst: &std::path::Path) {
+    for entry in std::fs::read_dir(src).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_string_lossy().to_string();
+        if name == ".ashlar-state.json" || name == "ashlar.manifest" || name.starts_with('.') {
+            continue;
+        }
+        let target = dst.join(&name);
+        if path.is_dir() {
+            std::fs::create_dir_all(&target).unwrap();
+            copy_tree(&path, &target);
+        } else {
+            std::fs::copy(&path, &target).unwrap();
+        }
+    }
 }
 
 fn start(root: PathBuf) -> (u16, Arc<AtomicBool>, std::thread::JoinHandle<()>) {
@@ -614,6 +627,109 @@ fn t_examples_guardrails_layers_typed_policies() {
     assert!(layered.contains("over 24 characters"), "{}", layered);
     assert!(layered.contains("contains secret"), "{}", layered);
 
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Pull the session token out of a Set-Cookie header.
+fn cookie_of(head: &str) -> String {
+    head.lines()
+        .find(|l| l.to_ascii_lowercase().starts_with("set-cookie:"))
+        .and_then(|l| l.split("ashsession=").nth(1))
+        .map(|v| v.split(';').next().unwrap_or(v).trim().to_string())
+        .expect("a session cookie")
+}
+
+#[test]
+fn t_examples_commons_is_a_live_team_chat() {
+    // The flagship: auth, a live cross-client feed, an independently
+    // owned moderation layer, cross-space @mentions over a channel, and
+    // presence driven by the mount/unmount lifecycle — one product
+    // exercising the whole language. Handlers are transport-invisible, so
+    // the test posts JSON where a browser posts a form; same routes.
+    let dir = staged("commons");
+    let (port, stop, join) = start(dir.clone());
+
+    // Two people sign up; each gets a session (§9.6).
+    let (s1, h1, _) = req(port, "POST", "/api/signup",
+        Some("{\"name\":\"Ada\",\"email\":\"ada@team.dev\",\"password\":\"stone\"}"), None);
+    assert_eq!(s1, 302, "signup redirects");
+    let ada = cookie_of(&h1);
+    let (_, h2, _) = req(port, "POST", "/api/signup",
+        Some("{\"name\":\"Bob\",\"email\":\"bob@team.dev\",\"password\":\"slate\"}"), None);
+    let bob = cookie_of(&h2);
+
+    // The gate is what a logged-out visitor sees; the shell is what a
+    // member sees, with their name resolved from their id — the request
+    // identity crossing into the view (§9.4).
+    let (_, _, anon) = req(port, "GET", "/", None, None);
+    assert!(anon.contains("class=\"gate\""), "logged-out sees the gate");
+    assert!(anon.contains("/commons.css"), "the declared stylesheet is linked into the head");
+    let (_, _, shell_a) = req(port, "GET", "/", None, Some(&ada));
+    assert!(shell_a.contains("class=\"sidebar\""), "a member sees the shell");
+    assert!(shell_a.contains("Ada"), "the shell greets the member by name");
+    assert!(shell_a.contains("general"), "the seeded room is listed");
+
+    // The stylesheet serves as a real asset at the linked path.
+    let (css_status, css_head, css_body) = req(port, "GET", "/commons.css", None, None);
+    assert_eq!(css_status, 200);
+    assert!(css_head.to_ascii_lowercase().contains("text/css"), "{}", css_head);
+    assert!(css_body.contains(".sidebar"), "the sheet is the real CSS");
+
+    // Both open the general room; each render mounts a presence probe and
+    // a notice tray, and binds a live socket to its page.
+    let (_, _, room_a) = req(port, "GET", "/c/general", None, Some(&ada));
+    let (_, _, room_b) = req(port, "GET", "/c/general", None, Some(&bob));
+    let page_a = attr_of(&room_a, "data-ash-page").unwrap();
+    let page_b = attr_of(&room_b, "data-ash-page").unwrap();
+    let mut ws_a = ws_open(port);
+    let mut ws_b = ws_open(port);
+    ws_send(&mut ws_a, &format!("{{\"page\":\"{}\"}}", page_a));
+    ws_send(&mut ws_b, &format!("{{\"page\":\"{}\"}}", page_b));
+    std::thread::sleep(std::time::Duration::from_millis(80));
+
+    // Presence: Ada's sidebar now lists Bob as online (his page mounted,
+    // his socket is live). The lobby has no message feed, so his name can
+    // only come from the online list.
+    let (_, _, lobby) = req(port, "GET", "/", None, Some(&ada));
+    assert!(lobby.contains("Bob"), "presence: Bob shows online in Ada's sidebar:\n{}", lobby);
+
+    // Bob composes a message that trips two independently owned spaces at
+    // once: it @mentions Ada, and it contains a redacted word.
+    let (binst, typed) = event_target(&room_b, "oninput", 0).unwrap();
+    let (sinst, send) = event_target(&room_b, "onsubmit", 0).unwrap();
+    ws_send(&mut ws_b, &format!(
+        "{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"oninput\",\"value\":\"hey @Ada check the spoiler\"}}}}",
+        binst, typed));
+    let _ = ws_read(&mut ws_b);
+    ws_send(&mut ws_b, &format!(
+        "{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onsubmit\"}}}}",
+        sinst, send));
+
+    // One event, three reactions reach Ada in one broadcast: her feed
+    // re-renders with Bob's post (cross-client reactivity on `stored`),
+    // the body is redacted (commons.moderation's `prepare` layer ran),
+    // and a mention toast appears (commons.mentions published to Ada's
+    // channel, her notice tray was subscribed — two spaces meeting at a
+    // channel name, §9.5).
+    let frame = ws_expect(&mut ws_a, "mentioned you", 12);
+    assert!(frame.contains("[redacted]"), "moderation must redact the body: {}", frame);
+    assert!(!frame.contains("spoiler"), "the raw word must not survive: {}", frame);
+    assert!(frame.contains("Bob mentioned you"), "the mention names the sender: {}", frame);
+
+    // Bob sees his own message land too.
+    let mine = ws_expect(&mut ws_b, "[redacted]", 6);
+    assert!(mine.contains("check the"), "{}", mine);
+
+    // Presence departs with the socket: Bob closing his page unmounts it,
+    // the stop stack runs, and Ada's sidebar drops him.
+    drop(ws_b);
+    std::thread::sleep(std::time::Duration::from_millis(120));
+    let (_, _, lobby2) = req(port, "GET", "/", None, Some(&ada));
+    assert!(!lobby2.contains("Bob"), "presence: Bob departs when his socket closes:\n{}", lobby2);
+
+    drop(ws_a);
     stop.store(true, Ordering::Relaxed);
     join.join().unwrap();
     let _ = std::fs::remove_dir_all(&dir);

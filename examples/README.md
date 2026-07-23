@@ -99,3 +99,19 @@ length and content checks onto `Gate.review`. Their order is declared by
 `use`, every layer must preserve the pipe's shape, and neither policy
 edits the core or the other policy — the composition model applied to
 work that separate agents can safely own.
+
+## commons
+
+The flagship: a complete team chat that exercises the whole language as
+one product. Native-form signup and login set a session cookie with zero
+client code (§9.6); the request identity crosses into the views as `el`
+fields. Rooms live at their own URLs, messages post live over the socket
+and re-render every viewer's feed (§9.4), and **presence** is driven by
+the view lifecycle — a page mounting arrives, its socket closing departs
+(§9.5), so the online list is live with no heartbeat. Two independently
+owned spaces layer the shared store without editing it: `commons.moderation`
+redacts on the `prepare` seam, `commons.mentions` scans on the `announce`
+seam and pings mentioned people over a per-user channel the notice tray
+subscribes to by name. Appearance is bound by name: the root declares
+`style = "commons"`, and the views carry `class` names that meet the
+served `assets/commons.css` by name — no style string anywhere (§9.4).

@@ -469,7 +469,12 @@ el(PartName, fields: {text: data}?, children: [std.Element]?)
 
 Text values may appear in `children` and render escaped. A part used with
 `el` instantiates per use: its fields are set from the second argument, and
-its `state` properties are per-instance.
+its `state` properties are per-instance. An instance *is* its view's root
+element (the element carries the instance, with no wrapper around it), so a
+layout container sees its child views directly. Across re-renders a view
+reuses its children by position: the same `el(Part)` keeps the same
+instance, so per-instance state and subscriptions survive and `start` runs
+once on mount and `stop` once when the child is no longer rendered (§9.5).
 
 ```ash
 space chat.widgets
@@ -492,6 +497,15 @@ still wins. An attr value is text, or the name of a function property, or an
 inline function taking zero parameters or one (`(e: std.Event) => ...`;
 `std.Event` has `name: text` and `data: data`). Serving a view part directly
 from a `route` wires all of this up; no other setup exists.
+
+Appearance is bound by name, never by a location in source. Elements carry
+`class` names; a stylesheet supplies the rules. The server root names its
+sheet — `style = "app"` resolves to `assets/app.css` like `files` (§9.8), a
+missing declared sheet is a build error, and the runtime links it into
+every served page. CSS is a foreign language for appearance: named in
+Ashlar, defined outside it, the presentation peer of `foreign` (§9.10).
+A `style` string attribute on an element is the wrong tool and unchecked;
+give the element a `class` and write the rule in the sheet.
 
 ### 9.5 Channels
 
