@@ -17,6 +17,8 @@ Code yields to tests. Tests yield to requirements. Requirements yield to the vis
 
 ## The principles
 
+**AI-first.** An AI that trips into this codebase should guess right, and fail loud when it guesses wrong. Most of this code is read and written by agents with no prior context, so the surface stays small enough to hold at once and features resonate — knowing one predicts the next — while the places a guess could go wrong are shaped to stop the build, not ship. This is the test the rest of these principles serve.
+
 **Code is cheap, good design isn't.** Generation is nearly free. Verification, comprehension, and change are not. Optimize for the expensive things.
 
 **Names matter more than anything.** Names are the only binding mechanism. Not paths, not positions, not file locations, not declaration order.

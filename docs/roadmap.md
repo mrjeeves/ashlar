@@ -21,7 +21,7 @@ Every item this page has carried is delivered, tested, and moved off:
   values, captures must be legal names bound once, and `-> ?` returns
   refine from concrete branches so recursive callers check (ADR-0009).
 - **Evaluator and runtime** — `eval.rs` + `http.rs` + `ashlar run`,
-  proven by T-G's 19 conformance tests (G2 byte-identity, G3 hot
+  proven by T-G's runtime conformance tests (G2 byte-identity, G3 hot
   reload, multiplexed sockets, cross-client reactivity, foreign binding
   with runtime shape faults). Its residual list emptied in increment 8;
   the conformance pass then closed §9.5's instance lifecycle (start
@@ -33,7 +33,12 @@ Every item this page has carried is delivered, tested, and moved off:
   once froze the whole runtime), outbound WebSocket frames queue per
   connection and shed peers by time-without-progress — never burst
   size — and an oversized body gets a 413 naming the limit instead of a
-  reset. All of it pinned in T-G with hostile-socket tests.
+  reset. All of it pinned in T-G with hostile-socket tests. The view
+  model was made AI-first the same day (ADR-0011): a view instance is
+  its own root element (no wrapper breaking a parent's CSS layout), and
+  nested views reconcile by position so per-instance state and
+  subscriptions survive re-renders and `start`/`stop` fire once — the
+  fix a flagship of parts-in-parts demanded.
 - **Refactor commands** — `refactor.rs` + `rename`/`rekind`/`move`/
   `radius`, proven by T-E's 13 tests. The E6 residuals closed in
   increment 9: data-shape and view fields rename through the checker's
@@ -53,10 +58,13 @@ Every item this page has carried is delivered, tested, and moved off:
   7.5%, distribution printed on every run.
 - **T-A3 surface findings** — resolved by ADR-0008, validated by gate
   run 2 (23/24 cold-read PASS).
-- **Showcase corpus** — eleven complete projects now include typed
-  multi-space policy composition and background work driving a live
-  view. T-Examples compiles, format-checks, serves, and drives both
-  additions over their real HTTP/WebSocket surfaces.
+- **Showcase corpus** — twelve complete projects, now crowned by
+  `commons`: a full team chat (auth, rooms, DMs, live messaging,
+  presence-by-lifecycle, unread counts, plus moderation and mentions as
+  independently owned layers) that exercises the whole language as one
+  product, styled by a named sheet (ADR-0010). T-Examples compiles,
+  format-checks, serves, and drives every project — commons included —
+  over its real HTTP/WebSocket surface.
 
 What remains is not debt but doctrine, named where it lives:
 `Unknown`-permissiveness for what the checker cannot prove (no false

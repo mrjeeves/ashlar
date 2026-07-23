@@ -1,0 +1,249 @@
+/* commons — the stylesheet the runtime links by name (app.ash: style =
+   "commons"). Every rule here binds to a view by a class name and
+   nothing else; that name is the whole joint between markup and skin. */
+
+* { box-sizing: border-box; }
+
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --panel-2: #1e222b;
+  --line: #262b36;
+  --ink: #e6e9ef;
+  --muted: #8b93a7;
+  --accent: #5b8cff;
+  --accent-ink: #ffffff;
+  --mine: #2b3b66;
+  --theirs: #232833;
+  --on: #3ddc84;
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, sans-serif;
+}
+
+html, body { height: 100%; margin: 0; }
+
+body {
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.45;
+}
+
+h1, h2 { margin: 0; font-weight: 650; }
+.muted { color: var(--muted); }
+
+/* --- login gate ------------------------------------------------------ */
+
+.gate {
+  min-height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.card {
+  width: 360px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 28px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+}
+
+.wordmark {
+  font-size: 30px;
+  letter-spacing: -0.5px;
+  background: linear-gradient(90deg, #7aa2ff, #b18cff);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.stack { display: flex; flex-direction: column; gap: 8px; margin-top: 20px; }
+.stack h2 { font-size: 14px; color: var(--muted); font-weight: 600; text-transform: uppercase; letter-spacing: 0.4px; }
+
+.field {
+  width: 100%;
+  padding: 10px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--ink);
+  font: inherit;
+  outline: none;
+}
+.field:focus { border-color: var(--accent); }
+
+.primary {
+  padding: 10px 14px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border: none;
+  border-radius: 10px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.primary:hover { filter: brightness(1.08); }
+
+.ghost {
+  padding: 8px 12px;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font: inherit;
+  cursor: pointer;
+}
+.ghost:hover { color: var(--ink); border-color: var(--accent); }
+
+/* --- app shell ------------------------------------------------------- */
+
+.app {
+  display: grid;
+  grid-template-columns: 260px 1fr;
+  height: 100vh;
+}
+
+.probe { display: none; }
+
+.sidebar {
+  background: var(--panel);
+  border-right: 1px solid var(--line);
+  padding: 16px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  overflow-y: auto;
+}
+
+.me {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 650;
+  padding: 6px 8px 12px;
+}
+
+.section {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  color: var(--muted);
+  margin: 12px 8px 4px;
+}
+
+.rooms, .people { display: flex; flex-direction: column; gap: 2px; }
+
+.roomlink, .person {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  color: var(--ink);
+  text-decoration: none;
+}
+.roomlink:hover, .person:hover { background: var(--panel-2); }
+.roomlink.active { background: var(--accent); color: var(--accent-ink); }
+.roomname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.badge {
+  min-width: 20px;
+  text-align: center;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  font-size: 12px;
+  font-weight: 700;
+}
+.roomlink.active .badge { background: rgba(255, 255, 255, 0.25); }
+.spacer { min-width: 20px; }
+
+.person { color: var(--ink); }
+.person.self { color: var(--muted); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); flex: none; }
+.dot.on { background: var(--on); box-shadow: 0 0 0 3px rgba(61, 220, 132, 0.15); }
+
+.newroom { display: flex; flex-direction: column; gap: 6px; margin: 6px 4px; }
+.logout { margin-top: auto; padding: 10px 8px; color: var(--muted); text-decoration: none; font-size: 14px; }
+.logout:hover { color: var(--ink); }
+
+/* --- main / channel -------------------------------------------------- */
+
+.main { display: flex; flex-direction: column; min-width: 0; }
+.empty { margin: auto; text-align: center; }
+
+.channel { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+
+.chanhead {
+  padding: 16px 24px;
+  border-bottom: 1px solid var(--line);
+  background: var(--bg);
+}
+.chanhead h2 { font-size: 18px; }
+.chanhead p { margin: 2px 0 0; font-size: 13px; }
+
+.feed {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.post { display: flex; flex-direction: column; gap: 3px; max-width: 68%; }
+.post.mine { align-self: flex-end; align-items: flex-end; }
+.post.theirs { align-self: flex-start; }
+.who { font-size: 12px; color: var(--muted); padding: 0 4px; }
+
+.bubble {
+  padding: 9px 13px;
+  border-radius: 14px;
+  background: var(--theirs);
+  border: 1px solid var(--line);
+  word-wrap: break-word;
+}
+.post.mine .bubble { background: var(--mine); border-color: transparent; }
+
+.composer {
+  display: flex;
+  gap: 10px;
+  padding: 14px 24px;
+  border-top: 1px solid var(--line);
+  background: var(--panel);
+}
+.grow { flex: 1; }
+
+/* --- notice tray ----------------------------------------------------- */
+
+.notices {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  z-index: 20;
+  /* Toasts inform; they must never sit over the composer and eat a
+     click meant for the send button. */
+  pointer-events: none;
+}
+.toast {
+  background: var(--panel-2);
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  padding: 10px 14px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+  animation: rise 0.18s ease-out;
+}
+@keyframes rise { from { transform: translateY(8px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+
+@media (max-width: 720px) {
+  .app { grid-template-columns: 1fr; }
+  .sidebar { display: none; }
+}

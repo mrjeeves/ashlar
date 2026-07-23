@@ -614,6 +614,19 @@ ws.onmessage=function(m){var d=JSON.parse(m.data);
 })();"#;
 
 /// Render a handler's return value as an HTTP response (§9.2).
+/// The `<link>` for the root's declared stylesheet (§9.4), or empty when
+/// none is declared. The href is `/<name>.css` — a location the runtime
+/// derives, never one written in source.
+fn style_link(ev: &Evaluator) -> String {
+    match &ev.style_name {
+        Some(name) => format!(
+            "<link rel=\"stylesheet\" href=\"/{}.css\">",
+            html_escape(name)
+        ),
+        None => String::new(),
+    }
+}
+
 pub fn render_response(
     ev: &mut Evaluator,
     v: &V,
@@ -631,8 +644,8 @@ pub fn render_response(
             let inner = render_instance(ev, id)?;
             let page = ev.current_page.clone().unwrap_or_default();
             let html = format!(
-                "<!doctype html>\n<html><head><meta charset=\"utf-8\"></head><body data-ash-page=\"{}\">{}<script>{}</script></body></html>",
-                page, inner, CLIENT_JS
+                "<!doctype html>\n<html><head><meta charset=\"utf-8\">{}</head><body data-ash-page=\"{}\">{}<script>{}</script></body></html>",
+                style_link(ev), page, inner, CLIENT_JS
             );
             return Ok((200, "text/html".to_string(), html.into_bytes(), vec![]));
         }
@@ -673,12 +686,44 @@ pub fn render_instance(ev: &mut Evaluator, id: &str) -> Result<String, Fault> {
     let v = ev.call_instance_prop(id, "view", vec![]);
     ev.end_render();
     let v = v?;
-    let inner = render_el(ev, &v, id)?;
-    Ok(format!(
-        "<div data-ash-instance=\"{}\">{}</div>",
-        html_escape(id),
-        inner
-    ))
+    // The instance IS its view's root element: the marker is stamped onto
+    // that element, not a wrapper div around it. A wrapper would sit
+    // between a layout container and its child views, so `display: grid`
+    // on a parent would see the wrappers instead of the views — the kind
+    // of surprise an agent would never guess. A view whose root is not a
+    // single element still gets a wrapper, so patching always has one
+    // node to swap.
+    let stamped = stamp_instance(v, id);
+    render_el(ev, &stamped, id)
+}
+
+/// Put `data-ash-instance` on the view's own root element when it has
+/// one; otherwise wrap the result so the instance is still a single
+/// patchable node.
+fn stamp_instance(v: V, id: &str) -> V {
+    if let V::Map(mut m) = v {
+        if m.contains_key("__el") {
+            let mut attrs = match m.remove("attrs") {
+                Some(V::Map(a)) => a,
+                _ => BTreeMap::new(),
+            };
+            attrs.insert("data-ash-instance".to_string(), V::Text(id.to_string()));
+            m.insert("attrs".to_string(), V::Map(attrs));
+            return V::Map(m);
+        }
+        return wrap_instance(V::Map(m), id);
+    }
+    wrap_instance(v, id)
+}
+
+fn wrap_instance(inner: V, id: &str) -> V {
+    let mut attrs = BTreeMap::new();
+    attrs.insert("data-ash-instance".to_string(), V::Text(id.to_string()));
+    let mut wrap = BTreeMap::new();
+    wrap.insert("__el".to_string(), V::Text("div".to_string()));
+    wrap.insert("attrs".to_string(), V::Map(attrs));
+    wrap.insert("children".to_string(), V::List(vec![inner]));
+    V::Map(wrap)
 }
 
 /// Render an element tree. Function-valued attrs register as event
@@ -854,6 +899,42 @@ pub fn serve(
 
         let mut ev = Evaluator::new(&result.program, &result.composed);
         ev.foreign_root = Some(root.clone());
+
+        // §9.4: the server root may name a stylesheet. It resolves like
+        // `files` and `foreign` — a name in source, a location the build
+        // finds under `assets/`, and a loud error if the named sheet is
+        // missing. The runtime links it into every served page's head so
+        // `class` names in views bind to its rules by name.
+        if let Some(cp) = result.composed.get(&port_part) {
+            if let Some(prop) = cp.props.get("style") {
+                let name = match &prop.value {
+                    MergedValue::Single(r) => result.program.files[r.file_idx].ast.parts
+                        [r.part_idx]
+                        .props[r.prop_idx]
+                        .value
+                        .as_ref()
+                        .and_then(|e| match &e.expr {
+                            crate::ast::Expr::Text(t) => Some(t.clone()),
+                            _ => None,
+                        }),
+                    MergedValue::Literal(e) => match &e.expr {
+                        crate::ast::Expr::Text(t) => Some(t.clone()),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                if let Some(name) = name {
+                    let sheet = root.join("assets").join(format!("{}.css", name));
+                    if !sheet.is_file() {
+                        return Err(format!(
+                            "`{}` declares `style = \"{}\"` but assets/{}.css does not exist.",
+                            port_part, name, name
+                        ));
+                    }
+                    ev.style_name = Some(name);
+                }
+            }
+        }
 
         // Persistence: load stored values (shape validation happened in
         // the checker; unknown keys are ignored).
@@ -1466,6 +1547,22 @@ fn handle_request(
     // handling it (el in the route handler, nested views in the render)
     // belong to this page and unmount when its socket closes (§9.5).
     ev.begin_page();
+
+    // The declared stylesheet (§9.4) serves ahead of everything: its
+    // path is `/<name>.css`, resolved to `assets/<name>.css`, and the
+    // document head links exactly this.
+    if req.method == "GET" {
+        if let Some(name) = ev.style_name.clone() {
+            if req.path == format!("/{}.css", name) {
+                let file = root.join("assets").join(format!("{}.css", name));
+                let resp = match std::fs::read(&file) {
+                    Ok(bytes) => response_bytes(200, "text/css", &[], &bytes),
+                    Err(_) => response_bytes(404, "text/plain", &[], b"not found"),
+                };
+                return finish(conn, resp);
+            }
+        }
+    }
 
     // Static files (§9.8) match by route prefix before dynamic dispatch.
     if req.method == "GET" {
