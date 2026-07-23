@@ -2,8 +2,10 @@
 
 Each directory is a complete Ashlar project: run one with
 `ashlar run examples/<name>` and open `http://127.0.0.1:8080`. Every
-example is compiled and format-checked by the test suite
-(`crates/ashlar/tests/t_examples.rs`) — if it's here, it builds.
+example is held to two depths by `crates/ashlar/tests/t_examples.rs`:
+it must compile with zero diagnostics in canonical format, AND it is
+served on a real port and driven through its HTTP/WebSocket surface on
+every test run. If it's here, it builds — and it works.
 
 ## hello
 
@@ -17,9 +19,15 @@ per-instance `state`, instantiated with `el`, its `onclick` handler
 running server-side over the built-in socket. The browser runs no
 program code — open two windows and click.
 
+## todo
+
+Forms over the socket: `oninput` mirrors the field into per-instance
+state (`e.data.value`), `onsubmit` commits it, and the patched HTML
+comes back down the same socket. The whole app is one view part.
+
 ## chat
 
-The language's composition story in four files:
+The composition story in four files:
 
 - `data.ash` — a data shape (`Message`), a `stored` map that survives
   restarts, and a `pipe` property (`prepare`).
@@ -31,3 +39,24 @@ The language's composition story in four files:
   was edited.
 - `ui.ash` — a view that reads the store; any post re-renders every
   connected client that read it (§9.3 reactivity).
+
+## diary
+
+Sessions end to end (§9.6): signup/login/logout routes, the `allow`
+guard turning anonymous requests into 403s before `handle` runs, and
+`req.user!` proven safe inside the guard. The test drives the full
+lifecycle including the server-side session ending on logout.
+
+## press
+
+All the merge kinds in one part, layered from a second space without
+editing the first (§4): `append` joins the tag lists, `deep` merges the
+limit maps one level, `pipe` chains the render base-first, and paired
+`stack` / `stack reverse` properties boot in use order and tear down
+derived-first.
+
+## ticker
+
+Server-driven reactivity (§9.7 + §9.3): a scheduled part's `run` bumps
+a `synced` counter on an `every` interval, and every connected view
+that read it re-renders — no user event anywhere in the loop.

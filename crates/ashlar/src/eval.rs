@@ -500,15 +500,35 @@ impl<'a> Evaluator<'a> {
         self.current_render = None;
     }
 
-    fn emit_log(&mut self, level: &str, msg: &str, payload: Option<&V>) {
-        let mut line = String::from("{\"level\":");
+    /// One structured entry (§9.9): timestamp, level, message, data, and
+    /// the source location — the PART plus position, because in Ashlar a
+    /// part's name is its address; files are not.
+    fn emit_log(
+        &mut self,
+        level: &str,
+        msg: &str,
+        payload: Option<&V>,
+        part: &str,
+        span: crate::tokens::Span,
+    ) {
+        let ts = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_millis() as u64)
+            .unwrap_or(0);
+        let mut line = format!("{{\"ts\":{},\"level\":", ts);
         crate::diag::push_json_str(&mut line, level);
-        line.push_str(",\"msg\":");
+        line.push_str(",\"message\":");
         crate::diag::push_json_str(&mut line, msg);
         if let Some(p) = payload {
             line.push_str(",\"data\":");
             line.push_str(&to_json(p));
         }
+        line.push_str(",\"loc\":{\"part\":");
+        crate::diag::push_json_str(&mut line, part);
+        line.push_str(&format!(
+            ",\"line\":{},\"col\":{}}}",
+            span.start.line, span.start.col
+        ));
         line.push('}');
         self.log.push(line);
     }
@@ -626,7 +646,8 @@ impl<'a> Evaluator<'a> {
                             vals.push(self.eval(env, a)?);
                         }
                         let msg = vals.first().map(to_text).unwrap_or_default();
-                        self.emit_log(&segs[1], &msg, vals.get(1));
+                        let part = env.part.clone();
+                        self.emit_log(&segs[1], &msg, vals.get(1), &part, callee.span);
                         return Ok(V::None);
                     }
                     if segs.len() == 1
@@ -1269,11 +1290,12 @@ impl<'a> Evaluator<'a> {
                 Ok(V::None)
             }
             "fail" => {
-                let status = match arg(&mut args, 0) {
-                    V::Number(n) => n as u16,
-                    _ => 500,
+                // fail(message) -> 500, or fail(status, message) (§9.9).
+                let first = arg(&mut args, 0);
+                let (status, message) = match first {
+                    V::Number(n) => (n as u16, to_text(&arg(&mut args, 1))),
+                    other => (500, to_text(&other)),
                 };
-                let message = to_text(&arg(&mut args, 1));
                 Err(Fault { status, message })
             }
             "redirect" => {
@@ -1941,6 +1963,40 @@ mod tests {
             V::Number(2.0),
             "both stack layers must have merged onto state"
         );
+    }
+
+    #[test]
+    fn log_entries_carry_ts_message_data_and_location() {
+        // §9.9: structured entries with timestamp, level, message, data,
+        // and the source location (part + position).
+        let r = check_sources(vec![(
+            "t.ash".to_string(),
+            "space a\n\npart W {\n  go = () => {\n    log.warn(\"slow\", { ms: 12 })\n  }\n}\n"
+                .to_string(),
+        )]);
+        assert!(r.diags.is_empty(), "{:?}", r.diags);
+        let mut ev = Evaluator::new(&r.program, &r.composed);
+        ev.call_prop("a.W", "go", vec![]).unwrap();
+        let line = ev.log.first().expect("one log entry").clone();
+        for needle in [
+            "\"ts\":",
+            "\"level\":\"warn\"",
+            "\"message\":\"slow\"",
+            "\"data\":{\"ms\":12}",
+            "\"loc\":{\"part\":\"a.W\"",
+        ] {
+            assert!(line.contains(needle), "missing {} in {}", needle, line);
+        }
+    }
+
+    #[test]
+    fn fail_takes_one_or_two_arguments() {
+        // §9.9: fail(message) is a 500; fail(status, message) is exact.
+        let src = "space a\n\npart W {\n  one = () => fail(\"nope\")\n  two = () => fail(404, \"gone\")\n}\n";
+        let f = eval_prop(src, "a.W", "one", vec![]).unwrap_err();
+        assert_eq!((f.status, f.message.as_str()), (500, "nope"));
+        let f = eval_prop(src, "a.W", "two", vec![]).unwrap_err();
+        assert_eq!((f.status, f.message.as_str()), (404, "gone"));
     }
 
     #[test]

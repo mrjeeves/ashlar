@@ -124,6 +124,53 @@ pub struct HttpRequest {
     pub body: Vec<u8>,
 }
 
+/// `application/x-www-form-urlencoded` -> a map of text values (§9.2):
+/// `a=1&b=hi%20there` decodes keys and values with `+` and `%XX` rules.
+fn decode_form(body: &str) -> V {
+    fn unescape(s: &str) -> String {
+        let bytes = s.as_bytes();
+        let mut out = Vec::with_capacity(bytes.len());
+        let mut i = 0;
+        while i < bytes.len() {
+            match bytes[i] {
+                b'+' => {
+                    out.push(b' ');
+                    i += 1;
+                }
+                b'%' if i + 2 < bytes.len() => {
+                    let hex = std::str::from_utf8(&bytes[i + 1..i + 3])
+                        .ok()
+                        .and_then(|h| u8::from_str_radix(h, 16).ok());
+                    match hex {
+                        Some(b) => {
+                            out.push(b);
+                            i += 3;
+                        }
+                        None => {
+                            out.push(bytes[i]);
+                            i += 1;
+                        }
+                    }
+                }
+                b => {
+                    out.push(b);
+                    i += 1;
+                }
+            }
+        }
+        String::from_utf8_lossy(&out).to_string()
+    }
+    let mut m = BTreeMap::new();
+    for pair in body.split('&') {
+        if pair.is_empty() {
+            continue;
+        }
+        let (k, v) = pair.split_once('=').unwrap_or((pair, ""));
+        m.insert(unescape(k), V::Text(unescape(v)));
+    }
+    V::Map(m)
+}
+
 /// Read one HTTP/1.1 request. `None` on connection close or malformed
 /// input (the connection is simply dropped; a server never panics).
 pub fn read_request(stream: &mut TcpStream) -> Option<HttpRequest> {
@@ -1157,8 +1204,19 @@ fn handle_conn(
         return None;
     }
 
+    // §9.2: `data` is the decoded JSON or form body, `none` when absent.
+    let form = req
+        .headers
+        .get("content-type")
+        .map(|c| c.starts_with("application/x-www-form-urlencoded"))
+        .unwrap_or(false);
     let data = if req.body.is_empty() {
         V::None
+    } else if form {
+        String::from_utf8(req.body.clone())
+            .ok()
+            .map(|s| decode_form(&s))
+            .unwrap_or(V::None)
     } else {
         String::from_utf8(req.body.clone())
             .ok()

@@ -199,10 +199,31 @@ fn t_meta_g1_zero_dependencies() {
 
 #[test]
 fn t_meta_core_docs_exist() {
-    // covers: G1
+    // covers: G1 — and AGENTS.md is load-bearing: the agent-facing
+    // contract must exist, carry the hierarchy, and be what CLAUDE.md
+    // resolves to (one contract, not two drifting copies).
     let root = support::repo_root();
-    for rel in ["docs/requirements.md", "docs/vision.md", "reference/ashlar.md"] {
+    for rel in [
+        "docs/requirements.md",
+        "docs/vision.md",
+        "reference/ashlar.md",
+        "AGENTS.md",
+        "README.md",
+    ] {
         let path = root.join(rel);
         assert!(path.exists(), "expected {} to exist", path.display());
     }
+    let agents = std::fs::read_to_string(root.join("AGENTS.md")).unwrap();
+    for load_bearing in ["VISION", "REQUIREMENTS", "TESTS", "CODE", "reference/ashlar.md"] {
+        assert!(
+            agents.contains(load_bearing),
+            "AGENTS.md must carry the hierarchy and name the reference; missing `{}`",
+            load_bearing
+        );
+    }
+    let claude = std::fs::read_to_string(root.join("CLAUDE.md")).unwrap();
+    assert!(
+        claude.trim() == "@AGENTS.md",
+        "CLAUDE.md must be exactly the @AGENTS.md import — one contract, no drift"
+    );
 }
