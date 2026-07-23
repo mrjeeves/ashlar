@@ -1025,6 +1025,8 @@ part page {
         "sent[k]",
         "ws.onclose",
         "location.reload",
+        "pointerdown",
+        "deferred",
     ] {
         assert!(
             html.contains(marker),

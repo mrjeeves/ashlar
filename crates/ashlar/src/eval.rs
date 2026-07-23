@@ -130,6 +130,9 @@ pub struct Evaluator<'a> {
     pub deps: BTreeMap<String, std::collections::BTreeSet<String>>,
     /// The instance currently rendering (reads record into `deps`).
     pub current_render: Option<String>,
+    /// Handler-id position within the current instance render; reset per
+    /// render so ids are STABLE across re-renders of the same view shape.
+    pub render_handler_seq: usize,
     /// The page whose request/socket is being served; instances created
     /// now belong to it and unmount when its socket closes (§9.5).
     pub current_page: Option<String>,
@@ -158,6 +161,7 @@ impl<'a> Evaluator<'a> {
             spawn_queue: Vec::new(),
             deps: BTreeMap::new(),
             current_render: None,
+            render_handler_seq: 0,
             current_page: None,
             foreign_root: None,
             foreign_libs: BTreeMap::new(),
