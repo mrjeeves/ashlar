@@ -8,7 +8,7 @@ The paper trail, in the order the hierarchy reads it:
 | [`requirements.md`](requirements.md) | Numbered, testable requirements (A–G series) with the suite map. |
 | [`roadmap.md`](roadmap.md) | The honest "not yet" ledger. Currently empty — every item is delivered, dated, and moved off. |
 | [`diagnostics.md`](diagnostics.md) | The stable diagnostic catalog: E001–E028 + W001, each with its requirement, stage, cause, and correction. |
-| [`decisions/`](decisions/) | ADRs 0001–0010: what was decided, why, and what it cost — from the name itself to semantic freedom and derivability. |
+| [`decisions/`](decisions/) | ADRs 0001–0012: what was decided, why, and what it cost — from the name itself to the stylesheet boundary, view reconciliation, and semantic freedom and derivability. |
 
 Agents working in this repo start at [`../AGENTS.md`](../AGENTS.md).
 The language reference lives in [`../reference/ashlar.md`](../reference/ashlar.md)

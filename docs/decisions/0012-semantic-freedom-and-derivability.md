@@ -1,4 +1,4 @@
-# 0010 — Semantic freedom and derivability
+# 0012 — Semantic freedom and derivability
 
 Date: 2026-07-23. Status: accepted.
 
