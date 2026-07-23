@@ -94,3 +94,19 @@ never blocks the single loop, and horizontal scale by process count. Its
 Stage 1 (the SQLite-over-`foreign` example) is delivered; Stages 2–4 wait
 on a design decision before any runtime code, and will land here as
 tested items if accepted.
+
+One accepted decision awaits implementation: **ADR-0015** (status:
+accepted) re-cuts the storage taxonomy along its two real axes. It retires
+`synced` — which the runtime never gave any behavior `state` lacks, since
+no-client-code makes cross-client reactivity universal — and adds `owned`,
+a per-user scope modifier on `state`/`stored` (each authenticated user's
+own value, isolated by construction, so the manual `[req.user.id]` keying
+that invites IDOR disappears), failing loud where there is no user: a
+compile error in task/boot/`spawn` context, a runtime fault on an
+anonymous request. The word was picked by a T-A3 cold read (`owned`/
+`personal`/`user` all read per-user 3/3; `private` misread as OOP
+access-control). Implementation — reference §1/§4/§9.3/§9.6, the checker's
+static rule, the runtime scoping, new diagnostics, the `ticker` rename, an
+`owned` example, and the G4 rewording — lands as a tracked increment
+("Phase 2a") before the ADR-0014 backend, so the backend is built against
+the final taxonomy.
