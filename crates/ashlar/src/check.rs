@@ -2067,13 +2067,23 @@ impl<'a> Cx<'a> {
                 S::Unknown
             }
             "fail" => {
-                // fail(status, message) — §9.9; never returns, so Unknown
-                // lets it unify with any surrounding shape (e.g. `x ?? fail(...)`).
-                if !args.is_empty() {
-                    want(self, 0, &S::Number);
-                }
-                if args.len() >= 2 {
-                    want(self, 1, &S::Text);
+                // fail(message) or fail(status, message) — §9.9; never
+                // returns, so Unknown lets it unify with any surrounding
+                // shape (e.g. `x ?? fail(...)`).
+                match args.len() {
+                    1 => want(self, 0, &S::Text),
+                    2 => {
+                        want(self, 0, &S::Number);
+                        want(self, 1, &S::Text);
+                    }
+                    n => {
+                        self.err(
+                            span,
+                            format!("`fail` takes 1 or 2 arguments, found {}.", n),
+                            "Write `fail(message)` or `fail(status, message)`.".to_string(),
+                            vec![],
+                        );
+                    }
                 }
                 S::Unknown
             }

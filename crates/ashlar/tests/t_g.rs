@@ -962,3 +962,34 @@ part signin {
     stop2.store(true, Ordering::Relaxed);
     join2.join().unwrap();
 }
+
+#[test]
+fn t_g_form_bodies_decode_into_data() {
+    // covers: reference 9.2 — `data` is the decoded JSON OR FORM body.
+    let app = r#"space f
+
+part Server {
+  port = 0
+}
+
+part echo {
+  route = "/echo"
+  handle pipe = (req: std.Request) => text(req.data.name) + " / " + text(req.data.note)
+}
+"#;
+    let root = fixture("formbody", &[("app.ash", app)]);
+    let (port, stop, join) = start(root);
+    let body = "name=ash+lar&note=cut%20stone";
+    let mut s = std::net::TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let req = format!(
+        "POST /echo HTTP/1.1\r\nhost: t\r\ncontent-type: application/x-www-form-urlencoded\r\ncontent-length: {}\r\n\r\n{}",
+        body.len(),
+        body
+    );
+    s.write_all(req.as_bytes()).unwrap();
+    let mut buf = String::new();
+    s.read_to_string(&mut buf).unwrap();
+    assert!(buf.contains("ash lar / cut stone"), "{}", buf);
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}
