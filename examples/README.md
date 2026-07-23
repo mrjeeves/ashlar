@@ -82,3 +82,20 @@ the ball server-side, sliders steer the paddles over `oninput`, and both
 players' pages re-render from the same `synced` state. Each control is
 its own view instance, so the field's twenty-patches-a-second never
 replace a slider mid-drag. Open it in two windows and play.
+
+## foundry
+
+Background work joined directly to a live interface (§9.7 + §9.4). A
+POST queues a brief and returns while it is still waiting; `spawn` runs
+the worker between requests, and the worker's state change patches every
+connected board. The API, worker, and UI coordinate through one named
+part, with no client application code or job-runner dependency.
+
+## guardrails
+
+A typed policy pipeline assembled by the use graph. The core space owns
+the route and `Decision` shape; two other spaces independently layer
+length and content checks onto `Gate.review`. Their order is declared by
+`use`, every layer must preserve the pipe's shape, and neither policy
+edits the core or the other policy — the composition model applied to
+work that separate agents can safely own.

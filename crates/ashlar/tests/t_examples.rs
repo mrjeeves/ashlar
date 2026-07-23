@@ -41,7 +41,7 @@ fn t_examples_all_check_clean() {
             dir.display()
         );
     }
-    assert!(seen >= 8, "expected the full example set, found {}", seen);
+    assert!(seen >= 10, "expected the full example set, found {}", seen);
 }
 
 #[test]
@@ -555,6 +555,64 @@ fn t_examples_pong_plays() {
     let (_, _, b) = req(port, "GET", "/api/state", None, None);
     assert!(a.contains("\"running\":false"), "{}", a);
     assert_eq!(a, b, "paused means the ball holds still");
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn t_examples_foundry_background_work_patches_view() {
+    let dir = staged("foundry");
+    let (port, stop, join) = start(dir.clone());
+
+    let (_, _, html) = req(port, "GET", "/", None, None);
+    assert!(html.contains("waiting: 0"), "{}", html);
+    assert!(html.contains("finished: "), "{}", html);
+    let page_id = attr_of(&html, "data-ash-page").unwrap();
+    let mut ws = ws_open(port);
+    ws_send(&mut ws, &format!("{{\"page\":\"{}\"}}", page_id));
+    std::thread::sleep(std::time::Duration::from_millis(80));
+
+    let (status, _, accepted) =
+        req(port, "POST", "/api/jobs", Some("{\"brief\":\"cut release\"}"), None);
+    assert_eq!(status, 200);
+    assert!(accepted.contains("cut release"), "{}", accepted);
+
+    let pushed = ws_expect(&mut ws, "finished: cut release", 6);
+    assert!(pushed.contains("waiting: 0"), "{}", pushed);
+    let (_, _, state) = req(port, "GET", "/api/status", None, None);
+    assert!(state.contains("cut release"), "{}", state);
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn t_examples_guardrails_layers_typed_policies() {
+    let dir = staged("guardrails");
+    let (port, stop, join) = start(dir.clone());
+
+    let (ok, _, clean) =
+        req(port, "POST", "/api/review", Some("{\"body\":\"ship it\"}"), None);
+    assert_eq!(ok, 200);
+    assert!(clean.contains("\"allowed\":true"), "{}", clean);
+
+    let (_, _, blocked) =
+        req(port, "POST", "/api/review", Some("{\"body\":\"share the secret\"}"), None);
+    assert!(blocked.contains("\"allowed\":false"), "{}", blocked);
+    assert!(blocked.contains("contains secret"), "{}", blocked);
+
+    let (_, _, layered) = req(
+        port,
+        "POST",
+        "/api/review",
+        Some("{\"body\":\"this secret is much too long to pass\"}"),
+        None,
+    );
+    assert!(layered.contains("over 24 characters"), "{}", layered);
+    assert!(layered.contains("contains secret"), "{}", layered);
 
     stop.store(true, Ordering::Relaxed);
     join.join().unwrap();
