@@ -27,7 +27,7 @@ Step 4 is the one that matters. The failure mode is weakening a test to accommod
 There is no phase in which tests are written and no phase in which they are not. The test suites have dependencies on each other (§9) and that induces a rough sequence, but sequence is a consequence of dependency, not a prescribed process.
 ---
 ## 3. Principles (the vision)
-**Code is cheap, good design isn't.** Generation is nearly free. Verification, comprehension, and change are not. Optimize for the expensive things.
+**Code is cheap, good design isn't.** Generation is nearly free. Verification, comprehension, and change are not. Optimize those; never ration generation.
 **Names matter more than anything.** Names are the only binding mechanism. Not paths, not positions, not file locations, not declaration order.
 **The build is state, the code is intent.** Source declares what should be true. The build computes where everything lives and how it resolves.
 **Things should work similarly to other things in a way that makes sense.** Prefer resonance with what a reader already knows on the surface; prefer internal consistency in semantics. Where they conflict, resolve toward whichever fails loudly when guessed wrong.
