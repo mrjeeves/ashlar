@@ -1023,6 +1023,8 @@ part page {
         "activeElement",
         "setSelectionRange",
         "sent[k]",
+        "ws.onclose",
+        "location.reload",
     ] {
         assert!(
             html.contains(marker),

@@ -534,7 +534,12 @@ function fire(kind,e){var t=e.target.closest('[data-ash-h]');
 document.addEventListener('click',function(e){fire('onclick',e)});
 document.addEventListener('input',function(e){fire('oninput',e)});
 document.addEventListener('submit',function(e){fire('onsubmit',e)});
-ws.onmessage=function(m){var d=JSON.parse(m.data);if(!d.patches)return;
+ws.onclose=function(){
+ (function again(){fetch('/',{cache:'no-store'}).then(function(){location.reload();})
+  .catch(function(){setTimeout(again,400);});})();};
+ws.onmessage=function(m){var d=JSON.parse(m.data);
+ if(d.error&&/no (instance|handler)/.test(d.error)){ws.close();return;}
+ if(!d.patches)return;
  d.patches.forEach(function(p){
   var n=document.querySelector('[data-ash-instance="'+p.instance+'"]');
   if(!n)return;
