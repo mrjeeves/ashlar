@@ -486,7 +486,9 @@ Views render on the server. The browser runs no program code: events named
 in attrs (`onclick`, `onsubmit`, `oninput`, with `value` in the event's
 `data`) round-trip over the built-in socket, handlers run server-side, and
 every view that read a changed state property re-renders and patches in
-place. An attr value is text, or the name of a function property, or an
+place. Patching preserves the focused field, its caret, and typing still
+in flight; a server-side change to the field's value (a cleared draft)
+still wins. An attr value is text, or the name of a function property, or an
 inline function taking zero parameters or one (`(e: std.Event) => ...`;
 `std.Event` has `name: text` and `data: data`). Serving a view part directly
 from a `route` wires all of this up; no other setup exists.

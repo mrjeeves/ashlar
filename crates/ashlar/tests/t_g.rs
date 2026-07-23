@@ -993,3 +993,44 @@ part echo {
     stop.store(true, Ordering::Relaxed);
     join.join().unwrap();
 }
+
+#[test]
+fn t_g_shim_preserves_focus_and_in_flight_typing() {
+    // covers: reference 9.4 — "Patching preserves the focused field, its
+    // caret, and typing still in flight." The behavior itself is a
+    // browser behavior; this pins the shim's three load-bearing pieces
+    // so a regression in the served page fails loudly: the page hello,
+    // the focus/caret restore, and the last-sent echo suppression.
+    let app = r#"space s
+
+part Server {
+  port = 0
+}
+
+part page {
+  route = "/"
+  view = () => el("input", { oninput: typed }, [])
+  typed = (e: std.Event) => {
+    log.info("typed")
+  }
+}
+"#;
+    let root = fixture("shim", &[("app.ash", app)]);
+    let (port, stop, join) = start(root);
+    let (_, _, html) = http_req_full(port, "GET", "/", None, None);
+    for marker in [
+        "data-ash-page",
+        "activeElement",
+        "setSelectionRange",
+        "sent[k]",
+    ] {
+        assert!(
+            html.contains(marker),
+            "served shim lost `{}`:\n{}",
+            marker,
+            html
+        );
+    }
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}
