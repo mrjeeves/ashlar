@@ -58,6 +58,17 @@ limit maps one level, `pipe` chains the render base-first, and paired
 `stack` / `stack reverse` properties boot in use order and tear down
 derived-first.
 
+## poll
+
+Channels (§9.5), placed honestly: votes are `stored` state, so
+reactivity alone keeps every tally live — the channel carries what
+state doesn't, the ephemeral "last vote" ticker. Each board instance
+subscribes in its `start stack` (the subscription dies with the
+instance) and keeps a per-instance `latest`: a fresh page joins at
+"none yet" no matter how many votes came before it. The test proves
+the push arrives through the channel alone — an HTTP vote patches a
+connected view whose `latest` no code in that request assigns.
+
 ## ticker
 
 Server-driven reactivity (§9.7 + §9.3): a scheduled part's `run` bumps

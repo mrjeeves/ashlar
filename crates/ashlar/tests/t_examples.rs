@@ -41,7 +41,7 @@ fn t_examples_all_check_clean() {
             dir.display()
         );
     }
-    assert!(seen >= 7, "expected the full example set, found {}", seen);
+    assert!(seen >= 8, "expected the full example set, found {}", seen);
 }
 
 #[test]
@@ -372,6 +372,50 @@ fn t_examples_press_merges_all_kinds() {
     let (_, _, rendered) =
         req(port, "POST", "/api/render", Some("{\"body\":\"hi\"}"), None);
     assert_eq!(rendered, "<p>hi</p>", "pipe layers must chain base-first");
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn t_examples_poll_channel_feeds_instances() {
+    let dir = staged("poll");
+    let (port, stop, join) = start(dir.clone());
+
+    // HTTP surface: vote, then list.
+    let (status, _, body) =
+        req(port, "POST", "/api/vote", Some("{\"option\":\"granite\"}"), None);
+    assert_eq!((status, body.as_str()), (200, "ok"));
+    let (_, _, votes) = req(port, "GET", "/api/votes", None, None);
+    assert!(votes.contains("granite"), "{}", votes);
+
+    // A fresh page reads the shared tally, but `latest` is per-instance:
+    // votes cast before the instance existed are not replayed into it.
+    let (_, _, html) = req(port, "GET", "/", None, None);
+    assert!(html.contains("granite 1"), "{}", html);
+    assert!(html.contains("last vote: none yet"), "{}", html);
+
+    // Register the page's socket, then click the first button (granite).
+    let page_id = attr_of(&html, "data-ash-page").unwrap();
+    let mut ws = ws_open(port);
+    ws_send(&mut ws, &format!("{{\"page\":\"{}\"}}", page_id));
+    std::thread::sleep(std::time::Duration::from_millis(80));
+    let (inst, pick) = event_target(&html, "onclick", 0).unwrap();
+    ws_send(
+        &mut ws,
+        &format!("{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onclick\"}}}}", inst, pick),
+    );
+    let clicked = ws_expect(&mut ws, "last vote: granite", 5);
+    assert!(clicked.contains("granite 2"), "tally must re-render with the vote: {}", clicked);
+
+    // An HTTP vote reaches the view through the channel alone: `latest`
+    // is per-instance state no code in this request assigns, so a patch
+    // carrying it can only be the instance's subscription firing (§9.5).
+    let (_, _, ok2) = req(port, "POST", "/api/vote", Some("{\"option\":\"marble\"}"), None);
+    assert_eq!(ok2, "ok");
+    let pushed = ws_expect(&mut ws, "last vote: marble", 8);
+    assert!(pushed.contains("marble 1"), "{}", pushed);
+
     stop.store(true, Ordering::Relaxed);
     join.join().unwrap();
     let _ = std::fs::remove_dir_all(&dir);
