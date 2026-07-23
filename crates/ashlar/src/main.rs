@@ -300,6 +300,17 @@ mod cli {
                         c.file, c.span.start.line, c.span.start.col, c.old
                     );
                 }
+                // A rename's radius includes what lives OUTSIDE sources:
+                // stored keys and foreign host libraries.
+                for (old, _) in &plan.state_part_renames {
+                    println!("  .ashlar-state.json  keys under `{}`", old);
+                }
+                for (old, _) in &plan.state_prop_renames {
+                    println!("  .ashlar-state.json  `{}`", old);
+                }
+                for (old, _) in &plan.foreign_renames {
+                    println!("  {}", old);
+                }
                 0
             }
             Err(ashlar::refactor::Refusal(reason)) => {
@@ -325,7 +336,9 @@ mod cli {
             .file_name()
             .map(|n| n.to_string_lossy().to_string())
             .unwrap_or_else(|| "vendored".to_string());
-        let dest = root.join("vendor").join(&name);
+        let vendor_dir = root.join("vendor");
+        let vendor_dir_existed = vendor_dir.exists();
+        let dest = vendor_dir.join(&name);
         if dest.exists() {
             eprintln!(
                 "refused: `vendor/{}` already exists; remove it to re-vendor.",
@@ -380,23 +393,38 @@ mod cli {
                 if let Err(e) = std::fs::create_dir_all(dir) {
                     eprintln!("error creating {}: {}", dir.display(), e);
                     let _ = std::fs::remove_dir_all(&dest);
+                    if !vendor_dir_existed {
+                        let _ = std::fs::remove_dir(&vendor_dir);
+                    }
                     return 1;
                 }
             }
             if let Err(e) = std::fs::write(&target, text) {
                 eprintln!("error writing {}: {}", target.display(), e);
                 let _ = std::fs::remove_dir_all(&dest);
+                if !vendor_dir_existed {
+                    let _ = std::fs::remove_dir(&vendor_dir);
+                }
                 return 1;
             }
         }
         let combined = ashlar::check_project(root);
         if combined.has_errors() {
             print_diags(&combined.diags, false);
-            let _ = std::fs::remove_dir_all(&dest);
-            eprintln!(
-                "refused: the combined project does not check; `vendor/{}` rolled back.",
-                name
-            );
+            let rollback = std::fs::remove_dir_all(&dest);
+            if !vendor_dir_existed {
+                let _ = std::fs::remove_dir(&vendor_dir);
+            }
+            match rollback {
+                Ok(()) => eprintln!(
+                    "refused: the combined project does not check; `vendor/{}` rolled back.",
+                    name
+                ),
+                Err(e) => eprintln!(
+                    "refused: the combined project does not check — and rolling back `vendor/{}` FAILED ({}); remove it by hand.",
+                    name, e
+                ),
+            }
             return 1;
         }
         eprintln!(
@@ -423,8 +451,18 @@ mod cli {
             return Ok(0);
         }
         let state_path = root.join(".ashlar-state.json");
-        let Ok(text) = std::fs::read_to_string(&state_path) else {
-            return Ok(0); // no state file, nothing to migrate
+        let text = match std::fs::read_to_string(&state_path) {
+            Ok(t) => t,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(0); // no state file, nothing to migrate
+            }
+            Err(e) => {
+                return Err(format!(
+                    "{} exists but could not be read: {}.",
+                    state_path.display(),
+                    e
+                ));
+            }
         };
         let Some(ashlar::eval::V::Map(m)) = ashlar::eval::from_json(&text) else {
             return Err(format!(
@@ -500,27 +538,25 @@ mod cli {
                 c.file, c.span.start.line, c.span.start.col, c.old, c.new
             );
         }
-        // Stored-state migrations are part of the blast radius (E3).
-        for (old, new) in &plan.state_part_renames {
-            eprintln!("  .ashlar-state.json  `{}.*` -> `{}.*`", old, new);
-        }
-        for (old, new) in &plan.state_prop_renames {
-            eprintln!("  .ashlar-state.json  `{}` -> `{}`", old, new);
-        }
+        // Stored-state and foreign-library moves are radius too (E3).
+        print_side_effects(&plan);
         if plan_only {
             return 0;
         }
         match ashlar::refactor::execute(&sources, &plan) {
             Ok(after) => {
-                for (rel, text) in &after {
-                    let orig = sources.iter().find(|(p, _)| p == rel).map(|(_, s)| s);
-                    if orig != Some(text) {
-                        if let Err(e) = std::fs::write(root.join(rel), text) {
-                            eprintln!("error writing {}: {}", rel, e);
-                            return 1;
-                        }
-                        eprintln!("rewrote: {}", rel);
-                    }
+                let changed: Vec<(&String, &String)> = after
+                    .iter()
+                    .filter(|(rel, text)| {
+                        sources.iter().find(|(p, _)| p == *rel).map(|(_, s)| s) != Some(text)
+                    })
+                    .collect();
+                if let Err(e) = write_all_or_restore(root, &sources, &changed) {
+                    eprintln!("{}", e);
+                    return 1;
+                }
+                for (rel, _) in &changed {
+                    eprintln!("rewrote: {}", rel);
                 }
                 match migrate_state(root, &plan) {
                     Ok(0) => {}
@@ -530,6 +566,20 @@ mod cli {
                         eprintln!("sources are consistent; fix the state file by hand.");
                     }
                 }
+                for (old, new) in &plan.foreign_renames {
+                    let (from, to) = (root.join(old), root.join(new));
+                    if from.exists() {
+                        match std::fs::rename(&from, &to) {
+                            Ok(()) => eprintln!("moved: {} -> {}", old, new),
+                            Err(e) => {
+                                eprintln!("warning: could not move {}: {}", old, e);
+                                eprintln!("move it by hand or the runtime will not find it.");
+                            }
+                        }
+                    } else {
+                        eprintln!("note: {} not present; nothing to move.", old);
+                    }
+                }
                 0
             }
             Err(ashlar::refactor::Refusal(reason)) => {
@@ -537,6 +587,66 @@ mod cli {
                 1
             }
         }
+    }
+
+    /// The non-source effects a plan carries, printed with the radius.
+    fn print_side_effects(plan: &ashlar::refactor::Plan) {
+        for (old, new) in &plan.state_part_renames {
+            eprintln!("  .ashlar-state.json  `{}.*` -> `{}.*`", old, new);
+        }
+        for (old, new) in &plan.state_prop_renames {
+            eprintln!("  .ashlar-state.json  `{}` -> `{}`", old, new);
+        }
+        for (old, new) in &plan.foreign_renames {
+            eprintln!("  {} -> {}", old, new);
+        }
+    }
+
+    /// Two-phase source writes: stage every changed file to a temp sibling,
+    /// then rename all into place. A staging failure aborts with nothing
+    /// touched; a rename failure restores the originals already replaced,
+    /// so the tree is never left half-rewritten (E4).
+    fn write_all_or_restore(
+        root: &Path,
+        sources: &[(String, String)],
+        changed: &[(&String, &String)],
+    ) -> Result<(), String> {
+        let mut staged: Vec<(String, std::path::PathBuf)> = Vec::new();
+        for (rel, text) in changed {
+            let tmp = root.join(format!("{}.ashtmp", rel));
+            if let Err(e) = std::fs::write(&tmp, text) {
+                for (_, t) in &staged {
+                    let _ = std::fs::remove_file(t);
+                }
+                let _ = std::fs::remove_file(&tmp);
+                return Err(format!(
+                    "error staging {}: {} — nothing was changed.",
+                    rel, e
+                ));
+            }
+            staged.push(((*rel).clone(), tmp));
+        }
+        let mut replaced: Vec<String> = Vec::new();
+        for (rel, tmp) in &staged {
+            if let Err(e) = std::fs::rename(tmp, root.join(rel)) {
+                // Restore what was already swapped from the in-memory
+                // originals, and clear remaining temps.
+                for done in &replaced {
+                    if let Some((_, orig)) = sources.iter().find(|(p, _)| p == done) {
+                        let _ = std::fs::write(root.join(done), orig);
+                    }
+                }
+                for (_, t) in &staged {
+                    let _ = std::fs::remove_file(t);
+                }
+                return Err(format!(
+                    "error writing {}: {} — originals restored, nothing changed.",
+                    rel, e
+                ));
+            }
+            replaced.push(rel.clone());
+        }
+        Ok(())
     }
 
     fn run_serve(path: &str) -> i32 {

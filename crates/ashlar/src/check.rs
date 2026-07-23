@@ -2093,9 +2093,8 @@ impl<'a> Cx<'a> {
                         vec![],
                     );
                 }
-                if let Some(a2) = args.get(2) {
-                    self.infer(a2);
-                }
+                // args[0] and args[2] were inferred eagerly above; only the
+                // lazy field map (args[1]) is walked here — exactly once.
                 match shapes.first() {
                     Some(S::Part(p)) if !p.starts_with("std.") => {
                         let p = p.clone();
@@ -2569,6 +2568,19 @@ mod agreement_tests {
         );
         assert_eq!(d.len(), 1);
         assert!(d[0].human().contains("expected `text`"), "{}", d[0].human());
+    }
+
+    #[test]
+    fn el_children_errors_are_reported_exactly_once() {
+        // The children argument is inferred eagerly with the other args;
+        // a second walk would duplicate diagnostics AND duplicate the
+        // machine edits `ashlar fix` applies.
+        let r = check_sources(vec![(
+            "t.ash".to_string(),
+            "space a\n\npart W {\n  view = () => el(\"div\", {}, [\"n: \" + 1])\n}\n"
+                .to_string(),
+        )]);
+        assert_eq!(r.diags.len(), 1, "{:?}", r.diags);
     }
 
     #[test]

@@ -93,3 +93,37 @@ anything is written (extending someone's space silently is a composition
 change, not a dependency add). If the combined project does not check,
 the copy is removed entirely — atomic or not at all, same doctrine as
 the refactors.
+
+## Post-review addendum (same day)
+
+An adversarial multi-agent review of the increment (four lenses, every
+finding refutation-verified against the built binary) confirmed thirteen
+defects, all fixed and regression-pinned the same day. The ones that
+sharpened contracts, recorded here so the reasoning survives:
+
+- **Nested function literals are plain functions in refactors too.** The
+  checker cleared `stack_ctx` for nested literals; the rename walker did
+  not, so renaming a state prop rewrote a nested lambda's returned map
+  keys — values, not merges — silently. The walker now mirrors the
+  checker exactly. One semantic model, two consumers, one rule.
+- **Bare names rewrite only where they resolve to the renamed thing.**
+  `bare_resolves_uniquely` now demands the unique visible hit BE the
+  target part, and prop renames guard on visibility — a bare `Store` in
+  a space that sees a different `Store` is that other part's name.
+  `move`'s reference detection gained the same discipline.
+- **Sites carry their written form.** A quoted literal key (`"body":`)
+  renames with its quotes; any site whose bytes the planner cannot model
+  (spacing inside a dotted chain) refuses toward `ashlar fmt` via a
+  text pre-verification every planner now runs — the E5 refusal shape,
+  reached BEFORE execute's internal mismatch could surface.
+- **Self-references travel with the moved part** and impose no
+  dependency on the old home (they are rewritten to the target), so no
+  fabricated `use` cycles.
+- **The radius includes what lives outside sources**: `radius` now
+  prints stored-key migrations, and a space rename carries
+  `foreign/<space>.so` with it (reported, and moved by the CLI).
+- **Writes are two-phase**: stage-all then rename-all, restoring
+  originals on failure — a mid-loop write error can no longer leave the
+  tree half-refactored.
+- The reference's §11 reversibility sentence now states `move`'s
+  byte-identity class instead of over-promising.

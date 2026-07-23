@@ -52,6 +52,10 @@ pub struct Plan {
     /// Exact stored-key migrations (`space.Part.prop` -> same with the
     /// property renamed).
     pub state_prop_renames: Vec<(String, String)>,
+    /// Foreign host libraries that must move with a space rename:
+    /// `foreign/<old>.so` -> `foreign/<new>.so` (§9.10 binds by space
+    /// name). Reported as radius; the CLI renames the file when present.
+    pub foreign_renames: Vec<(String, String)>,
 }
 
 /// A refusal: the reason radius could not be computed (E5).
@@ -172,6 +176,7 @@ pub fn plan_rename_part(
                 .any(|p| matches!(p.storage, Some(ast::Storage::Stored)))
         })
         .unwrap_or(false);
+    verify_plan_text(sources, &changes)?;
     Ok(Plan {
         description: format!("rename part `{}` -> `{}`", old_full, new_full),
         changes,
@@ -181,12 +186,17 @@ pub fn plan_rename_part(
             vec![]
         },
         state_prop_renames: vec![],
+        foreign_renames: vec![],
     })
 }
 
 /// Is a bare reference to `bare` in `space` guaranteed to mean `full`?
+/// True only when exactly one visible part answers to the bare name AND
+/// that part is `full` — a unique hit on some OTHER part means bare
+/// references here belong to it, and touching them retargets them.
 fn bare_resolves_uniquely(program: &Program, space: &str, bare: &str, full: &str) -> bool {
     let mut hits = 0;
+    let mut the_hit: Option<&str> = None;
     for (f, info) in &program.parts {
         let visible = info.home == space
             || program
@@ -196,14 +206,10 @@ fn bare_resolves_uniquely(program: &Program, space: &str, bare: &str, full: &str
                 .unwrap_or(false);
         if visible && f.rsplit('.').next() == Some(bare) {
             hits += 1;
-            if f != full && hits > 0 {
-                // Another part answers to the bare name: the resolver would
-                // have rejected bare uses, so none exist — and we must not
-                // touch dotted chains that begin the same way.
-            }
+            the_hit = Some(f);
         }
     }
-    hits == 1
+    hits == 1 && the_hit == Some(full)
 }
 
 fn valid_name(n: &str) -> bool {
@@ -444,7 +450,10 @@ pub fn plan_rename_prop(
     // part (data-shape construction, `put` values, `el` field maps) and
     // field accesses on values whose shape the checker knows. This is
     // what makes field renames computable (E5, ADR-0009); sites the
-    // checker could not pin to a span (multi-line chains) refuse.
+    // checker could not pin to a span (multi-line chains) refuse. The
+    // site's actual source text decides the written form — a quoted
+    // literal key keeps its quote style; anything else the planner
+    // cannot model (spacing inside a chain) refuses toward `ashlar fmt`.
     for site in &checked.field_sites {
         if site.part != part_full || site.field != old {
             continue;
@@ -455,20 +464,42 @@ pub fn plan_rename_prop(
                 site.file, site.span.start.line
             )));
         }
+        let text = slice_at(sources, &site.file, site.span).unwrap_or_default();
+        let (old_text, new_text) = if text == old {
+            (old.to_string(), new.to_string())
+        } else if text == format!("\"{}\"", old) || text == format!("'{}'", old) {
+            let q = text.chars().next().unwrap();
+            (text.clone(), format!("{}{}{}", q, new, q))
+        } else {
+            return Err(Refusal(format!(
+                "{}:{}:{}: the field is written as `{}` here, which the planner cannot rewrite; run `ashlar fmt` first.",
+                site.file, site.span.start.line, site.span.start.col, text
+            )));
+        };
         changes.push(Change {
             file: site.file.clone(),
             span: site.span,
-            old: old.to_string(),
-            new: new.to_string(),
+            old: old_text,
+            new: new_text,
         });
     }
     let layers = info.layers.clone();
+    let part_home = info.home.clone();
     let old_bare = part_full.rsplit('.').next().unwrap_or(part_full).to_string();
 
     for (idx, entry) in program.files.iter().enumerate() {
         let file = entry.path.clone();
         let space = ast::name_to_string(&entry.ast.space);
-        let bare_part_ok = bare_resolves_uniquely(program, &space, &old_bare, part_full);
+        // `Bare.old` chains rewrite only where the part is VISIBLE and the
+        // bare name resolves to IT — in any other space the same bare name
+        // belongs to a different part and must not be touched.
+        let sees = space == part_home
+            || program
+                .spaces
+                .get(&space)
+                .map(|s| s.closure.contains(&part_home))
+                .unwrap_or(false);
+        let bare_part_ok = sees && bare_resolves_uniquely(program, &space, &old_bare, part_full);
         for (pi, part) in entry.ast.parts.iter().enumerate() {
             let is_layer = layers.iter().any(|l| l.file_idx == idx && l.part_idx == pi);
             if is_layer {
@@ -514,6 +545,7 @@ pub fn plan_rename_prop(
     });
     changes.dedup();
     let stored = matches!(prop.storage, Some(ast::Storage::Stored));
+    verify_plan_text(sources, &changes)?;
     Ok(Plan {
         description: format!("rename `{}.{}` -> `{}.{}`", part_full, old, part_full, new),
         changes,
@@ -526,6 +558,7 @@ pub fn plan_rename_prop(
         } else {
             vec![]
         },
+        foreign_renames: vec![],
     })
 }
 
@@ -632,11 +665,15 @@ fn collect_prop_refs_inside(
                 }
                 Ok(())
             }
+            // A NESTED function literal is a plain function again — its
+            // returned maps are values, not state merges (mirrors the
+            // checker's stack_ctx clearing). Bare prop references inside
+            // it still rename; only the map-key handling switches off.
             Expr::FnLit(_, body) => match body.as_ref() {
-                FnBody::Expr(x) => walk_expr(x, file, old, new, in_stack, true, out),
+                FnBody::Expr(x) => walk_expr(x, file, old, new, false, true, out),
                 FnBody::Block(stmts) => {
                     for s in stmts {
-                        walk_stmt(s, file, old, new, in_stack, out)?;
+                        walk_stmt(s, file, old, new, false, out)?;
                     }
                     Ok(())
                 }
@@ -683,7 +720,21 @@ fn collect_prop_refs_inside(
             }
         }
     }
-    walk_expr(e, file, old, new, in_stack, true, out)
+    // The prop's value IS the layer function: its own body keeps
+    // `in_stack`; every function literal below it is plain (see the
+    // FnLit arm above).
+    match &e.expr {
+        Expr::FnLit(_, body) => match body.as_ref() {
+            FnBody::Expr(x) => walk_expr(x, file, old, new, in_stack, true, out),
+            FnBody::Block(stmts) => {
+                for s in stmts {
+                    walk_stmt(s, file, old, new, in_stack, out)?;
+                }
+                Ok(())
+            }
+        },
+        _ => walk_expr(e, file, old, new, in_stack, true, out),
+    }
 }
 
 /// Chains `part_full.prop` (or `Bare.prop` where the bare part name is
@@ -911,6 +962,7 @@ pub fn plan_rekind(
         changes,
         state_part_renames: vec![],
         state_prop_renames: vec![],
+        foreign_renames: vec![],
     })
 }
 
@@ -1025,21 +1077,74 @@ pub fn plan_rename_space(
     });
     changes.dedup();
 
-    // Every stored key under a part homed in the space migrates.
+    // Stored keys under parts homed in the space migrate — only for parts
+    // that actually HAVE stored properties (a migration row for a part
+    // with nothing persisted is radius noise).
     let mut state_part_renames = Vec::new();
     for (full, info) in &program.parts {
-        if info.home == old {
+        if info.home != old {
+            continue;
+        }
+        let stored = checked
+            .composed
+            .get(full)
+            .map(|cp| {
+                cp.props
+                    .values()
+                    .any(|p| matches!(p.storage, Some(ast::Storage::Stored)))
+            })
+            .unwrap_or(false);
+        if stored {
             let bare = full.rsplit('.').next().unwrap_or(full);
             state_part_renames.push((full.clone(), format!("{}.{}", new, bare)));
         }
     }
 
+    // The runtime binds a space's foreign functions to `foreign/<space>.so`
+    // (§9.10) — the library moves with the name, and the radius says so.
+    let has_foreigns = program.foreigns.values().any(|f| f.space == old);
+    let foreign_renames = if has_foreigns {
+        vec![(
+            format!("foreign/{}.so", old),
+            format!("foreign/{}.so", new),
+        )]
+    } else {
+        vec![]
+    };
+
+    verify_plan_text(sources, &changes)?;
     Ok(Plan {
         description: format!("rename space `{}` -> `{}`", old, new),
         changes,
         state_part_renames,
         state_prop_renames: vec![],
+        foreign_renames,
     })
+}
+
+/// The bytes a change claims to replace, straight from the sources.
+fn slice_at(sources: &[(String, String)], file: &str, span: Span) -> Option<String> {
+    let (_, src) = sources.iter().find(|(p, _)| p == file)?;
+    let a = char_pos_to_byte(src, span.start);
+    let b = char_pos_to_byte(src, span.end);
+    src.get(a..b).map(|s| s.to_string())
+}
+
+/// E5 backstop for column arithmetic: every planned change must match the
+/// bytes it claims to replace. Spacing the planner cannot model (`m . x`
+/// inside a dotted chain) refuses here with the `ashlar fmt` correction
+/// instead of surfacing execute's internal mismatch.
+fn verify_plan_text(sources: &[(String, String)], changes: &[Change]) -> Result<(), Refusal> {
+    for c in changes {
+        let actual = slice_at(sources, &c.file, c.span).unwrap_or_default();
+        if actual != c.old {
+            return Err(Refusal(format!(
+                "{}:{}:{}: this reference is written as `{}`, which the planner cannot rewrite (likely spacing inside a dotted chain); run `ashlar fmt` first.",
+                c.file, c.span.start.line, c.span.start.col, actual
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// A prefix rewrite of `old` at the start of `span` (single-line only).
@@ -1375,20 +1480,29 @@ pub fn plan_move(
         .get(target)
         .map(|s| s.closure.clone())
         .unwrap_or_default();
-    collect_referenced_spaces(program, decl, &home, &mut needed);
+    collect_referenced_spaces(program, decl, &home, part_full, &mut needed);
     needed.remove(target);
     needed.remove("std");
     needed.retain(|s| !target_closure.contains(s));
-    needed.remove(part_full); // safety: never a space
     if !needed.is_empty() {
-        add_use_lines(program, target, &needed, &mut changes)?;
+        add_use_lines(sources, program, target, &needed, &mut changes)?;
     }
 
     // (b) Every space that references the part must see the target. The
     // moving declaration itself is not a reference from home — it leaves.
+    // References resolve like the resolver: a bare name counts only where
+    // it actually resolves to THIS part — a different part sharing the
+    // bare name must neither pull in a `use` nor block the move.
     let mut referencing: BTreeSet<String> = BTreeSet::new();
     for entry in &program.files {
         let space = ast::name_to_string(&entry.ast.space);
+        let sees = space == home
+            || program
+                .spaces
+                .get(&space)
+                .map(|s| s.closure.contains(&home))
+                .unwrap_or(false);
+        let bare_ok = sees && bare_resolves_uniquely(program, &space, &bare, part_full);
         let mut refs = false;
         for part in &entry.ast.parts {
             let is_moved_decl = entry.path == home_file
@@ -1403,10 +1517,10 @@ pub fn plan_move(
             }
             for prop in &part.props {
                 if let Some(sh) = &prop.shape {
-                    refs = refs || shape_references_part(sh, part_full, &bare);
+                    refs = refs || shape_references_part(sh, part_full, &bare, bare_ok);
                 }
                 if let Some(v) = &prop.value {
-                    refs = refs || expr_references_part(v, part_full, &bare);
+                    refs = refs || expr_references_part(v, program, part_full, &bare, bare_ok);
                 }
             }
         }
@@ -1423,7 +1537,7 @@ pub fn plan_move(
         if space != target && !closure.contains(target) {
             let mut one = BTreeSet::new();
             one.insert(target.to_string());
-            add_use_lines(program, &space, &one, &mut changes)?;
+            add_use_lines(sources, program, &space, &one, &mut changes)?;
         }
     }
 
@@ -1442,6 +1556,7 @@ pub fn plan_move(
                 .any(|p| matches!(p.storage, Some(ast::Storage::Stored)))
         })
         .unwrap_or(false);
+    verify_plan_text(sources, &changes)?;
     Ok(Plan {
         description: format!("move `{}` -> `{}`", part_full, new_full),
         changes,
@@ -1451,6 +1566,7 @@ pub fn plan_move(
             vec![]
         },
         state_prop_renames: vec![],
+        foreign_renames: vec![],
     })
 }
 
@@ -1513,21 +1629,31 @@ fn part_prefix_in_shape(
     }
 }
 
-fn expr_references_part(e: &SExpr, part_full: &str, bare: &str) -> bool {
-    let full_segs: Vec<&str> = part_full.split('.').collect();
+/// Does the expression reference the part? Full-name chains resolve with
+/// the longest-prefix rule; bare names count only when `bare_ok` (the
+/// caller established that the bare name resolves to THIS part here).
+fn expr_references_part(
+    e: &SExpr,
+    program: &Program,
+    part_full: &str,
+    bare: &str,
+    bare_ok: bool,
+) -> bool {
     let mut stack = vec![e];
     while let Some(e) = stack.pop() {
         if let Expr::NameRef(segs) = &e.expr {
-            if segs[0] == bare
-                || (segs.len() >= full_segs.len()
-                    && segs[..full_segs.len()].iter().map(|s| s.as_str()).eq(full_segs.iter().copied()))
-            {
+            if bare_ok && segs[0] == bare {
                 return true;
+            }
+            if let Some((full, _)) = resolved_full_prefix(program, segs) {
+                if full == part_full {
+                    return true;
+                }
             }
         }
         if let Expr::FnLit(params, _) = &e.expr {
             for p in params {
-                if shape_references_part(&p.shape, part_full, bare) {
+                if shape_references_part(&p.shape, part_full, bare, bare_ok) {
                     return true;
                 }
             }
@@ -1537,28 +1663,34 @@ fn expr_references_part(e: &SExpr, part_full: &str, bare: &str) -> bool {
     false
 }
 
-fn shape_references_part(sh: &SShape, part_full: &str, bare: &str) -> bool {
+fn shape_references_part(sh: &SShape, part_full: &str, bare: &str, bare_ok: bool) -> bool {
     match &sh.shape {
         Shape::Part(name) => {
-            ast::name_to_string(name) == *part_full || (name.len() == 1 && name[0] == bare)
+            ast::name_to_string(name) == *part_full
+                || (bare_ok && name.len() == 1 && name[0] == bare)
         }
         Shape::List(i) | Shape::Map(i) | Shape::Opt(i) => {
-            shape_references_part(i, part_full, bare)
+            shape_references_part(i, part_full, bare, bare_ok)
         }
         Shape::Fn(params, ret) => {
-            params.iter().any(|(_, p)| shape_references_part(p, part_full, bare))
-                || shape_references_part(ret, part_full, bare)
+            params
+                .iter()
+                .any(|(_, p)| shape_references_part(p, part_full, bare, bare_ok))
+                || shape_references_part(ret, part_full, bare, bare_ok)
         }
         _ => false,
     }
 }
 
 /// The home spaces of every name the declaration's bodies and shapes
-/// resolve to, from `from_space`'s point of view.
+/// resolve to, from `from_space`'s point of view. References that resolve
+/// to the MOVED part itself are skipped — they travel with it (and are
+/// rewritten to the target), so they impose no dependency on the old home.
 fn collect_referenced_spaces(
     program: &Program,
     decl: &ast::PartDecl,
     from_space: &str,
+    moved_part: &str,
     out: &mut BTreeSet<String>,
 ) {
     // Bare-name resolution table from `from_space`'s point of view.
@@ -1575,7 +1707,9 @@ fn collect_referenced_spaces(
         for k in (2..=segs.len()).rev() {
             let prefix = segs[..k].join(".");
             if let Some(info) = program.parts.get(&prefix) {
-                out.insert(info.home.clone());
+                if prefix != moved_part {
+                    out.insert(info.home.clone());
+                }
                 return;
             }
             if let Some(info) = program.foreigns.get(&prefix) {
@@ -1587,7 +1721,9 @@ fn collect_referenced_spaces(
         let bare = &segs[0];
         for (full, info) in &program.parts {
             if full.rsplit('.').next() == Some(bare.as_str()) && visible(&info.home) {
-                out.insert(info.home.clone());
+                if full != moved_part {
+                    out.insert(info.home.clone());
+                }
                 return;
             }
         }
@@ -1638,8 +1774,10 @@ fn collect_referenced_spaces(
 
 /// Insert `use` lines for `spaces` (sorted, one Change) into `space`'s
 /// first file, after its last `use` line — or after the space header when
-/// none exist.
+/// none exist. A file whose last line lacks a trailing newline gets one
+/// prefixed, so the insertion never glues onto the previous line.
 fn add_use_lines(
+    sources: &[(String, String)],
     program: &Program,
     space: &str,
     spaces: &BTreeSet<String>,
@@ -1667,7 +1805,13 @@ fn add_use_lines(
         line: after_line + 1,
         col: 1,
     };
-    let text: String = spaces.iter().map(|s| format!("use {}\n", s)).collect();
+    let mut text: String = spaces.iter().map(|s| format!("use {}\n", s)).collect();
+    if let Some((_, src)) = sources.iter().find(|(p, _)| *p == file) {
+        let line_count = src.split('\n').count() as u32;
+        if !src.ends_with('\n') && pos.line >= line_count {
+            text = format!("\n{}", text);
+        }
+    }
     out.push(Change {
         file,
         span: Span { start: pos, end: pos },
