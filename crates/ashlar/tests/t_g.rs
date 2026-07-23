@@ -1017,7 +1017,12 @@ part page {
 "#;
     let root = fixture("shim", &[("app.ash", app)]);
     let (port, stop, join) = start(root);
-    let (_, _, html) = http_req_full(port, "GET", "/", None, None);
+    let (_, head, html) = http_req_full(port, "GET", "/", None, None);
+    assert!(
+        head.to_ascii_lowercase().contains("cache-control: no-store"),
+        "live pages must never be cached (stale instance ids kill interaction): {}",
+        head
+    );
     for marker in [
         "data-ash-page",
         "activeElement",

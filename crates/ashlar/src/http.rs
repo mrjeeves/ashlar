@@ -243,8 +243,13 @@ pub fn write_response(
         404 => "Not Found",
         _ => "Error",
     };
+    // Every response is live output of the running program: a cached
+    // page carries instance ids a restarted server no longer knows, and
+    // heuristic caching (no validators are sent) makes browsers do
+    // exactly that. `no-store` ends the whole class of stale-page
+    // breakage.
     let mut head = format!(
-        "HTTP/1.1 {} {}\r\ncontent-type: {}\r\ncontent-length: {}\r\n",
+        "HTTP/1.1 {} {}\r\ncontent-type: {}\r\ncontent-length: {}\r\ncache-control: no-store\r\n",
         status,
         reason,
         content_type,
