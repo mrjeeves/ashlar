@@ -378,9 +378,9 @@ exactly one; `ashlar run chat.app` names one explicitly. On start the runtime
 loads stored state (§9.3), then calls the root's `start` stack property if
 declared. On shutdown it calls `stop`, then flushes stored state. While
 running, a source change rebuilds and hot-reloads the program in place;
-process state — state properties, open connections — is preserved. If the
-change fails to compile, diagnostics are emitted and the old program keeps
-running.
+state properties carry over by full name, and open pages reconnect and
+re-render themselves. If the change fails to compile, diagnostics are
+emitted and the old program keeps running.
 
 ```ash
 space chat
