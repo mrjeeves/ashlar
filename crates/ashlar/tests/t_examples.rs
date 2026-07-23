@@ -41,7 +41,7 @@ fn t_examples_all_check_clean() {
             dir.display()
         );
     }
-    assert!(seen >= 7, "expected the full example set, found {}", seen);
+    assert!(seen >= 8, "expected the full example set, found {}", seen);
 }
 
 #[test]
@@ -392,6 +392,68 @@ fn t_examples_ticker_schedule_drives_state() {
         std::thread::sleep(std::time::Duration::from_millis(100));
     }
     assert!(beats > 0.0, "the schedule never fired");
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn t_examples_pong_plays() {
+    let dir = staged("pong");
+    let (port, stop, join) = start(dir.clone());
+    let (_, _, html) = req(port, "GET", "/", None, None);
+    assert!(html.contains("pong —"), "{}", html);
+    assert!(html.contains("type=\"range\""), "{}", html);
+
+    // Paused at serve position.
+    let (_, _, s0) = req(port, "GET", "/api/state", None, None);
+    assert!(s0.contains("\"running\":false") && s0.contains("\"x\":195"), "{}", s0);
+
+    // Steer the left paddle with a slider event.
+    let (inst, steer) = event_target(&html, "oninput", 0).unwrap();
+    let mut ws = ws_open(port);
+    ws_send(
+        &mut ws,
+        &format!("{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"oninput\",\"value\":\"40\"}}}}", inst, steer),
+    );
+    let _ = ws_read(&mut ws);
+    let (_, _, s1) = req(port, "GET", "/api/state", None, None);
+    assert!(s1.contains("\"pl\":40"), "the slider must steer the paddle: {}", s1);
+
+    // Start: the schedule drives the ball; pause: it stops.
+    let (binst, flip) = event_target(&html, "onclick", 0).unwrap();
+    ws_send(
+        &mut ws,
+        &format!("{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onclick\"}}}}", binst, flip),
+    );
+    let _ = ws_read(&mut ws);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    let mut moved = false;
+    while std::time::Instant::now() < deadline {
+        let (_, _, s) = req(port, "GET", "/api/state", None, None);
+        if s.contains("\"running\":true") && !s.contains("\"x\":195") {
+            moved = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(60));
+    }
+    assert!(moved, "the ball must move while running");
+
+    // Pause through the fresh button handler (the switch re-rendered).
+    let (_, _, page2) = req(port, "GET", "/", None, None);
+    let (binst2, flip2) = event_target(&page2, "onclick", 0).unwrap();
+    ws_send(
+        &mut ws,
+        &format!("{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onclick\"}}}}", binst2, flip2),
+    );
+    let _ = ws_read(&mut ws);
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    let (_, _, a) = req(port, "GET", "/api/state", None, None);
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    let (_, _, b) = req(port, "GET", "/api/state", None, None);
+    assert!(a.contains("\"running\":false"), "{}", a);
+    assert_eq!(a, b, "paused means the ball holds still");
+
     stop.store(true, Ordering::Relaxed);
     join.join().unwrap();
     let _ = std::fs::remove_dir_all(&dir);
