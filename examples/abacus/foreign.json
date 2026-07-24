@@ -1,0 +1,3 @@
+{
+  "abacus": { "via": "worker", "run": ["python3", "foreign/abacus.py"] }
+}

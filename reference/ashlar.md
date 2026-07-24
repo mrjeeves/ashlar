@@ -608,13 +608,47 @@ foreign fetch: (url: text) -> data
 foreign post: (url: text, body: data) -> data
 ```
 
-`foreign name: (shapes) -> shape` declares a function implemented outside
-Ashlar. The build binds each foreign name of space `s` to the host library
-`foreign/s` in the project (the manifest records the resolved location; a
-missing or non-exporting library is a build error). Arguments and returns
-cross as data and are shape-checked at the boundary at runtime; a mismatch
-is a fault at the call site. Foreign calls may block; the runtime schedules
-around them.
+`foreign name: (shapes) -> shape` declares a CAPABILITY implemented outside
+Ashlar. Arguments and returns cross as data and are shape-checked at the
+boundary at runtime; a mismatch is a fault at the call site.
+
+**How a capability is reached is a deployment fact, never source.** By
+default the build binds space `s` to the host library `foreign/s`
+(`.so`/`.dylib`/`.dll`), and the manifest records what it resolved. An
+optional `foreign.json` at the project root (or at `ASHLAR_FOREIGN`)
+overrides that, per space:
+
+| `via` | reached by | fields |
+|---|---|---|
+| `native` | `dlopen`, C ABI `char* f(const char* args_json)` | `library`, `symbols` |
+| `worker` | a co-process speaking JSON Lines on stdin/stdout | `run` |
+| `http` | POST to a URL (plaintext; TLS terminates at a proxy) | `url` |
+
+```json
+{ "tools": { "via": "worker", "run": ["python3", "foreign/tools.py"] },
+  "geo":   { "via": "native", "library": "/usr/lib/libgeo.so.3",
+             "symbols": { "lookup": "geo_lookup_v2" } } }
+```
+
+`symbols` binds an Ashlar name to a differently-spelled export, so an
+existing library keeps its own names. Every transport carries the same
+envelope: a request is `{"call": name, "args": [...]}`, and an answer is a
+bare value, `{"ok": value}`, or `{"error": text}` — the last being a fault
+carrying that message. A `native` library may export `ashlar_free(char*)`
+to take its returned buffer back. A whole worker:
+
+```python
+import json, sys
+for line in sys.stdin:
+    r = json.loads(line)
+    fn = {"shout": lambda s: s.upper()}.get(r["call"])
+    out = {"ok": fn(*r["args"])} if fn else {"error": "no such call"}
+    print(json.dumps(out), flush=True)
+```
+
+`ashlar foreign check` proves every declared name is reachable before a
+request finds out. Foreign calls may block; the runtime schedules around
+them.
 
 A foreign call may name a reactive collection, so a store behind the boundary
 is live without leaving the language:

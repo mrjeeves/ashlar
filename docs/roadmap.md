@@ -118,6 +118,27 @@ the no-user case at COMPILE time in provably user-less contexts
 (task/boot/`spawn`) — the runtime fault already secures correctness; a
 static check would only move the failure earlier.
 
+Delivered 2026-07-24 — **the foreign boundary meets foreign systems where
+they are** (ADR-0017). A `foreign` declaration now names a capability; how it
+is reached is a deployment fact. Three transports carry one JSON envelope:
+`native` (dlopen, now with arbitrary library paths, **symbol aliases** so an
+existing library keeps its own names, `.so`/`.dylib`/`.dll` probing, and an
+optional `ashlar_free` that ends the returned-buffer leak), **`worker`** (a
+co-process speaking JSON Lines — any language, no compiler, no C ABI, no
+shared library), and `http` (plaintext, TLS at a proxy per ADR-0013). An
+optional `foreign.json` overrides the derived path per space; with no file,
+every existing project resolves exactly as before. A shared result convention
+(`{"error": …}` faults, `{"ok": …}` is the escape hatch, a bare value is the
+result) makes a foreign failure diagnosable instead of "malformed JSON", and
+`ashlar foreign check` proves every declared name reachable — dlsym for
+native, protocol handshake for a worker — turning a runtime fault into a
+build-time correction. The whole boundary moved to `src/foreign.rs`, which now
+confines the workspace's only `unsafe`. Proven by four T-G conformance tests
+(one per transport plus alias/free) and the new **`abacus`** example, whose
+capability is ten lines of Python. Deliberately rejected and recorded: native
+C type marshalling in source, WASM, command templating, a code-generating
+`foreign scaffold`, and transport failover.
+
 Delivered 2026-07-24 — **the examples wear a design** (ADR-0016). Every
 project now declares a stylesheet in one restrained dark house language (the
 `commons` palette, re-declared per project since the runtime serves one sheet

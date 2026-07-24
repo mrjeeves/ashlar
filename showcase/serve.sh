@@ -29,6 +29,7 @@ EXAMPLES=(
   "diary:8090"
   "locker:8091"
   "ledger:8092"
+  "abacus:8095"
   "commons:8093"
   "hello:8094"
 )
