@@ -89,6 +89,21 @@ pub struct ForeignDecl {
     /// Parameter shapes; names optional (`(url: text)` or `(text)`).
     pub params: Vec<(Option<String>, SShape)>,
     pub ret: SShape,
+    /// Optional reactivity: `reads <Shape>` makes a call a dependency edge,
+    /// `writes <Shape>` makes it invalidate that collection so every view
+    /// that read it re-renders — a foreign store becomes reactive without
+    /// leaving the language (§9.10, §9.3). `None` is a plain call.
+    pub react: Option<ForeignReact>,
+}
+
+/// The reactive intent of a foreign call: which collection it touches, and
+/// whether it reads (depend) or writes (invalidate). The collection is a
+/// data-shape name — "the Shape is the schema" (ADR-0014).
+#[derive(Debug, Clone, PartialEq)]
+pub struct ForeignReact {
+    pub writes: bool,
+    pub collection: Name,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq)]

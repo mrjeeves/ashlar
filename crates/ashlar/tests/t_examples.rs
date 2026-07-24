@@ -849,6 +849,26 @@ fn t_examples_ledger_persists_to_sqlite() {
     assert!(page2.contains("ada: coffee ($4.5)"), "restart lost the SQLite data: {}", page2);
     assert!(page2.contains("total: $10.5"), "{}", page2);
 
+    // Reactive SQL (ADR-0014): a board holding only a socket is patched live
+    // by ANOTHER client's write — no request of its own. `record` `writes
+    // Entry` and the board `reads Entry`, so the foreign store joins the §9.3
+    // dependency graph exactly like `stored`. (Run after the restart checks so
+    // the persisted total above is still ada + bob.)
+    let page_id = attr_of(&page2, "data-ash-page").unwrap();
+    let mut ws = ws_open(port2);
+    ws_send(&mut ws, &format!("{{\"page\":\"{}\"}}", page_id));
+    std::thread::sleep(std::time::Duration::from_millis(80));
+    let (s3, _, _) =
+        req(port2, "POST", "/add", Some("{\"who\":\"cy\",\"note\":\"tea\",\"amount\":2}"), None);
+    assert_eq!(s3, 302);
+    let patch = ws_expect(&mut ws, "cy: tea ($2)", 10);
+    assert!(
+        patch.contains("total: $12.5"),
+        "the reactive patch re-reads the SQL SUM, not a cached value: {}",
+        patch
+    );
+    drop(ws);
+
     stop2.store(true, Ordering::Relaxed);
     join2.join().unwrap();
     let _ = std::fs::remove_file(&db);

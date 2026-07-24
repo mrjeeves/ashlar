@@ -616,6 +616,27 @@ cross as data and are shape-checked at the boundary at runtime; a mismatch
 is a fault at the call site. Foreign calls may block; the runtime schedules
 around them.
 
+A foreign call may name a reactive collection, so a store behind the boundary
+is live without leaving the language:
+
+```ash
+space store
+
+part Row {
+  key: text
+}
+
+foreign save: (key: text) -> bool writes Row
+foreign all: () -> [Row] reads Row
+```
+
+`reads <Shape>` makes the call a dependency edge — a view that calls it
+re-renders when the collection changes — and `writes <Shape>` marks that
+collection changed, so every view that read it re-renders and patches, across
+every connected client (§9.3). The collection is the data shape it names.
+`reads`/`writes` are contextual (ordinary names elsewhere); one that resolves
+to no part is E001.
+
 ### 9.11 std
 
 The builtin space, implicitly used everywhere. Parts: `Request`, `Event`,

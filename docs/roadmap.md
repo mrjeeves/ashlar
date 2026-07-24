@@ -85,15 +85,20 @@ file. (The once-weak v1 password hash is gone: v2 is salted, iterated
 PBKDF2, and v1 hashes upgrade transparently on login.) New requirements
 enter here as new numbered items; none are open today.
 
-One proposed trajectory is on the table but not yet accepted: **ADR-0014**
-(status: proposed) sketches the data layer beyond the `foreign` shim the
-`ledger` example already demonstrates — a database backend for `stored`
-(the collection is the table, the Shape is the schema, the location bound
-in deployment not source), a hand-rolled non-blocking Postgres client that
-never blocks the single loop, and horizontal scale by process count. Its
-Stage 1 (the SQLite-over-`foreign` example) is delivered; Stages 2–4 wait
-on a design decision before any runtime code, and will land here as
-tested items if accepted.
+One proposed trajectory is partly delivered: **ADR-0014** sketches the data
+layer beyond the `foreign` shim the `ledger` example demonstrates — a
+database backend for `stored`, a hand-rolled non-blocking Postgres client
+that never blocks the single loop, and horizontal scale by process count.
+Delivered so far: Stage 1 (the SQLite-over-`foreign` example) and, on
+2026-07-24, **reactivity for a foreign store** — a `reads <Shape>` /
+`writes <Shape>` annotation on `foreign` that joins the SQL collection to the
+§9.3 reactive graph (the collection is the table, the Shape is the schema).
+`recent`/`total` `reads Entry`, `record` `writes Entry`, so a write from any
+client patches every open `ledger` board live — no new threads, no `stored`
+backend, a typo'd collection caught as E001, and a T-Examples test that drives
+the cross-client patch. The `stored` database backend, the Postgres client,
+and horizontal scale remain proposed, awaiting a design decision before any
+further runtime code.
 
 Delivered 2026-07-24 — **ADR-0015** re-cut the storage taxonomy along its
 two real axes. `synced` is retired: the runtime never gave it any behavior
