@@ -93,7 +93,7 @@ D2 is the requirement that converts "errors are corrections" from an aspiration 
 **G1.** A single binary. No install step, no runtime dependency resolution, no package manager, no registry.
 **G2.** The same handler serves HTTP and WebSocket. Transport is not visible in handler code.
 **G3.** Hot reload on source change preserves process state.
-**G4.** The builtin set covers routing, request handling, persistence, reactive state (local, persisted, and server-synchronized), authentication, authorization, file serving, background tasks, scheduled tasks, real-time channels, and structured logging. Everything else is foreign-function interface.
+**G4.** The builtin set covers routing, request handling, persistence, reactive state along two axes — lifetime (in-memory or persisted) and scope (shared or per-user `owned`), with cross-client synchronization a property of the no-client-code architecture rather than a distinct class (ADR-0015) — authentication, authorization, file serving, background tasks, scheduled tasks, real-time channels, and structured logging. Everything else is foreign-function interface.
 **G5.** The absence of a package registry is a requirement, not a gap. It removes version resolution, transitive conflict, and supply-chain surface — all pure cost to an agent author.
 ---
 ## 9. Test suites

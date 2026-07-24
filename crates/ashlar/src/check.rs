@@ -455,7 +455,7 @@ struct Tables {
     part_props: BTreeMap<String, BTreeMap<String, S>>,
     /// data-shape parts only: full name -> field name -> (shape, has default).
     data_shape_fields: BTreeMap<String, BTreeMap<String, (S, bool)>>,
-    /// full part name -> names of its storage (state/stored/synced) props —
+    /// full part name -> names of its storage (state/stored, maybe owned) props —
     /// the only legal keys of a `stack` return literal.
     storage_props: BTreeMap<String, BTreeSet<String>>,
     /// foreign full name and per-space bare -> function shape.

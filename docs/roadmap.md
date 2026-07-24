@@ -58,13 +58,18 @@ Every item this page has carried is delivered, tested, and moved off:
   7.5%, distribution printed on every run.
 - **T-A3 surface findings** — resolved by ADR-0008, validated by gate
   run 2 (23/24 cold-read PASS).
-- **Showcase corpus** — twelve complete projects, now crowned by
+- **Showcase corpus** — thirteen complete projects, crowned by
   `commons`: a full team chat (auth, rooms, DMs, live messaging,
   presence-by-lifecycle, unread counts, plus moderation and mentions as
   independently owned layers) that exercises the whole language as one
-  product, styled by a named sheet (ADR-0010). T-Examples compiles,
-  format-checks, serves, and drives every project — commons included —
-  over its real HTTP/WebSocket surface.
+  product, styled by a named sheet (ADR-0010). `ledger` is the first to
+  exercise the `foreign` boundary for real: its datastore is a genuine
+  SQLite database file, reached through a std-only cdylib shim that links
+  the system libsqlite3 — the SQL lives outside Ashlar, the way CSS does.
+  T-Examples compiles, format-checks, serves, and drives every project —
+  commons and ledger included — over its real HTTP/WebSocket surface (the
+  ledger driving test builds its shim and skips loudly where libsqlite3 is
+  absent, since a SQLite integration cannot be tested without SQLite).
 - **Deployment posture** — the binary is an origin; TLS and HTTP/2/3 are
   terminated at a reverse proxy (ADR-0013). The origin carries only the
   small correct pieces to sit behind one: `stored` state flushes
@@ -79,3 +84,31 @@ positives, check.rs module docs), `move`'s byte-identity class
 file. (The once-weak v1 password hash is gone: v2 is salted, iterated
 PBKDF2, and v1 hashes upgrade transparently on login.) New requirements
 enter here as new numbered items; none are open today.
+
+One proposed trajectory is on the table but not yet accepted: **ADR-0014**
+(status: proposed) sketches the data layer beyond the `foreign` shim the
+`ledger` example already demonstrates — a database backend for `stored`
+(the collection is the table, the Shape is the schema, the location bound
+in deployment not source), a hand-rolled non-blocking Postgres client that
+never blocks the single loop, and horizontal scale by process count. Its
+Stage 1 (the SQLite-over-`foreign` example) is delivered; Stages 2–4 wait
+on a design decision before any runtime code, and will land here as
+tested items if accepted.
+
+Delivered 2026-07-24 — **ADR-0015** re-cut the storage taxonomy along its
+two real axes. `synced` is retired: the runtime never gave it any behavior
+`state` lacks, since no-client-code makes cross-client reactivity
+universal. `owned` is added, a per-user scope modifier on `state`/`stored`
+— each authenticated user's own value, isolated by construction, so the
+manual `[req.user.id]` keying that invites IDOR disappears. It fails loud
+where there is no user (an anonymous request, a scheduled task, `spawn`, or
+`start` stack): a runtime fault, never a silently shared value. The word
+was chosen by a T-A3 cold read (`owned`/`personal`/`user` all read per-user
+3/3; `private` misread as OOP access-control). Shipped with the runtime
+scoping, per-user persistence keyed by the stable account id, `E029`
+(`owned` needs a storage word), the `ticker` rename, the `locker` example
+(two users, isolated and persisted, driven by the suite), a T-G fault
+proof, and the reference/G4 rewrite. One refinement stays named: catching
+the no-user case at COMPILE time in provably user-less contexts
+(task/boot/`spawn`) — the runtime fault already secures correctness; a
+static check would only move the failure earlier.

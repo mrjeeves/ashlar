@@ -27,8 +27,9 @@ part Post {
 }
 
 // The one shared store every space reads and the whole team sees.
-// `stored` state survives restarts; `synced` state is pushed live to
-// every view that read it. The two pipe seams — `prepare` (body) and
+// `stored` state survives restarts; plain `state` is in-memory — both are
+// reactive, so every view that read a value re-renders when it changes
+// (there is no client code, §9.4). The two pipe seams — `prepare` (body) and
 // `announce` (a posted message) — are where independently owned spaces
 // layer policy and reactions WITHOUT editing this file: commons.moderation
 // stacks onto `prepare`, commons.mentions onto `announce` (§4).
@@ -37,7 +38,7 @@ part Store {
   stored rooms: {text: commons.data.Room} = {}
   stored posts: {text: commons.data.Post} = {}
   stored reads: {text: {text: number}} = {}
-  synced online: {text: number} = {}
+  state online: {text: number} = {}
 
   prepare pipe = (body: text) => slice(body, 0, 400)
   announce pipe = (p: commons.data.Post) => p

@@ -115,3 +115,41 @@ seam and pings mentioned people over a per-user channel the notice tray
 subscribes to by name. Appearance is bound by name: the root declares
 `style = "commons"`, and the views carry `class` names that meet the
 served `assets/commons.css` by name — no style string anywhere (§9.4).
+
+## ledger
+
+The datastore is a real **SQLite database file**, reached across the
+`foreign` boundary (§9.10) — the one example that leaves the language for
+its data. `data.ash` names the operations (`record`, `recent`, `total`)
+and shape-checks every returned row against the `Entry` data shape; the
+SQL lives entirely in `foreign/ledger.store.rs`, a std-only Rust `cdylib`
+that links the system `libsqlite3` over the C ABI. SQL is the persistence
+peer of CSS: **named in Ashlar, defined outside it** — no query string and
+no connection string ever appears in source (B5; the shim reads
+`ASHLAR_LEDGER_DB`, a deployment fact). The board renders straight from
+the database on each request and the running total is a SQL `SUM` computed
+in the shim, so the same `foreign` boundary that runs a fetch or a native
+routine also carries a database. Build the shim before running:
+
+```
+rustc --edition 2021 --crate-name ledger_store --crate-type cdylib \
+  -l sqlite3 -o examples/ledger/foreign/ledger.store.so \
+  examples/ledger/foreign/ledger.store.rs
+```
+
+The driving test builds it automatically and skips loudly where a Rust
+toolchain or `libsqlite3` is absent — a SQLite integration cannot be
+tested without SQLite. This is Stage 1 of ADR-0014; making a foreign-backed
+store reactive and adding a Postgres backend are the proposed next stages.
+
+## locker
+
+Per-user storage in one keyword (ADR-0015). `owned stored notes` on a
+singleton gives every signed-in user their OWN list, saved to disk and
+isolated from everyone else's — no keying by user id anywhere, and no way
+to reach another user's data. `owned` has no meaning without a user, so the
+routes guard with `allow`; an anonymous read would fault, never fall
+through to a shared value. The test signs up two people, has each keep a
+note, and proves each sees only their own — then restarts the server and
+logs back in to show the notes persisted, still isolated, keyed by the
+stable account id.

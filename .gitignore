@@ -2,3 +2,7 @@
 /ashlar.manifest
 .ashlar-state.json
 ashlar.manifest
+
+# Foreign shims compile to a host library at build/test time; the source
+# (foreign/<space>.rs) is checked in, the built .so is an artifact.
+examples/*/foreign/*.so

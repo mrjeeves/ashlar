@@ -1,0 +1,67 @@
+/* The board names its sheet: app declares `style = "ledger"`, which the
+   runtime links into every page as /ledger.css (reference §9.4). Appearance
+   is bound by class name, never inline. */
+
+body {
+  margin: 0;
+  background: #14171c;
+  color: #e6e9ef;
+  font: 15px/1.5 ui-sans-serif, system-ui, sans-serif;
+}
+
+.ledger {
+  max-width: 40rem;
+  margin: 3rem auto;
+  padding: 0 1.25rem;
+}
+
+.ledger h1 {
+  font-size: 1.4rem;
+  letter-spacing: 0.02em;
+  margin: 0 0 1.25rem;
+}
+
+.add {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.add input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 0.5rem 0.65rem;
+  background: #1c2128;
+  border: 1px solid #2b323c;
+  border-radius: 8px;
+  color: inherit;
+  font: inherit;
+}
+
+.add button {
+  flex: 0 0 auto;
+  padding: 0.5rem 1rem;
+  background: #3b82f6;
+  border: 0;
+  border-radius: 8px;
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+}
+
+.rows {
+  list-style: none;
+  margin: 0 0 1.25rem;
+  padding: 0;
+}
+
+.row {
+  padding: 0.6rem 0.25rem;
+  border-bottom: 1px solid #232a33;
+  font-variant-numeric: tabular-nums;
+}
+
+.total {
+  font-weight: 600;
+  font-size: 1.1rem;
+}

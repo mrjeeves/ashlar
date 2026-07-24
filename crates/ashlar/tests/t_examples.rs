@@ -446,7 +446,7 @@ fn t_examples_poll_channel_feeds_instances() {
 fn t_examples_pong_syncs_across_two_windows() {
     // Two pages, two sockets: A starting the game must flip B's button
     // and animate B's ball; B pausing must reach A. The whole game is
-    // one synced state — windows are just observers with sliders.
+    // one shared state — windows are just observers with sliders.
     let dir = staged("pong");
     let (port, stop, join) = start(dir.clone());
 
@@ -740,5 +740,141 @@ fn t_examples_commons_is_a_live_team_chat() {
     drop(ws_a);
     stop.store(true, Ordering::Relaxed);
     join.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Build an example's foreign shim into a host library beside its source.
+/// Returns false (with a loud note) when the toolchain or libsqlite3 is
+/// absent — a SQLite integration cannot be tested without SQLite, so the
+/// caller skips rather than fail an unrelated machine's whole suite.
+fn build_foreign_shim(dir: &std::path::Path, space: &str, crate_name: &str, link: &str) -> bool {
+    let src = dir.join("foreign").join(format!("{}.rs", space));
+    let so = dir.join("foreign").join(format!("{}.so", space));
+    let out = std::process::Command::new("rustc")
+        .args(["--edition", "2021", "--crate-name", crate_name, "--crate-type", "cdylib", "-l", link, "-o"])
+        .arg(&so)
+        .arg(&src)
+        .output();
+    match out {
+        Ok(o) if o.status.success() && so.exists() => true,
+        other => {
+            let why = other
+                .map(|o| String::from_utf8_lossy(&o.stderr).into_owned())
+                .unwrap_or_else(|e| e.to_string());
+            eprintln!("SKIP: cannot build foreign shim `{}` (needs a Rust toolchain + lib{}):\n{}", space, link, why);
+            false
+        }
+    }
+}
+
+#[test]
+fn t_examples_ledger_persists_to_sqlite() {
+    // The datastore is a REAL SQLite database file, reached across the
+    // `foreign` boundary (§9.10) — the first example to exercise foreign.
+    // The shim is a std-only Rust cdylib linking the system libsqlite3; the
+    // SQL lives there, never in Ashlar source (ADR-0014). No Ashlar runtime
+    // change: this rides the boundary that already exists.
+    let dir = staged("ledger");
+    if !build_foreign_shim(&dir, "ledger.store", "ledger_store", "sqlite3") {
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+
+    // The shim's datastore path is a deployment fact, not source (B5): it
+    // reads ASHLAR_LEDGER_DB, else a per-process temp file. Unset here, so
+    // it takes the fallback — start from a clean file.
+    let db = std::env::temp_dir().join(format!("ashlar-ledger-{}.db", std::process::id()));
+    let _ = std::fs::remove_file(&db);
+
+    let (port, stop, join) = start(dir.clone());
+
+    // Two entries through one handler; a client posts JSON where a browser
+    // posts a form (transport-invisible, §9.2).
+    let (s1, _, _) = req(port, "POST", "/add", Some("{\"who\":\"ada\",\"note\":\"coffee\",\"amount\":4.5}"), None);
+    assert_eq!(s1, 302, "the add handler redirects back to the board");
+    let (s2, _, _) = req(port, "POST", "/add", Some("{\"who\":\"bob\",\"note\":\"bagels\",\"amount\":6}"), None);
+    assert_eq!(s2, 302);
+
+    // The board renders straight from SQLite: both rows newest-first, and
+    // the running total, which SQL sums inside the shim.
+    let (_, _, page) = req(port, "GET", "/", None, None);
+    assert!(page.contains("ada: coffee ($4.5)"), "row read back from SQLite: {}", page);
+    assert!(page.contains("bob: bagels ($6)"), "row read back from SQLite: {}", page);
+    assert!(page.contains("total: $10.5"), "the SQL SUM crosses the boundary: {}", page);
+    assert!(
+        page.find("bob").unwrap() < page.find("ada").unwrap(),
+        "newest first (ORDER BY id DESC): {}",
+        page
+    );
+
+    // The file on disk is a genuine SQLite database, not an Ashlar blob.
+    let bytes = std::fs::read(&db).expect("the SQLite file exists");
+    assert!(bytes.starts_with(b"SQLite format 3\0"), "a real SQLite database file");
+
+    // Restart: a fresh evaluator holds none of these entries in memory, so
+    // their surviving proves they were read back from the database — the
+    // datastore genuinely lives outside the program.
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+    let (port2, stop2, join2) = start(dir.clone());
+    let (_, _, page2) = req(port2, "GET", "/", None, None);
+    assert!(page2.contains("ada: coffee ($4.5)"), "restart lost the SQLite data: {}", page2);
+    assert!(page2.contains("total: $10.5"), "{}", page2);
+
+    stop2.store(true, Ordering::Relaxed);
+    join2.join().unwrap();
+    let _ = std::fs::remove_file(&db);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn t_examples_locker_scopes_storage_per_user() {
+    // `owned stored` gives each signed-in user their own isolated, persisted
+    // data (ADR-0015). Proven here: anonymous access is refused, two users
+    // never see each other's notes, and the data survives a restart keyed by
+    // the persisted account id.
+    let dir = staged("locker");
+    let (port, stop, join) = start(dir.clone());
+
+    // Anonymous cannot reach owned storage — the `allow` guard rejects it
+    // before the read would even fault.
+    let (anon, _, _) = req(port, "GET", "/api/notes", None, None);
+    assert_eq!(anon, 403, "anonymous is refused the owned read");
+
+    // Two users sign up; each gets a session.
+    let (_, ha, _) = req(port, "POST", "/api/signup",
+        Some("{\"email\":\"ada@keep.x\",\"password\":\"p\"}"), None);
+    let ada = cookie_of(&ha);
+    let (_, hb, _) = req(port, "POST", "/api/signup",
+        Some("{\"email\":\"bob@keep.x\",\"password\":\"p\"}"), None);
+    let bob = cookie_of(&hb);
+
+    // Each keeps a different note in their own locker.
+    req(port, "POST", "/api/keep", Some("{\"note\":\"ada-secret\"}"), Some(&ada));
+    req(port, "POST", "/api/keep", Some("{\"note\":\"bob-secret\"}"), Some(&bob));
+
+    // Each sees ONLY their own — the owned isolation, by construction.
+    let (_, _, an) = req(port, "GET", "/api/notes", None, Some(&ada));
+    assert!(an.contains("ada-secret") && !an.contains("bob-secret"),
+        "ada sees only her own notes: {}", an);
+    let (_, _, bn) = req(port, "GET", "/api/notes", None, Some(&bob));
+    assert!(bn.contains("bob-secret") && !bn.contains("ada-secret"),
+        "bob sees only his own notes: {}", bn);
+
+    // owned stored survives a restart. Sessions do not persist, so log in
+    // again — the account (and its stable id) does, and the notes keyed by
+    // that id come back, still isolated.
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+    let (port2, stop2, join2) = start(dir.clone());
+    let (_, h, _) = req(port2, "POST", "/api/login",
+        Some("{\"email\":\"ada@keep.x\",\"password\":\"p\"}"), None);
+    let ada2 = cookie_of(&h);
+    let (_, _, a2) = req(port2, "GET", "/api/notes", None, Some(&ada2));
+    assert!(a2.contains("ada-secret") && !a2.contains("bob-secret"),
+        "restart kept ada's owned notes, still isolated: {}", a2);
+
+    stop2.store(true, Ordering::Relaxed);
+    join2.join().unwrap();
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -39,7 +39,7 @@ fn t_a2_fixture_keywords_are_all_taught_by_the_reference() {
     let reference_text = support::read_text(&root.join("reference/ashlar.md"));
 
     const KEYWORDS: &[&str] = &[
-        "space", "use", "part", "foreign", "state", "stored", "synced", "append", "deep", "stack",
+        "space", "use", "part", "foreign", "state", "stored", "owned", "append", "deep", "stack",
         "pipe", "reverse", "let", "if", "else", "for", "in", "return",
     ];
 
