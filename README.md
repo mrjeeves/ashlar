@@ -42,7 +42,7 @@ patches in place — across every connected client (`examples/counter`):
 part tally {
   label: text
   state n: number = 0
-  view = () => el("button", { onclick: bump }, [label + ": " + text(n)])
+  view = () => el("button", { class: "count", onclick: bump }, [label + ": " + text(n)])
   bump = () => { n = n + 1 }
 }
 ```
@@ -82,7 +82,7 @@ Every command in the reference's toolchain table exists and is tested:
 | `ashlar check` | compile; diagnostics as corrections (JSONL, `--human` for prose) |
 | `ashlar fix [id]` | apply machine-applicable fixes from the last check |
 | `ashlar build` | check, then write the manifest |
-| `ashlar run [part]` | build, serve, watch: hot reload preserves state |
+| `ashlar run [part] [--port n]` | build, serve, watch: hot reload preserves state; `--port` overrides the bound port |
 | `ashlar fmt` | canonical formatting (comment-preserving, meaning-preserving) |
 | `ashlar rename <name> <new>` | rename a space, part, property, or field — atomically, reversibly |
 | `ashlar rekind <part.prop> <kind>` | change a merge kind across every layer |
@@ -124,7 +124,8 @@ mechanical, and each has teeth:
 | `reference/` | The complete language reference — the source of truth for every language decision. |
 | `docs/` | Vision, requirements, roadmap, diagnostics catalog, and the ADRs (see `docs/README.md`). |
 | `AGENTS.md` | The agent-facing working contract — hierarchy, hard rules, sync duties. Load-bearing (T-META enforces it). |
-| `examples/` | Fourteen complete runnable projects — including `commons` (a full team chat), `ledger` (a real SQLite datastore over the `foreign` boundary), and `locker` (per-user `owned` storage that isolates each user by construction) — compiled, format-checked, AND runtime-driven by the suite. |
+| `examples/` | Fourteen complete runnable projects — including `commons` (a full team chat), `ledger` (a real SQLite datastore over the `foreign` boundary), and `locker` (per-user `owned` storage that isolates each user by construction) — compiled, format-checked, AND runtime-driven by the suite. All wear one dark house style (ADR-0016). |
+| `showcase/` | A live gallery of all fourteen: `serve.sh` runs each on its own port, `index.html` swaps between them in a frame. |
 | `suites/` | Test corpora: the cold-read gate protocol and the loud-failure fixture corpus. |
 | `crates/` | The Rust implementation and its 17 test binaries. |
 

@@ -2,6 +2,7 @@ space foundry
 
 part app {
   port = 8080
+  style = "foundry"
 }
 
 // One named queue is the joint between the API, background worker, and
@@ -42,13 +43,32 @@ part status {
 
 part page {
   route = "/"
-  view = () => el(board, {})
+  view = () => el("div", { class: "stage" }, [el(board, {})])
 }
 
+// The board queues work over the socket and reads the shared queue, so a
+// brief submitted here — or over the HTTP API — patches every open board
+// the moment the worker finishes it.
 part board {
-  view = () => el("main", {}, [
-    el("h2", {}, ["agent foundry"]),
-    el("p", {}, ["waiting: " + text(len(Queue.waiting))]),
-    el("p", {}, ["finished: " + join(Queue.finished, ", ")]),
+  state draft: text = ""
+  view = () => el("div", { class: "card" }, [
+    el("p", { class: "kicker" }, ["background work · §9.7"]),
+    el("h1", {}, ["agent foundry"]),
+    el("p", { class: "lede" }, ["Queue a brief and it returns at once; a worker runs it between requests and pushes the result to every open board."]),
+    el("form", { class: "row", onsubmit: queue }, [
+      el("input", { class: "field", oninput: typed, value: draft, placeholder: "a brief to run" }, []),
+      el("button", { class: "primary" }, ["queue"]),
+    ]),
+    el("div", { class: "stats" }, [
+      el("p", { class: "stat" }, ["waiting: " + text(len(Queue.waiting))]),
+      el("p", { class: "stat done" }, ["finished: " + join(Queue.finished, ", ")]),
+    ]),
   ])
+  typed = (e: std.Event) => {
+    draft = text(e.data.value)
+  }
+  queue = () => {
+    Queue.accept(draft)
+    draft = ""
+  }
 }

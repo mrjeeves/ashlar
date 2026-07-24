@@ -5,6 +5,7 @@ use chat.data
 // `start` is a stack: every layer runs on boot, in `use` order.
 part app {
   port = 8080
+  style = "chat"
   start stack = () => {
     log.info("chat is up")
     return none

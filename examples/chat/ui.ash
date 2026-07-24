@@ -3,7 +3,7 @@ use chat.api
 
 part page {
   route = "/"
-  view = () => el(room, {})
+  view = () => el("div", { class: "stage" }, [el(room, {})])
 }
 
 // The whole interface is two view parts. `room` owns the compose form's
@@ -12,14 +12,16 @@ part page {
 part room {
   state author: text = ""
   state draft: text = ""
-  view = () => el("div", {}, [
-    el("h2", {}, ["ashlar chat"]),
-    el("p", {}, ["messages: " + text(len(chat.data.Store.messages))]),
+  view = () => el("div", { class: "chat" }, [
+    el("header", { class: "head" }, [
+      el("h1", {}, ["ashlar chat"]),
+      el("p", { class: "count" }, ["messages: " + text(len(chat.data.Store.messages))]),
+    ]),
     el(feed, {}),
-    el("form", { onsubmit: send }, [
-      el("input", { oninput: named, value: author, placeholder: "name" }, []),
-      el("input", { oninput: typed, value: draft, placeholder: "say something" }, []),
-      el("button", {}, ["send"]),
+    el("form", { class: "composer", onsubmit: send }, [
+      el("input", { class: "field name", oninput: named, value: author, placeholder: "name" }, []),
+      el("input", { class: "field grow", oninput: typed, value: draft, placeholder: "say something" }, []),
+      el("button", { class: "primary" }, ["send"]),
     ]),
   ])
   named = (e: std.Event) => {
@@ -40,8 +42,8 @@ part room {
 }
 
 part feed {
-  view = () => el("div", {}, rows())
-  rows = () => map(ordered(), (m: chat.data.Message) => el("p", {}, [m.author + ": " + m.body]))
+  view = () => el("div", { class: "feed" }, rows())
+  rows = () => map(ordered(), (m: chat.data.Message) => el("p", { class: "msg" }, [m.author + ": " + m.body]))
   ordered = () => {
     let msgs = chat.data.Store.messages
     return sort(map(keys(msgs), (k: text) => msgs[k]!), (m: chat.data.Message) => m.sent)

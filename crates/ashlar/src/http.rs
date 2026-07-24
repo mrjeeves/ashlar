@@ -644,7 +644,7 @@ pub fn render_response(
             let inner = render_instance(ev, id)?;
             let page = ev.current_page.clone().unwrap_or_default();
             let html = format!(
-                "<!doctype html>\n<html><head><meta charset=\"utf-8\">{}</head><body data-ash-page=\"{}\">{}<script>{}</script></body></html>",
+                "<!doctype html>\n<html><head><meta charset=\"utf-8\"><meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">{}</head><body data-ash-page=\"{}\">{}<script>{}</script></body></html>",
                 style_link(ev), page, inner, CLIENT_JS
             );
             return Ok((200, "text/html".to_string(), html.into_bytes(), vec![]));
