@@ -25,7 +25,8 @@ mod cli {
         ashlar rekind <part.prop> <kind> [path] [--plan]\n  \
         ashlar move <part> <space> [path] [--plan]\n  \
         ashlar radius <full-name> [path]\n  \
-        ashlar vendor <source> [path]\n";
+        ashlar vendor <source> [path]\n  \
+        ashlar foreign check [space] [path]\n";
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum Cmd {
@@ -39,6 +40,7 @@ mod cli {
         Move { part: String, space: String, path: String, plan_only: bool },
         Radius { target: String, path: String },
         Vendor { source: String, path: String },
+        ForeignCheck { space: Option<String>, path: String },
     }
 
     /// Parse the command and its arguments (everything after the binary
@@ -166,6 +168,38 @@ mod cli {
                     path: positionals.get(1).cloned().unwrap_or_else(default_path),
                 })
             }
+            "foreign" => {
+                // `foreign check [space] [path]` (§9.10): prove every declared
+                // foreign name is reachable before a user's request finds out.
+                let mut positionals: Vec<String> = Vec::new();
+                for a in rest {
+                    if a.starts_with("--") {
+                        return Err(format!("unknown flag `{}`", a));
+                    }
+                    positionals.push(a.clone());
+                }
+                match positionals.first().map(|s| s.as_str()) {
+                    Some("check") => {}
+                    Some(other) => return Err(format!("unknown foreign command `{}`", other)),
+                    None => return Err("`foreign` takes a command: `check`".to_string()),
+                }
+                let rest = &positionals[1..];
+                // One argument is a path if it names a directory, else a space.
+                let (space, path) = match rest.len() {
+                    0 => (None, default_path()),
+                    1 => {
+                        let a = rest[0].clone();
+                        if Path::new(&a).is_dir() {
+                            (None, a)
+                        } else {
+                            (Some(a), default_path())
+                        }
+                    }
+                    2 => (Some(rest[0].clone()), rest[1].clone()),
+                    _ => return Err("`foreign check` takes an optional space and path".to_string()),
+                };
+                Ok(Cmd::ForeignCheck { space, path })
+            }
             "run" => {
                 // `run [part] [path] [--port n]` (reference §9.1, §11): one
                 // positional is a part name unless it names a directory on
@@ -285,6 +319,7 @@ mod cli {
             }
             Cmd::Radius { target, path } => run_radius(&path, &target),
             Cmd::Vendor { source, path } => run_vendor(&path, &source),
+            Cmd::ForeignCheck { space, path } => run_foreign_check(&path, space.as_deref()),
         }
     }
 
@@ -729,6 +764,71 @@ mod cli {
         }
     }
 
+    /// `ashlar foreign check [space]` (§9.10, ADR-0017): prove every declared
+    /// foreign name is actually reachable — dlsym each native symbol, or make
+    /// the worker speak the protocol — so an unreachable capability is a
+    /// build-time correction instead of a fault a user's request discovers.
+    fn run_foreign_check(path: &str, only: Option<&str>) -> i32 {
+        let root = Path::new(path);
+        let result = ashlar::check_project(root);
+        if result.has_errors() {
+            eprintln!("the project does not compile; fix that first:");
+            print_diags(&result.diags, true);
+            return 1;
+        }
+
+        // Declared foreign names, grouped by the space that owns them.
+        let mut by_space: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
+        for info in result.program.foreigns.values() {
+            let name = result.program.files[info.file_idx].ast.foreigns[info.foreign_idx]
+                .name
+                .clone();
+            by_space.entry(info.space.clone()).or_default().push(name);
+        }
+        if let Some(space) = only {
+            by_space.retain(|s, _| s == space);
+            if by_space.is_empty() {
+                eprintln!("`{}` declares no foreign functions.", space);
+                return 1;
+            }
+        }
+        if by_space.is_empty() {
+            println!("no foreign declarations in this project.");
+            return 0;
+        }
+
+        let mut failed = false;
+        for (space, names) in &by_space {
+            let reach = ashlar::foreign::check_space(root, space, names);
+            let where_ = if reach.detail.is_empty() {
+                String::new()
+            } else {
+                format!(" ({})", reach.detail)
+            };
+            if reach.problems.is_empty() {
+                println!(
+                    "ok   {} via {}{} — {} name(s) reachable",
+                    space,
+                    reach.via,
+                    where_,
+                    names.len()
+                );
+            } else {
+                failed = true;
+                println!("FAIL {} via {}{}", space, reach.via, where_);
+                for p in &reach.problems {
+                    println!("       {}", p);
+                }
+            }
+        }
+        if failed {
+            1
+        } else {
+            0
+        }
+    }
+
     fn run_fmt(path: &str, check_only: bool) -> i32 {
         let root = Path::new(path);
         let mut changed = 0usize;
@@ -1035,6 +1135,33 @@ mod cli {
                 cmd,
                 Cmd::Run { path: ".".to_string(), part: None, port: Some(9000) }
             );
+        }
+
+        #[test]
+        fn foreign_check_parses_space_and_path() {
+            // `foreign check` with no arguments checks every space here.
+            assert_eq!(
+                parse(&args(&["foreign", "check"])).unwrap(),
+                Cmd::ForeignCheck { space: None, path: ".".to_string() }
+            );
+            // One non-directory argument is a space name, not a path.
+            assert_eq!(
+                parse(&args(&["foreign", "check", "ledger.store"])).unwrap(),
+                Cmd::ForeignCheck {
+                    space: Some("ledger.store".to_string()),
+                    path: ".".to_string()
+                }
+            );
+            assert_eq!(
+                parse(&args(&["foreign", "check", "ledger.store", "proj"])).unwrap(),
+                Cmd::ForeignCheck {
+                    space: Some("ledger.store".to_string()),
+                    path: "proj".to_string()
+                }
+            );
+            // `foreign` alone, or with an unknown sub-command, is a usage error.
+            assert!(parse(&args(&["foreign"])).is_err());
+            assert!(parse(&args(&["foreign", "repair"])).is_err());
         }
 
         #[test]

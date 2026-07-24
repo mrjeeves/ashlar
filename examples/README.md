@@ -11,7 +11,7 @@ Every example wears the same restrained dark skin — one house palette,
 declared per project as `assets/<name>.css` and bound by `class` name
 (§9.4, ADR-0016). To flip through them all at once, run `./showcase/serve.sh`
 (it starts each example on its own port) and open `showcase/index.html`:
-a sidebar of all fourteen with live frames you can swap with a click or the
+a sidebar of all fifteen with live frames you can swap with a click or the
 arrow keys.
 
 ## hello
@@ -163,6 +163,19 @@ without SQLite — and it drives the reactive path too: a board holding only a
 socket is patched live by another client's write. This delivers reactivity
 for a foreign store (ADR-0014); a `stored` database backend and a Postgres
 client remain the proposed next stages.
+
+## abacus
+
+The foreign boundary with **no compiler anywhere** (ADR-0017). `summarize` is
+declared in Ashlar and implemented in ten lines of Python, reached over the
+`worker` transport — a co-process speaking JSON Lines on stdin/stdout, bound in
+`foreign.json`, never in source. There is no shared library, no C ABI, and no
+build step: the whole contract is "read a JSON object per line, answer with
+one." The answer is still shape-checked against the `Summary` data shape at the
+boundary, so a drifting worker faults at the call site rather than leaking bad
+data. Typing re-runs the worker over the socket and patches the figures, and
+`ashlar foreign check` proves the worker speaks the protocol before any request
+does. Needs `python3`; the driving test skips loudly without it.
 
 ## locker
 

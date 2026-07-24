@@ -6,7 +6,7 @@ between the running apps.
 ## Run it
 
 ```
-./showcase/serve.sh          # start all fourteen, each on its own port
+./showcase/serve.sh          # start all fifteen, each on its own port
 open showcase/index.html     # then open the page (file:// is fine)
 ```
 

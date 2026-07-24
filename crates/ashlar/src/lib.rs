@@ -14,6 +14,7 @@ pub mod compose;
 pub mod diag;
 pub mod eval;
 pub mod fixup;
+pub mod foreign;
 pub mod fmt;
 pub mod http;
 pub mod lexer;

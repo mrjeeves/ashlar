@@ -89,12 +89,14 @@ Every command in the reference's toolchain table exists and is tested:
 | `ashlar move <part> <space>` | relocate a part, `use` graph rewritten |
 | `ashlar radius <name>` | print a rename's complete blast radius, touching nothing |
 | `ashlar vendor <source>` | copy a tree in so its spaces resolve (no registry, ever) |
+| `ashlar foreign check` | prove every declared foreign name is reachable before a request finds out |
 
 The runtime is a single zero-dependency binary: hand-rolled HTTP/1.1 and
 WebSockets on one event loop, live views, session auth (salted iterated
 hashing), `stored` persistence, schedules, `spawn`, hot reload, and a
-JSON-over-C-ABI foreign function boundary (`foreign/<space>.so`) — the
-`dlopen` binding is the only `unsafe` in the codebase.
+JSON foreign boundary whose transport is bound in deployment — a native
+library, a worker co-process in any language, or an http service (ADR-0017);
+the `dlopen` path is the only `unsafe` in the codebase.
 
 ## Why it's shaped like this
 
@@ -124,8 +126,8 @@ mechanical, and each has teeth:
 | `reference/` | The complete language reference — the source of truth for every language decision. |
 | `docs/` | Vision, requirements, roadmap, diagnostics catalog, and the ADRs (see `docs/README.md`). |
 | `AGENTS.md` | The agent-facing working contract — hierarchy, hard rules, sync duties. Load-bearing (T-META enforces it). |
-| `examples/` | Fourteen complete runnable projects — including `commons` (a full team chat), `ledger` (a real SQLite datastore over the `foreign` boundary), and `locker` (per-user `owned` storage that isolates each user by construction) — compiled, format-checked, AND runtime-driven by the suite. All wear one dark house style (ADR-0016). |
-| `showcase/` | A live gallery of all fourteen: `serve.sh` runs each on its own port, `index.html` swaps between them in a frame. |
+| `examples/` | Fifteen complete runnable projects — including `commons` (a full team chat), `ledger` (a real SQLite datastore over the `foreign` boundary), `locker` (per-user `owned` storage that isolates each user by construction), and `abacus` (a Python worker, no compiler in sight) — compiled, format-checked, AND runtime-driven by the suite. All wear one dark house style (ADR-0016). |
+| `showcase/` | A live gallery of all fifteen: `serve.sh` runs each on its own port, `index.html` swaps between them in a frame. |
 | `suites/` | Test corpora: the cold-read gate protocol and the loud-failure fixture corpus. |
 | `crates/` | The Rust implementation and its 17 test binaries. |
 

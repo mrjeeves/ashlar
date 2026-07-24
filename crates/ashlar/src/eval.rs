@@ -163,8 +163,9 @@ pub struct Evaluator<'a> {
     pub render_child_seq: usize,
     /// Child instances produced so far in the current render, in order.
     pub render_children: Vec<String>,
-    /// dlopen handles by space, opened lazily.
-    foreign_libs: BTreeMap<String, usize>,
+    /// The foreign boundary (§9.10): resolved bindings, open libraries, and
+    /// running workers. Owns the workspace's only `unsafe` (ADR-0017).
+    pub foreign: crate::foreign::Boundary,
     counter: u64,
 }
 
@@ -192,7 +193,7 @@ impl<'a> Evaluator<'a> {
             current_page: None,
             foreign_root: None,
             style_name: None,
-            foreign_libs: BTreeMap::new(),
+            foreign: crate::foreign::Boundary::new(),
             counter: 0,
         };
         ev.init_state();
@@ -1579,22 +1580,10 @@ impl<'a> Evaluator<'a> {
     }
 }
 
-// Raw dl bindings (glibc; libdl is part of libc on modern systems). The
-// only unsafe in the codebase, confined to the §9.10 boundary.
-extern "C" {
-    fn dlopen(filename: *const std::os::raw::c_char, flags: std::os::raw::c_int) -> *mut std::os::raw::c_void;
-    fn dlsym(handle: *mut std::os::raw::c_void, symbol: *const std::os::raw::c_char) -> *mut std::os::raw::c_void;
-}
-const RTLD_NOW: std::os::raw::c_int = 2;
-
-type ForeignAbi = unsafe extern "C" fn(*const std::os::raw::c_char) -> *mut std::os::raw::c_char;
-
 impl<'a> Evaluator<'a> {
-    /// Call a foreign function (§9.10): the manifest-recorded binding is
-    /// `foreign/<space>.so` under the project root; the C ABI is
-    /// `char* name(const char* args_json)` — arguments as a JSON array,
-    /// return as JSON, decoded and shape-checked at the call site. A
-    /// mismatch is a runtime fault, exactly as the reference states.
+    /// Call a foreign function (§9.10). Arity is checked here, the transport
+    /// is `foreign.rs`'s business, and the returned value is shape-checked at
+    /// the call site — a mismatch is a runtime fault, as the reference states.
     fn invoke_foreign(&mut self, full: &str, args: Vec<V>) -> R {
         let Some(info) = self.program.foreigns.get(full) else {
             return Err(Fault::new(format!("internal: unknown foreign `{}`.", full)));
@@ -1613,54 +1602,19 @@ impl<'a> Evaluator<'a> {
             )));
         }
 
-        let handle = match self.foreign_libs.get(&space) {
-            Some(h) => *h,
-            None => {
-                let Some(root) = &self.foreign_root else {
-                    return Err(Fault::new(format!(
-                        "foreign `{}` is not bound (no project root for foreign libraries).",
-                        full
-                    )));
-                };
-                let path = root.join("foreign").join(format!("{}.so", space));
-                let c_path = std::ffi::CString::new(path.to_string_lossy().as_bytes())
-                    .map_err(|_| Fault::new("internal: bad library path.".to_string()))?;
-                let h = unsafe { dlopen(c_path.as_ptr(), RTLD_NOW) };
-                if h.is_null() {
-                    return Err(Fault::new(format!(
-                        "foreign library `foreign/{}.so` could not be loaded.",
-                        space
-                    )));
-                }
-                self.foreign_libs.insert(space.clone(), h as usize);
-                h as usize
-            }
-        };
-
-        let c_name = std::ffi::CString::new(name.as_bytes())
-            .map_err(|_| Fault::new("internal: bad symbol name.".to_string()))?;
-        let sym = unsafe { dlsym(handle as *mut std::os::raw::c_void, c_name.as_ptr()) };
-        if sym.is_null() {
+        // How the capability is reached is a deployment fact, resolved by
+        // `foreign.rs` (§9.10, ADR-0017): a native library, a worker
+        // co-process, or an http service — all speaking one JSON envelope.
+        let Some(root) = self.foreign_root.clone() else {
             return Err(Fault::new(format!(
-                "foreign `{}` has no symbol `{}` in `foreign/{}.so`.",
-                full, name, space
+                "foreign `{}` is not bound (no project root for foreign bindings).",
+                full
             )));
-        }
-        let f: ForeignAbi = unsafe { std::mem::transmute(sym) };
-
-        let args_json = to_json(&V::List(args));
-        let c_args = std::ffi::CString::new(args_json)
-            .map_err(|_| Fault::new("internal: argument encoding.".to_string()))?;
-        let out = unsafe { f(c_args.as_ptr()) };
-        if out.is_null() {
-            return Err(Fault::new(format!("foreign `{}` returned nothing.", full)));
-        }
-        let text = unsafe { std::ffi::CStr::from_ptr(out) }
-            .to_string_lossy()
-            .to_string();
-        let value = from_json(&text).ok_or_else(|| {
-            Fault::new(format!("foreign `{}` returned malformed JSON.", full))
-        })?;
+        };
+        let value = self
+            .foreign
+            .call(&root, &space, &name, args)
+            .map_err(Fault::new)?;
         if !value_fits_shape(&value, &ret_shape) {
             return Err(Fault::new(format!(
                 "foreign `{}` returned a value that does not fit `{}`.",

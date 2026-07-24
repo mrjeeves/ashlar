@@ -876,6 +876,53 @@ fn t_examples_ledger_persists_to_sqlite() {
 }
 
 #[test]
+fn t_examples_abacus_computes_through_a_python_worker() {
+    // The worker transport (ADR-0017): a capability implemented in Python and
+    // reached over JSON Lines — no shared library, no C ABI, no compiler in
+    // the project at all. The answer is shape-checked against `Summary` at
+    // the boundary like any other foreign return.
+    if std::process::Command::new("python3").arg("-V").output().is_err() {
+        eprintln!("SKIP: t_examples_abacus needs python3 (the worker's language)");
+        return;
+    }
+    let dir = staged("abacus");
+    let (port, stop, join) = start(dir.clone());
+
+    // The page renders figures computed by Python's `statistics` module.
+    let (status, _, page) = req(port, "GET", "/", None, None);
+    assert_eq!(status, 200);
+    assert!(page.contains("mean 5"), "the worker's mean reaches the view: {}", page);
+    assert!(page.contains("median 4.5"), "{}", page);
+    assert!(page.contains("spread 2"), "{}", page);
+
+    // Same capability over HTTP, same worker (§9.2).
+    let (status, _, body) =
+        req(port, "POST", "/api/summary", Some("{\"entry\":\"10 20 30\"}"), None);
+    assert_eq!(status, 200);
+    assert!(body.contains("\"mean\":20"), "{}", body);
+    assert!(body.contains("\"spread\":8.165"), "the stdev crosses the boundary: {}", body);
+
+    // Typing re-runs the worker over the socket and patches the figures.
+    let (_, _, html) = req(port, "GET", "/", None, None);
+    let (inst, typed) = event_target(&html, "oninput", 0).unwrap();
+    let mut ws = ws_open(port);
+    ws_send(
+        &mut ws,
+        &format!(
+            "{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"oninput\",\"value\":\"1 2 3 4\"}}}}",
+            inst, typed
+        ),
+    );
+    let patch = ws_expect(&mut ws, "mean 2.5", 6);
+    assert!(patch.contains("median 2.5"), "the worker answers over the socket: {}", patch);
+    drop(ws);
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn t_examples_locker_scopes_storage_per_user() {
     // `owned stored` gives each signed-in user their own isolated, persisted
     // data (ADR-0015). Proven here: anonymous access is refused, two users

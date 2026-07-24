@@ -806,6 +806,245 @@ char* lies(const char* args) {
 }
 
 #[test]
+fn t_g_foreign_worker_transport_and_error_envelope() {
+    // covers ADR-0017: a capability backed by a co-process — no shared
+    // library, no C ABI, no compiler. Also the shared result envelope
+    // (`{"error": ...}` is a fault) and worker lifecycle (a dead worker is
+    // reaped and the NEXT call respawns it — restart, never failover).
+    if std::process::Command::new("python3").arg("-V").output().is_err() {
+        eprintln!("t_g_foreign_worker: no python3; skipping");
+        return;
+    }
+    let app = r#"space tools
+
+foreign shout: (text) -> text
+foreign refuse: (text) -> text
+foreign boom: (text) -> text
+
+part Server {
+  port = 0
+}
+
+part say {
+  route = "/say/{word}"
+  handle pipe = (req: std.Request) => shout(req.params["word"]!)
+}
+
+part nope {
+  route = "/nope"
+  handle pipe = (req: std.Request) => refuse("x")
+}
+
+part die {
+  route = "/die"
+  handle pipe = (req: std.Request) => boom("x")
+}
+"#;
+    // The entire foreign implementation: read a line, answer a line.
+    let worker = r#"
+import json, sys
+for line in sys.stdin:
+    line = line.strip()
+    if not line:
+        continue
+    r = json.loads(line)
+    call = r["call"]
+    if call == "shout":
+        print(json.dumps({"ok": r["args"][0].upper()}), flush=True)
+    elif call == "refuse":
+        print(json.dumps({"error": "the worker declined"}), flush=True)
+    elif call == "boom":
+        sys.exit(1)
+    else:
+        print(json.dumps({"error": "no such call " + call}), flush=True)
+"#;
+    let root = fixture("foreign_worker", &[("app.ash", app)]);
+    std::fs::create_dir_all(root.join("foreign")).unwrap();
+    std::fs::write(root.join("foreign/tools.py"), worker).unwrap();
+    std::fs::write(
+        root.join("foreign.json"),
+        r#"{"tools":{"via":"worker","run":["python3","foreign/tools.py"]}}"#,
+    )
+    .unwrap();
+
+    let (port, stop, join) = start(root);
+
+    // The capability works, in a language that never saw the C ABI.
+    let (status, body) = http_get(port, "/say/stone");
+    assert_eq!((status, body.as_str()), (200, "STONE"), "worker transport");
+
+    // An `error` envelope is a fault carrying the worker's own message —
+    // diagnosable, not "returned malformed JSON".
+    let (status, body) = http_get(port, "/nope");
+    assert_eq!(status, 500);
+    assert!(body.contains("the worker declined"), "{}", body);
+
+    // The worker dies mid-call: loud fault, no silent fallback...
+    let (status, _) = http_get(port, "/die");
+    assert_eq!(status, 500, "a dead worker faults");
+    // ...and the next call gets a fresh one.
+    let (status, body) = http_get(port, "/say/again");
+    assert_eq!((status, body.as_str()), (200, "AGAIN"), "the worker respawns");
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}
+
+#[test]
+fn t_g_foreign_http_transport() {
+    // covers ADR-0017: a capability that is already a service. The same
+    // envelope, over a socket instead of a symbol.
+    let listener = std::net::TcpListener::bind(("127.0.0.1", 0)).unwrap();
+    let service_port = listener.local_addr().unwrap().port();
+    let serving = Arc::new(AtomicBool::new(true));
+    let flag = serving.clone();
+    let service = std::thread::spawn(move || {
+        for conn in listener.incoming() {
+            if !flag.load(Ordering::Relaxed) {
+                break;
+            }
+            let Ok(mut c) = conn else { break };
+            let mut buf = [0u8; 2048];
+            let n = c.read(&mut buf).unwrap_or(0);
+            let text = String::from_utf8_lossy(&buf[..n]).to_string();
+            // Echo the call name back so the test proves the envelope
+            // reached the service intact.
+            let called = text.contains("\"call\":\"ask\"");
+            let body = if called {
+                "{\"ok\":\"the service answered\"}"
+            } else {
+                "{\"error\":\"unexpected envelope\"}"
+            };
+            let resp = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = c.write_all(resp.as_bytes());
+        }
+    });
+
+    let app = r#"space remote
+
+foreign ask: (text) -> text
+
+part Server {
+  port = 0
+}
+
+part page {
+  route = "/"
+  handle pipe = (req: std.Request) => ask("hello")
+}
+"#;
+    let root = fixture("foreign_http", &[("app.ash", app)]);
+    std::fs::write(
+        root.join("foreign.json"),
+        format!(
+            r#"{{"remote":{{"via":"http","url":"http://127.0.0.1:{}/rpc"}}}}"#,
+            service_port
+        ),
+    )
+    .unwrap();
+
+    let (port, stop, join) = start(root);
+    let (status, body) = http_get(port, "/");
+    assert_eq!((status, body.as_str()), (200, "the service answered"));
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+
+    serving.store(false, Ordering::Relaxed);
+    let _ = std::net::TcpStream::connect(("127.0.0.1", service_port));
+    let _ = service.join();
+}
+
+#[test]
+fn t_g_foreign_native_symbol_alias_and_free() {
+    // covers ADR-0017: an existing library can be bound as-is — an arbitrary
+    // path plus a symbol alias, so the foreign world keeps its own names —
+    // and a library that exports `ashlar_free` gets its buffer back.
+    if std::process::Command::new("cc").arg("--version").output().is_err() {
+        eprintln!("t_g_foreign_alias: no C compiler; skipping");
+        return;
+    }
+    let app = r#"space vendor
+
+foreign greet: (text) -> text
+foreign frees: (text) -> number
+
+part Server {
+  port = 0
+}
+
+part hi {
+  route = "/hi"
+  handle pipe = (req: std.Request) => greet("world")
+}
+
+part freed {
+  route = "/freed"
+  handle pipe = (req: std.Request) => frees("x")
+}
+"#;
+    // The library keeps ITS names; Ashlar binds them by alias. `ashlar_free`
+    // counts how many buffers the runtime handed back.
+    let c_src = r#"
+#include <stdlib.h>
+#include <stdio.h>
+static int freed = 0;
+char* vendor_greet_v2(const char* args) {
+    (void)args;
+    char* out = malloc(32);
+    snprintf(out, 32, "\"hello there\"");
+    return out;
+}
+char* vendor_freed_count(const char* args) {
+    (void)args;
+    char* out = malloc(32);
+    snprintf(out, 32, "%d", freed);
+    return out;
+}
+void ashlar_free(char* p) { freed++; free(p); }
+"#;
+    let root = fixture("foreign_alias", &[("app.ash", app)]);
+    std::fs::create_dir_all(root.join("libs")).unwrap();
+    std::fs::write(root.join("v.c"), c_src).unwrap();
+    let out = std::process::Command::new("cc")
+        .args(["-shared", "-fPIC", "-o"])
+        .arg(root.join("libs/vendor-1.2.so"))
+        .arg(root.join("v.c"))
+        .output()
+        .unwrap();
+    assert!(out.status.success(), "cc: {}", String::from_utf8_lossy(&out.stderr));
+    // A path the derivation rule would never guess, and names that are not
+    // the Ashlar names.
+    std::fs::write(
+        root.join("foreign.json"),
+        r#"{"vendor":{"via":"native","library":"libs/vendor-1.2.so",
+             "symbols":{"greet":"vendor_greet_v2","frees":"vendor_freed_count"}}}"#,
+    )
+    .unwrap();
+
+    let (port, stop, join) = start(root);
+
+    let (status, body) = http_get(port, "/hi");
+    assert_eq!((status, body.as_str()), (200, "hello there"), "alias + explicit path");
+    let (status, _) = http_get(port, "/hi");
+    assert_eq!(status, 200);
+
+    // Both greets have completed, so both buffers came back. (The count is
+    // read INSIDE the library before its own buffer is freed, so it sees
+    // exactly the two prior calls — without the hook it would see zero.)
+    let (status, body) = http_get(port, "/freed");
+    assert_eq!(status, 200);
+    let count: i64 = body.trim().parse().unwrap_or(-1);
+    assert_eq!(count, 2, "ashlar_free must be called once per returned buffer");
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}
+
+#[test]
 fn t_g_instance_start_subscribes_and_unmount_unsubscribes() {
     // covers: reference 9.5 — "`subscribe` in a view part's `start stack`
     // subscribes that instance and unsubscribes it automatically when the
