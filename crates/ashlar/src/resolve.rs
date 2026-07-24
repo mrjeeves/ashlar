@@ -1354,7 +1354,7 @@ impl<'a> Walk<'a> {
                 )
                 .with_fix(
                     format!(
-                        "Declare `{}` with `state`, `stored`, or `synced` on its base layer, or compute a new value instead.",
+                        "Declare `{}` with `state` or `stored` on its base layer, or compute a new value instead.",
                         name
                     ),
                     vec![],

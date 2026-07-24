@@ -446,7 +446,7 @@ fn t_examples_poll_channel_feeds_instances() {
 fn t_examples_pong_syncs_across_two_windows() {
     // Two pages, two sockets: A starting the game must flip B's button
     // and animate B's ball; B pausing must reach A. The whole game is
-    // one synced state — windows are just observers with sliders.
+    // one shared state — windows are just observers with sliders.
     let dir = staged("pong");
     let (port, stop, join) = start(dir.clone());
 
@@ -824,5 +824,57 @@ fn t_examples_ledger_persists_to_sqlite() {
     stop2.store(true, Ordering::Relaxed);
     join2.join().unwrap();
     let _ = std::fs::remove_file(&db);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn t_examples_locker_scopes_storage_per_user() {
+    // `owned stored` gives each signed-in user their own isolated, persisted
+    // data (ADR-0015). Proven here: anonymous access is refused, two users
+    // never see each other's notes, and the data survives a restart keyed by
+    // the persisted account id.
+    let dir = staged("locker");
+    let (port, stop, join) = start(dir.clone());
+
+    // Anonymous cannot reach owned storage — the `allow` guard rejects it
+    // before the read would even fault.
+    let (anon, _, _) = req(port, "GET", "/api/notes", None, None);
+    assert_eq!(anon, 403, "anonymous is refused the owned read");
+
+    // Two users sign up; each gets a session.
+    let (_, ha, _) = req(port, "POST", "/api/signup",
+        Some("{\"email\":\"ada@keep.x\",\"password\":\"p\"}"), None);
+    let ada = cookie_of(&ha);
+    let (_, hb, _) = req(port, "POST", "/api/signup",
+        Some("{\"email\":\"bob@keep.x\",\"password\":\"p\"}"), None);
+    let bob = cookie_of(&hb);
+
+    // Each keeps a different note in their own locker.
+    req(port, "POST", "/api/keep", Some("{\"note\":\"ada-secret\"}"), Some(&ada));
+    req(port, "POST", "/api/keep", Some("{\"note\":\"bob-secret\"}"), Some(&bob));
+
+    // Each sees ONLY their own — the owned isolation, by construction.
+    let (_, _, an) = req(port, "GET", "/api/notes", None, Some(&ada));
+    assert!(an.contains("ada-secret") && !an.contains("bob-secret"),
+        "ada sees only her own notes: {}", an);
+    let (_, _, bn) = req(port, "GET", "/api/notes", None, Some(&bob));
+    assert!(bn.contains("bob-secret") && !bn.contains("ada-secret"),
+        "bob sees only his own notes: {}", bn);
+
+    // owned stored survives a restart. Sessions do not persist, so log in
+    // again — the account (and its stable id) does, and the notes keyed by
+    // that id come back, still isolated.
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+    let (port2, stop2, join2) = start(dir.clone());
+    let (_, h, _) = req(port2, "POST", "/api/login",
+        Some("{\"email\":\"ada@keep.x\",\"password\":\"p\"}"), None);
+    let ada2 = cookie_of(&h);
+    let (_, _, a2) = req(port2, "GET", "/api/notes", None, Some(&ada2));
+    assert!(a2.contains("ada-secret") && !a2.contains("bob-secret"),
+        "restart kept ada's owned notes, still isolated: {}", a2);
+
+    stop2.store(true, Ordering::Relaxed);
+    join2.join().unwrap();
     let _ = std::fs::remove_dir_all(&dir);
 }

@@ -8,7 +8,7 @@ part app {
 // (§9.7). The bump is pushed to every connected view that read it —
 // server-driven reactivity, no user event anywhere.
 part Clock {
-  synced beats: number = 0
+  state beats: number = 0
   every = "200ms"
   run = () => {
     beats = beats + 1

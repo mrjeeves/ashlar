@@ -598,7 +598,36 @@ fn ws_read_frame(s: &mut TcpStream) -> String {
 }
 
 #[test]
-fn t_g4_synced_state_broadcasts_across_clients() {
+fn t_g_owned_read_without_a_user_faults_loud() {
+    // covers: G4 (per-user `owned` state), reference §9.3. An `owned` value
+    // has no shared fallback — reading it with no signed-in user is a
+    // runtime fault (500), never a silently shared value.
+    let app = r#"space own
+
+part Store {
+  owned stored secret: text = "hidden"
+}
+
+part peek {
+  route = "/peek"
+  handle pipe = (req: std.Request) => Store.secret
+}
+
+part app {
+  port = 0
+}
+"#;
+    let root = fixture("ownedfault", &[("app.ash", app)]);
+    let (port, stop, join) = start(root);
+    let (status, _, body) = http_req_full(port, "GET", "/peek", None, None);
+    assert_eq!(status, 500, "an owned read with no user must fault, not leak");
+    assert!(!body.contains("hidden"), "the owned value must not leak in the fault: {}", body);
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}
+
+#[test]
+fn t_g4_shared_state_broadcasts_across_clients() {
     // covers: G4 (server-synchronized reactive state), reference 9.3/9.4
     let app = r#"space live
 
@@ -608,18 +637,18 @@ part Server {
 
 part board {
   route = "/"
-  synced total: number = 0
+  state total: number = 0
   view = () => el("button", { onclick: bump }, ["total: " + text(total)])
   bump = () => { total = total + 1 }
 }
 "#;
-    let root = fixture("synced", &[("app.ash", app)]);
+    let root = fixture("shared", &[("app.ash", app)]);
     let (port, stop, join) = start(root);
 
     // Two browsers load the page: two instances of `board`, each reading
-    // the same synced singleton... per-instance? `synced total` on a view
-    // part is per-instance state; cross-client sync needs the SINGLETON
-    // read. Use a second part holding the singleton instead.
+    // the same shared singleton. `state total` on a VIEW part would be
+    // per-instance; cross-client broadcast needs the SINGLETON read, so the
+    // counter lives in a second, non-view part.
     let (_, _, html_a) = http_req_full(port, "GET", "/", None, None);
     let (_, _, html_b) = http_req_full(port, "GET", "/", None, None);
     let ia = attr_of(&html_a, "data-ash-instance").unwrap();
@@ -654,7 +683,7 @@ fn t_g4_singleton_state_read_by_views_broadcasts() {
     let app = r#"space live
 
 part Tally {
-  synced total: number = 0
+  state total: number = 0
   bump = () => { total = total + 1 }
 }
 
@@ -1142,7 +1171,7 @@ part Server {{
 }}
 
 part Feed {{
-  synced body: text = ""
+  state body: text = ""
   grow = () => {{ body = body + "{}" }}
 }}
 
@@ -1412,7 +1441,7 @@ part Server {
 }
 
 part Mounts {
-  synced count: number = 0
+  state count: number = 0
   bump = () => { count = count + 1 }
 }
 
@@ -1485,7 +1514,7 @@ part Server {
 }
 
 part Store {
-  synced n: number = 0
+  state n: number = 0
   stored blob: text = ""
   bump = () => { n = n + 1 }
   seed = (b: text) => { blob = b }
@@ -1527,7 +1556,7 @@ part seeder {
     ws_send_frame(&mut stalled, &format!("{{\"page\":\"{}\"}}", page));
     std::thread::sleep(std::time::Duration::from_millis(40));
 
-    // Bump the synced counter many times: each re-render broadcasts a
+    // Bump the shared counter many times: each re-render broadcasts a
     // 256 KiB patch to the stalled peer, far past the 64 MiB bound. The
     // server must keep answering plain HTTP the whole time.
     for k in 0..400 {

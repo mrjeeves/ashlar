@@ -286,11 +286,13 @@ impl Printer {
     fn prop(&mut self, p: &Prop) {
         let line = p.name_span.start.line;
         self.open_line(line);
+        if p.owned {
+            self.out.push_str("owned ");
+        }
         if let Some((s, _)) = &p.storage {
             self.out.push_str(match s {
                 Storage::State => "state ",
                 Storage::Stored => "stored ",
-                Storage::Synced => "synced ",
             });
         }
         self.out.push_str(&p.name);
@@ -661,7 +663,7 @@ fn prec(e: &Expr) -> u8 {
 /// including reserved words, which would re-lex as keywords — stays quoted.
 fn is_bare_key(k: &str) -> bool {
     const RESERVED: &[&str] = &[
-        "space", "use", "part", "foreign", "state", "stored", "synced", "append", "deep",
+        "space", "use", "part", "foreign", "state", "stored", "owned", "append", "deep",
         "stack", "pipe", "reverse", "let", "if", "else", "for", "in", "return", "true",
         "false", "none", "and", "or", "not",
     ];

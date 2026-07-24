@@ -36,6 +36,7 @@ pub const E025_BAD_ASSIGN: Code = ("E025", "A4");
 pub const E026_EVERY_NO_RUN: Code = ("E026", "G4");
 pub const E027_STORAGE_CHANGED: Code = ("E027", "C5");
 pub const E028_UNMERGEABLE: Code = ("E028", "C4");
+pub const E029_OWNED_NEEDS_STORAGE: Code = ("E029", "A4");
 pub const W001_UNORDERED_LAYERS: Code = ("W001", "C3");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

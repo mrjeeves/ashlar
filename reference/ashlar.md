@@ -32,7 +32,7 @@ same fix. Blocks are enclosed in `{ }`. Indentation is not significant; the
 formatter (`ashlar fmt`) canonicalizes it to two spaces. Commas separate items
 inside `( )`, `[ ]`, and inline `{ }` literals; a trailing comma is allowed.
 
-Reserved words: `space use part foreign state stored synced append deep stack
+Reserved words: `space use part foreign state stored owned append deep stack
 pipe reverse let if else for in return true false none and or not`. A
 reserved word cannot name anything. The shape names of §5 (`text`, `number`,
 `bool`, `data`) are recognized only in shape positions and are ordinary names
@@ -131,15 +131,16 @@ deliberately.
 A property is declared as:
 
 ```
-[state|stored|synced] name [kind [reverse]] [: shape] [= expression]
+[owned] [state|stored] name [kind [reverse]] [: shape] [= expression]
 ```
 
 - With `= expression` and no storage word, the property is a **value
   property**: a build-time fact, immutable at runtime.
 - With a shape and no `=`, it is a **field**: data shapes and view parts
   declare fields; a field with `= expression` has a default.
-- With `state`, `stored`, or `synced`, it is a **state property** (§9.3):
-  runtime-mutable, initial value required.
+- With `state` or `stored`, optionally prefixed `owned` (§9.3), it is a
+  **state property**: runtime-mutable, initial value required. `owned`
+  without a storage word is a compile error.
 
 Within one part, each property name is declared at most once per layer.
 
@@ -428,16 +429,17 @@ is a compile error naming both.
 
 ### 9.3 State
 
-State properties are the runtime-mutable data of a part, in three storage
-classes:
+State properties are the runtime-mutable data of a part. Two axes describe
+one: its **lifetime** — `state` (in memory) or `stored` (on disk) — and its
+**scope** — shared by everyone, or `owned` (per user).
 
 ```ash
 space chat.data
 
 part Store {
-  state draft: text = ""             // in memory
-  stored messages: {text: chat.data.Message} = {}   // on disk
-  synced online: number = 0          // pushed to connected views
+  state draft: text = ""                            // in memory, shared
+  stored messages: {text: chat.data.Message} = {}   // on disk, shared
+  owned stored seen: number = 0                      // on disk, per user
 }
 ```
 
@@ -445,8 +447,16 @@ part Store {
 - `stored` — persisted by the runtime's embedded store, keyed by the
   property's full name; survives restarts. Values are validated against the
   current shape at startup, and a mismatch is a startup error.
-- `synced` — like `state`, and every change is pushed to all connected
-  clients whose views read it.
+- `owned` — a modifier before `state` or `stored`: the value is scoped to
+  the current user, so each signed-in user has their own, isolated from
+  every other by construction. Reading or writing an `owned` property with
+  no user in scope — an anonymous request, or a scheduled task, `spawn`, or
+  `start` stack — is a runtime fault (§9.9), never a silently shared value.
+
+Every state property is reactive, and because views render on the server
+with no client code (§9.4) that reach is universal: any view that read a
+value re-renders when it changes. A shared value reaches every client's
+views; an `owned` value reaches only its own user's.
 
 Assignment (`name = expression`) rebinds a state property. Values themselves
 are immutable: to change a list or map, assign a new one
@@ -454,8 +464,7 @@ are immutable: to change a list or map, assign a new one
 appear in literals; use `put`: `messages = put(messages, id, m)`). Only
 functions declared in layers of the owning part may assign its state
 properties; other parts read them by name, or call a function property that
-assigns. Every read is reactive: views and `synced` propagation observe
-reads automatically.
+assigns. Every read is reactive: views observe reads automatically.
 
 ### 9.4 Views
 
@@ -519,8 +528,8 @@ subscribe(channel: text, handler)   // handler: (message: data) => ...
 
 `subscribe` in a view part's `start stack` subscribes that instance and
 unsubscribes it automatically when the instance unmounts; anywhere else the
-subscription lives for the process. `synced` state is built on the same
-mechanism and needs no explicit channel.
+subscription lives for the process. Cross-client reactivity (§9.3) rides
+the same broadcast internally and needs no explicit channel.
 
 ### 9.6 Auth
 

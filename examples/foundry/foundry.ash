@@ -10,7 +10,7 @@ part app {
 // completed result into every connected board.
 part Queue {
   state waiting: [text] = []
-  synced finished: [text] = []
+  state finished: [text] = []
   accept = (brief: text) => {
     waiting = [...waiting, brief]
     spawn(() => finish())

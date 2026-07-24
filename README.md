@@ -124,7 +124,7 @@ mechanical, and each has teeth:
 | `reference/` | The complete language reference — the source of truth for every language decision. |
 | `docs/` | Vision, requirements, roadmap, diagnostics catalog, and the ADRs (see `docs/README.md`). |
 | `AGENTS.md` | The agent-facing working contract — hierarchy, hard rules, sync duties. Load-bearing (T-META enforces it). |
-| `examples/` | Thirteen complete runnable projects — including `commons`, a full team chat, and `ledger`, whose datastore is a real SQLite database reached across the `foreign` boundary — compiled, format-checked, AND runtime-driven by the suite. |
+| `examples/` | Fourteen complete runnable projects — including `commons` (a full team chat), `ledger` (a real SQLite datastore over the `foreign` boundary), and `locker` (per-user `owned` storage that isolates each user by construction) — compiled, format-checked, AND runtime-driven by the suite. |
 | `suites/` | Test corpora: the cold-read gate protocol and the loud-failure fixture corpus. |
 | `crates/` | The Rust implementation and its 17 test binaries. |
 
