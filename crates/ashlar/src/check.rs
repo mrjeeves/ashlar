@@ -2331,6 +2331,24 @@ mod tests {
     }
 
     #[test]
+    fn foreign_react_collection_must_resolve() {
+        // A reactive `reads`/`writes` naming no part is E001 — a typo must
+        // not silently break reactivity (§9.10, §9.3).
+        let r = check_sources(vec![(
+            "t.ash".to_string(),
+            "space s\n\nforeign put: (x: text) -> bool writes Bogus\n".to_string(),
+        )]);
+        assert!(r.diags.iter().any(|d| d.id == "E001"), "{:?}", r.diags);
+        // A declared data shape resolves clean.
+        let r = check_sources(vec![(
+            "t.ash".to_string(),
+            "space s\n\npart Entry {\n  x: text\n}\n\nforeign all: () -> [Entry] reads Entry\n"
+                .to_string(),
+        )]);
+        assert!(!r.diags.iter().any(|d| d.id == "E001"), "{:?}", r.diags);
+    }
+
+    #[test]
     fn if_expr_branch_mismatch() {
         let d = e006(
             "space a\n\npart W {\n  go = (b: bool) => {\n    let x = if b { \"t\" } else { 2 }\n    return x\n  }\n}\n",

@@ -2,7 +2,8 @@
 
 Date: 2026-07-23
 
-Status: proposed
+Status: proposed — a reactive-foreign bridge is delivered (see "Delivered"
+below); the `stored` database backend and the Postgres client remain proposed.
 
 ## Context
 
@@ -159,6 +160,19 @@ its own proof and its own ADR before build.
 3. **Scale** — multi-process + `LISTEN`/`NOTIFY` cache coherence. Proof: two
    processes, one DB, a change in one appears in the other. Its own ADR
    first.
+
+**Delivered 2026-07-24 — reactivity via the foreign boundary.** Ahead of the
+`stored` backend, the "collection is the table, the Shape is the schema" model
+(§2) shipped as a reactive annotation on `foreign` itself: `reads <Shape>`
+makes a call a §9.3 dependency edge, `writes <Shape>` invalidates that
+collection. A store reached over `foreign` (the SQLite `ledger`) is now live —
+a write from any client patches every open board — with **no new threads, no
+`Rc`→`Arc`, no new `unsafe`, and no `stored` backend yet**. It reuses the
+reactive graph wholesale: the write calls `dirty_readers`, the read calls
+`record_read`, the same edges `stored` uses. A typo'd collection is E001, so
+reactivity can't silently break. The `ledger` example is driven for
+cross-client live update over SQL (T-Examples). Stages 2–3 (the `stored` DB
+backend, the non-blocking Postgres client, scale) remain proposed.
 
 ## Consequences
 

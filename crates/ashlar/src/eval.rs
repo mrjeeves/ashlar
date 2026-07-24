@@ -1603,6 +1603,7 @@ impl<'a> Evaluator<'a> {
         let decl = &self.program.files[info.file_idx].ast.foreigns[info.foreign_idx];
         let name = decl.name.clone();
         let ret_shape = decl.ret.clone();
+        let react = decl.react.clone();
         if args.len() != decl.params.len() {
             return Err(Fault::new(format!(
                 "foreign `{}` takes {} argument(s), got {}.",
@@ -1667,7 +1668,40 @@ impl<'a> Evaluator<'a> {
                 shape_name(&ret_shape)
             )));
         }
+        // A reactive foreign joins the §9.3 dependency graph exactly like
+        // state: a `reads` call records this render as a reader of the
+        // collection, a `writes` call marks every reader dirty so it
+        // re-renders and patches — the same edge that makes `stored` live
+        // (ADR-0014). The store lives in SQL; reactivity is the runtime's.
+        if let Some(r) = &react {
+            let key = format!("collection:{}", self.resolve_collection(&space, &r.collection));
+            if r.writes {
+                self.dirty_readers(&key);
+            } else {
+                self.record_read(&key);
+            }
+        }
         Ok(value)
+    }
+
+    /// Resolve a foreign's reactive collection name to a stable reactivity
+    /// key. A bare `Entry` resolves in the foreign's own space, then by
+    /// unique bare part, so `reads`/`writes` of the same shape — even across
+    /// spaces that `use` it — key against one collection.
+    fn resolve_collection(&self, space: &str, collection: &[String]) -> String {
+        let bare = crate::ast::name_to_string(collection);
+        let qualified = format!("{}.{}", space, bare);
+        if self.composed.contains_key(&qualified) {
+            return qualified;
+        }
+        if collection.len() == 1 {
+            if let Some(full) = self.unique_bare_part(&bare) {
+                return full;
+            }
+        } else if self.composed.contains_key(&bare) {
+            return bare;
+        }
+        bare
     }
 
     fn open_session(&mut self, user_id: &str) {

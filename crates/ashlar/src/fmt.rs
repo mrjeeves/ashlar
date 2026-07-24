@@ -280,6 +280,10 @@ impl Printer {
         }
         self.out.push_str(") -> ");
         self.out.push_str(&shape_text(&d.ret));
+        if let Some(r) = &d.react {
+            self.out.push_str(if r.writes { " writes " } else { " reads " });
+            self.out.push_str(&crate::ast::name_to_string(&r.collection));
+        }
         self.close_line(line);
     }
 
