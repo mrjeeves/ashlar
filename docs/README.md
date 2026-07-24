@@ -9,6 +9,8 @@ The paper trail, in the order the hierarchy reads it:
 | [`roadmap.md`](roadmap.md) | The honest "not yet" ledger. Currently empty — every item is delivered, dated, and moved off. |
 | [`diagnostics.md`](diagnostics.md) | The stable diagnostic catalog: E001–E028 + W001, each with its requirement, stage, cause, and correction. |
 | [`decisions/`](decisions/) | ADRs 0001–0013: what was decided, why, and what it cost — from the name itself to the stylesheet boundary, view reconciliation, semantic freedom and derivability, and the origin-not-edge deployment posture. |
+| [`ontology.md`](ontology.md) | An essay reading Ashlar as a philosophical ontology: the clean metaphysical reading, six strains, and where the metaphysics actually lives. Reflective, not normative. |
+| [`philosophical_edges.md`](philosophical_edges.md) | The essay's open questions in working form — philosophical guidance for the ongoing design. |
 
 Agents working in this repo start at [`../AGENTS.md`](../AGENTS.md).
 The language reference lives in [`../reference/ashlar.md`](../reference/ashlar.md)
