@@ -2,6 +2,7 @@ space pong
 
 part app {
   port = 8080
+  style = "pong"
 }
 
 // The whole game runs on the server: a 20fps schedule advances the
@@ -66,49 +67,52 @@ part Game {
 
 part page {
   route = "/"
-  view = () => el(board, {})
+  view = () => el("div", { class: "stage" }, [el(board, {})])
 }
 
 // Each control is its OWN view instance on purpose: the field re-renders
 // twenty times a second, but your slider only re-renders when a paddle
 // moves — so a drag in progress is never replaced mid-gesture.
 part board {
-  view = () => el("div", {}, [
+  view = () => el("div", { class: "panel" }, [
     el(field, {}),
-    el("div", {}, [el(lefthand, {}), el(switch, {}), el(righthand, {})]),
+    el("div", { class: "controls" }, [el(lefthand, {}), el(switch, {}), el(righthand, {})]),
   ])
 }
 
+// The field's inner boxes are placed by inline geometry — those pixel
+// coordinates are game state, not appearance, so they belong on the
+// element, not in a sheet (contrast the class-bound chrome around it).
 part field {
-  view = () => el("div", {}, [
-    el("h2", {}, ["pong — " + text(Game.score_l) + " : " + text(Game.score_r)]),
-    el("div", { style: box() }, [
+  view = () => el("div", { class: "arena" }, [
+    el("h2", { class: "score" }, ["pong — " + text(Game.score_l) + " : " + text(Game.score_r)]),
+    el("div", { class: "box", style: box() }, [
       el("div", { style: ball() }, []),
       el("div", { style: paddle(4, Game.paddle_l) }, []),
       el("div", { style: paddle(388, Game.paddle_r) }, []),
     ]),
   ])
-  box = () => "position:relative;width:400px;height:240px;background:#123;overflow:hidden"
+  box = () => "position:relative;width:400px;height:240px;background:#0c1020;overflow:hidden;border-radius:12px"
   ball = () => "position:absolute;width:10px;height:10px;border-radius:5px;background:#fff;left:" + text(Game.ball_x) + "px;top:" + text(Game.ball_y) + "px"
-  paddle = (x: number, y: number) => "position:absolute;width:8px;height:60px;background:#6cf;left:" + text(x) + "px;top:" + text(y) + "px"
+  paddle = (x: number, y: number) => "position:absolute;width:8px;height:60px;border-radius:4px;background:#6cf;left:" + text(x) + "px;top:" + text(y) + "px"
 }
 
 part lefthand {
-  view = () => el("input", { type: "range", min: "0", max: "180", value: text(Game.paddle_l), oninput: steer }, [])
+  view = () => el("input", { class: "slider", type: "range", min: "0", max: "180", value: text(Game.paddle_l), oninput: steer }, [])
   steer = (e: std.Event) => {
     Game.steer_l(number(text(e.data.value)) ?? 90)
   }
 }
 
 part righthand {
-  view = () => el("input", { type: "range", min: "0", max: "180", value: text(Game.paddle_r), oninput: steer }, [])
+  view = () => el("input", { class: "slider", type: "range", min: "0", max: "180", value: text(Game.paddle_r), oninput: steer }, [])
   steer = (e: std.Event) => {
     Game.steer_r(number(text(e.data.value)) ?? 90)
   }
 }
 
 part switch {
-  view = () => el("button", { onclick: flip }, [caption()])
+  view = () => el("button", { class: "toggle", onclick: flip }, [caption()])
   caption = () => (if Game.running { "pause" } else { "start" })
   flip = () => {
     Game.toggle()

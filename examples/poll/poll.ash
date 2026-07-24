@@ -2,6 +2,7 @@ space poll
 
 part app {
   port = 8080
+  style = "poll"
 }
 
 // Votes are stored state: reactivity alone keeps every tally live (§9.3).
@@ -16,7 +17,7 @@ part Store {
 
 part page {
   route = "/"
-  view = () => el(board, {})
+  view = () => el("div", { class: "stage" }, [el(board, {})])
 }
 
 // Each board instance subscribes in its start stack (§9.5): the
@@ -33,11 +34,12 @@ part board {
   note = (m: data) => {
     latest = text(m)
   }
-  view = () => el("div", {}, [
-    el("h2", {}, ["which stone?"]),
-    el("div", {}, buttons()),
-    el("p", {}, ["tally: " + summary()]),
-    el("p", {}, ["last vote: " + latest]),
+  view = () => el("div", { class: "card" }, [
+    el("p", { class: "kicker" }, ["channel · §9.5"]),
+    el("h1", {}, ["which stone?"]),
+    el("div", { class: "choices" }, buttons()),
+    el("p", { class: "tally" }, ["tally: " + summary()]),
+    el("p", { class: "latest" }, ["last vote: " + latest]),
   ])
   buttons = () => map(options, (o: text) => el(choice, { option: o }))
   summary = () => join(map(options, (o: text) => o + " " + text(Store.votes[o] ?? 0)), " / ")
@@ -45,7 +47,7 @@ part board {
 
 part choice {
   option: text
-  view = () => el("button", { onclick: pick }, [option])
+  view = () => el("button", { class: "vote", onclick: pick }, [option])
   pick = () => {
     Store.cast(option)
   }

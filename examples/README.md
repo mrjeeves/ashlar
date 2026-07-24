@@ -7,6 +7,13 @@ it must compile with zero diagnostics in canonical format, AND it is
 served on a real port and driven through its HTTP/WebSocket surface on
 every test run. If it's here, it builds — and it works.
 
+Every example wears the same restrained dark skin — one house palette,
+declared per project as `assets/<name>.css` and bound by `class` name
+(§9.4, ADR-0016). To flip through them all at once, run `./showcase/serve.sh`
+(it starts each example on its own port) and open `showcase/index.html`:
+a sidebar of all fourteen with live frames you can swap with a click or the
+arrow keys.
+
 ## hello
 
 The smallest server: one part declares the `port`, one part owns a
@@ -48,7 +55,9 @@ The composition story in four files:
 Sessions end to end (§9.6): signup/login/logout routes, the `allow`
 guard turning anonymous requests into 403s before `handle` runs, and
 `req.user!` proven safe inside the guard. The test drives the full
-lifecycle including the server-side session ending on logout.
+lifecycle including the server-side session ending on logout. The `/` page
+is a login gate for visitors and a private reader for members — the request
+identity crossing into the view.
 
 ## press
 
@@ -56,7 +65,8 @@ All the merge kinds in one part, layered from a second space without
 editing the first (§4): `append` joins the tag lists, `deep` merges the
 limit maps one level, `pipe` chains the render base-first, and paired
 `stack` / `stack reverse` properties boot in use order and tear down
-derived-first.
+derived-first. The `/` page is a live window onto that composed pipe: type
+text and the output — base first, then the markdown layer — updates as you go.
 
 ## poll
 
@@ -72,16 +82,19 @@ connected view whose `latest` no code in that request assigns.
 ## ticker
 
 Server-driven reactivity (§9.7 + §9.3): a scheduled part's `run` bumps
-a `synced` counter on an `every` interval, and every connected view
-that read it re-renders — no user event anywhere in the loop.
+a `state` counter on an `every` interval, and every connected view
+that read it re-renders — no user event anywhere in the loop. The page
+shows the beat count as a live, ticking number.
 
 ## pong
 
 A real-time game with zero client code: a 20fps `every` schedule advances
 the ball server-side, sliders steer the paddles over `oninput`, and both
-players' pages re-render from the same `synced` state. Each control is
+players' pages re-render from the same shared `state`. Each control is
 its own view instance, so the field's twenty-patches-a-second never
-replace a slider mid-drag. Open it in two windows and play.
+replace a slider mid-drag. The play field is placed with inline geometry
+(those pixel coordinates are game state, not appearance); the chrome
+around it is class-bound. Open it in two windows and play.
 
 ## foundry
 
@@ -89,7 +102,9 @@ Background work joined directly to a live interface (§9.7 + §9.4). A
 POST queues a brief and returns while it is still waiting; `spawn` runs
 the worker between requests, and the worker's state change patches every
 connected board. The API, worker, and UI coordinate through one named
-part, with no client application code or job-runner dependency.
+part, with no client application code or job-runner dependency. The board
+carries a compose form, so you can queue a brief from the page and watch
+it finish, live.
 
 ## guardrails
 
@@ -98,7 +113,9 @@ the route and `Decision` shape; two other spaces independently layer
 length and content checks onto `Gate.review`. Their order is declared by
 `use`, every layer must preserve the pipe's shape, and neither policy
 edits the core or the other policy — the composition model applied to
-work that separate agents can safely own.
+work that separate agents can safely own. The `/` page runs the whole
+composed policy live: type a message and the verdict — allowed, or blocked
+with each layer's reason — decides as you type.
 
 ## commons
 
@@ -152,4 +169,5 @@ routes guard with `allow`; an anonymous read would fault, never fall
 through to a shared value. The test signs up two people, has each keep a
 note, and proves each sees only their own — then restarts the server and
 logs back in to show the notes persisted, still isolated, keyed by the
-stable account id.
+stable account id. The `/` page is a gated board: sign in and keep notes,
+each user seeing only their own — the owned read rendering right in the view.

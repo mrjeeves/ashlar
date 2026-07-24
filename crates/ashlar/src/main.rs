@@ -20,7 +20,7 @@ mod cli {
         ashlar fix [id] [path]\n  \
         ashlar build [path]\n  \
         ashlar fmt [path] [--check]\n  \
-        ashlar run [part] [path]\n  \
+        ashlar run [part] [path] [--port n]\n  \
         ashlar rename <space-part-or-prop> <new-name> [path] [--plan]\n  \
         ashlar rekind <part.prop> <kind> [path] [--plan]\n  \
         ashlar move <part> <space> [path] [--plan]\n  \
@@ -33,7 +33,7 @@ mod cli {
         Fix { path: String, id: Option<String> },
         Build { path: String },
         Fmt { path: String, check_only: bool },
-        Run { path: String, part: Option<String> },
+        Run { path: String, part: Option<String>, port: Option<u16> },
         Rename { target: String, new_name: String, path: String, plan_only: bool },
         Rekind { target: String, kind: String, path: String, plan_only: bool },
         Move { part: String, space: String, path: String, plan_only: bool },
@@ -167,38 +167,48 @@ mod cli {
                 })
             }
             "run" => {
-                // `run [part] [path]` (reference §9.1): one argument is a
-                // part name unless it names a directory on disk; two are
-                // part then path.
+                // `run [part] [path] [--port n]` (reference §9.1, §11): one
+                // positional is a part name unless it names a directory on
+                // disk; two are part then path. `--port` overrides the
+                // program's `port` at run time — a deployment fact, never
+                // written in source (B5), so the same project can serve on
+                // any port without editing a line.
                 let mut positionals: Vec<String> = Vec::new();
-                for a in rest {
-                    if a.starts_with("--") {
+                let mut port: Option<u16> = None;
+                let mut it = rest.iter();
+                while let Some(a) = it.next() {
+                    if a == "--port" {
+                        let v = it
+                            .next()
+                            .ok_or_else(|| "`--port` needs a number".to_string())?;
+                        let n: u16 = v
+                            .parse()
+                            .map_err(|_| format!("`--port` takes a number, not `{}`", v))?;
+                        port = Some(n);
+                    } else if a.starts_with("--") {
                         return Err(format!("unknown flag `{}`", a));
+                    } else {
+                        positionals.push(a.clone());
                     }
-                    positionals.push(a.clone());
                 }
-                match positionals.len() {
-                    0 => Ok(Cmd::Run {
-                        path: default_path(),
-                        part: None,
-                    }),
+                let (path, part) = match positionals.len() {
+                    0 => (default_path(), None),
                     1 => {
                         let a = positionals[0].clone();
                         if Path::new(&a).is_dir() {
-                            Ok(Cmd::Run { path: a, part: None })
+                            (a, None)
                         } else {
-                            Ok(Cmd::Run {
-                                path: default_path(),
-                                part: Some(a),
-                            })
+                            (default_path(), Some(a))
                         }
                     }
-                    2 => Ok(Cmd::Run {
-                        path: positionals[1].clone(),
-                        part: Some(positionals[0].clone()),
-                    }),
-                    _ => Err("`run` takes an optional part and an optional path".to_string()),
-                }
+                    2 => (positionals[1].clone(), Some(positionals[0].clone())),
+                    _ => {
+                        return Err(
+                            "`run` takes an optional part and an optional path".to_string()
+                        )
+                    }
+                };
+                Ok(Cmd::Run { path, part, port })
             }
             "fmt" => {
                 let mut path: Option<String> = None;
@@ -256,7 +266,7 @@ mod cli {
             Cmd::Fix { path, id } => run_fix(&path, id.as_deref()),
             Cmd::Build { path } => run_build(&path),
             Cmd::Fmt { path, check_only } => run_fmt(&path, check_only),
-            Cmd::Run { path, part } => run_serve(&path, part),
+            Cmd::Run { path, part, port } => run_serve(&path, part, port),
             Cmd::Rename { target, new_name, path, plan_only } => {
                 run_refactor(&path, plan_only, |srcs| plan_rename(srcs, &target, &new_name))
             }
@@ -702,12 +712,12 @@ mod cli {
         Ok(())
     }
 
-    fn run_serve(path: &str, part: Option<String>) -> i32 {
+    fn run_serve(path: &str, part: Option<String>, port: Option<u16>) -> i32 {
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
         match ashlar::http::serve(
             std::path::PathBuf::from(path),
             part,
-            None,
+            port,
             |port| eprintln!("serving on http://127.0.0.1:{}", port),
             stop,
         ) {
@@ -991,7 +1001,8 @@ mod cli {
                 cmd,
                 Cmd::Run {
                     path: ".".to_string(),
-                    part: Some("chat.app".to_string())
+                    part: Some("chat.app".to_string()),
+                    port: None
                 }
             );
             let cmd = parse(&args(&["run", "chat.app", "."])).unwrap();
@@ -999,9 +1010,37 @@ mod cli {
                 cmd,
                 Cmd::Run {
                     path: ".".to_string(),
-                    part: Some("chat.app".to_string())
+                    part: Some("chat.app".to_string()),
+                    port: None
                 }
             );
+        }
+
+        #[test]
+        fn run_takes_a_port_override() {
+            // `--port` is a deployment fact bound at run time (B5): the
+            // source keeps its `port`, the flag overrides where it serves.
+            let cmd = parse(&args(&["run", "app", "somewhere", "--port", "8091"])).unwrap();
+            assert_eq!(
+                cmd,
+                Cmd::Run {
+                    path: "somewhere".to_string(),
+                    part: Some("app".to_string()),
+                    port: Some(8091)
+                }
+            );
+            // A bare `--port` with a value and no positionals is fine too.
+            let cmd = parse(&args(&["run", "--port", "9000"])).unwrap();
+            assert_eq!(
+                cmd,
+                Cmd::Run { path: ".".to_string(), part: None, port: Some(9000) }
+            );
+        }
+
+        #[test]
+        fn run_rejects_a_bad_port() {
+            assert!(parse(&args(&["run", "--port", "notaport"])).is_err());
+            assert!(parse(&args(&["run", "--port"])).is_err());
         }
 
         #[test]

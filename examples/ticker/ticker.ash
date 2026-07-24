@@ -2,6 +2,7 @@ space ticker
 
 part app {
   port = 8080
+  style = "ticker"
 }
 
 // A scheduled part: the runtime calls `run` on the `every` interval
@@ -17,11 +18,21 @@ part Clock {
 
 part page {
   route = "/"
-  view = () => el(face, {})
+  view = () => el("div", { class: "stage" }, [
+    el("div", { class: "card" }, [
+      el("p", { class: "kicker" }, ["schedule · §9.7"]),
+      el("h1", {}, ["ticker"]),
+      el("p", { class: "lede" }, ["A server-side schedule bumps a counter five times a second. No browser code, no polling — the page just re-renders."]),
+      el(face, {}),
+    ]),
+  ])
 }
 
 part face {
-  view = () => el("span", {}, ["beats: " + text(ticker.Clock.beats)])
+  view = () => el("div", { class: "beat" }, [
+    el("span", { class: "num" }, [text(ticker.Clock.beats)]),
+    el("span", { class: "unit" }, ["beats"]),
+  ])
 }
 
 part api {

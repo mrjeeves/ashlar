@@ -341,7 +341,7 @@ fn t_examples_todo_form_round_trip() {
         &format!("{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onsubmit\"}}}}", inst, submit),
     );
     let after_submit = ws_read(&mut ws);
-    assert!(after_submit.contains("todo: milk"), "{}", after_submit);
+    assert!(after_submit.contains(">milk<"), "the committed item renders as a list row: {}", after_submit);
     stop.store(true, Ordering::Relaxed);
     join.join().unwrap();
     let _ = std::fs::remove_dir_all(&dir);
@@ -373,6 +373,16 @@ fn t_examples_diary_guards_by_session() {
     assert_eq!(ok, 200);
     assert!(body.contains("me@diary.x"), "{}", body);
 
+    // The `/` view is a login gate for anonymous visitors and the reader
+    // for a signed-in one — identity crossing from the request into the
+    // view (§9.4).
+    let (anon_home, _, gate) = req(port, "GET", "/", None, None);
+    assert_eq!(anon_home, 200);
+    assert!(gate.contains("create an account"), "anonymous sees the gate: {}", gate);
+    let (auth_home, _, reader) = req(port, "GET", "/", None, Some(&cookie));
+    assert_eq!(auth_home, 200);
+    assert!(reader.contains("me@diary.x"), "the reader greets the member: {}", reader);
+
     let (_, _, bye) = req(port, "GET", "/api/logout", None, Some(&cookie));
     assert_eq!(bye, "bye");
     let (after, _, _) = req(port, "GET", "/private", None, Some(&cookie));
@@ -393,6 +403,13 @@ fn t_examples_press_merges_all_kinds() {
     let (_, _, rendered) =
         req(port, "POST", "/api/render", Some("{\"body\":\"hi\"}"), None);
     assert_eq!(rendered, "<p>hi</p>", "pipe layers must chain base-first");
+
+    // The `/` view runs the composed pipe live: the default draft renders
+    // base-first then the markdown layer, right in the page (§9.4).
+    let (home, _, studio) = req(port, "GET", "/", None, None);
+    assert_eq!(home, 200);
+    assert!(studio.contains("&lt;p&gt;hello&lt;/p&gt;"), "the composed pipe renders in the view: {}", studio);
+
     stop.store(true, Ordering::Relaxed);
     join.join().unwrap();
     let _ = std::fs::remove_dir_all(&dir);
@@ -635,6 +652,17 @@ fn t_examples_guardrails_layers_typed_policies() {
     assert!(layered.contains("over 24 characters"), "{}", layered);
     assert!(layered.contains("contains secret"), "{}", layered);
 
+    // The `/` view runs the composed policy pipe live: the default draft
+    // trips both layered checks, decided right in the page (§9.4).
+    let (home, _, checker) = req(port, "GET", "/", None, None);
+    assert_eq!(home, 200);
+    assert!(checker.contains("blocked"), "the view shows the composed decision: {}", checker);
+    assert!(
+        checker.contains("over 24 characters") && checker.contains("contains secret"),
+        "both layered policies decide in the view: {}",
+        checker
+    );
+
     stop.store(true, Ordering::Relaxed);
     join.join().unwrap();
     let _ = std::fs::remove_dir_all(&dir);
@@ -860,6 +888,15 @@ fn t_examples_locker_scopes_storage_per_user() {
     let (_, _, bn) = req(port, "GET", "/api/notes", None, Some(&bob));
     assert!(bn.contains("bob-secret") && !bn.contains("ada-secret"),
         "bob sees only his own notes: {}", bn);
+
+    // The `/` view: a gate for anonymous, the live board for a member —
+    // whose owned notes render right in the page, isolated (§9.3).
+    let (anon_home, _, gate) = req(port, "GET", "/", None, None);
+    assert_eq!(anon_home, 200);
+    assert!(gate.contains("class=\"stack\""), "anonymous sees the gate: {}", gate);
+    let (_, _, board) = req(port, "GET", "/", None, Some(&ada));
+    assert!(board.contains("ada-secret") && !board.contains("bob-secret"),
+        "the board renders only this user's owned notes: {}", board);
 
     // owned stored survives a restart. Sessions do not persist, so log in
     // again — the account (and its stable id) does, and the notes keyed by

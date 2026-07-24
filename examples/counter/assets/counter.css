@@ -1,0 +1,77 @@
+/* counter — the house style, smallest instance of it. The app declares
+   `style = "counter"` (§9.4); every rule binds to a view by class name. */
+
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --line: #262b36;
+  --ink: #e6e9ef;
+  --muted: #8b93a7;
+  --accent: #5b8cff;
+  --accent-ink: #ffffff;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+
+body {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+.stage {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+}
+
+.card {
+  width: 100%;
+  max-width: 26rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 28px 28px 32px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+
+.kicker {
+  margin: 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--muted);
+}
+
+.card h1 {
+  margin: 6px 0 8px;
+  font-size: 24px;
+  font-weight: 650;
+  letter-spacing: -0.2px;
+}
+
+.lede { margin: 0 0 22px; color: var(--muted); }
+
+.count {
+  width: 100%;
+  padding: 18px;
+  font: inherit;
+  font-size: 20px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  color: var(--accent-ink);
+  background: var(--accent);
+  border: none;
+  border-radius: 12px;
+  cursor: pointer;
+  transition: transform 0.05s ease, filter 0.15s ease;
+}
+.count:hover { filter: brightness(1.08); }
+.count:active { transform: translateY(1px) scale(0.997); }

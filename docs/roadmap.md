@@ -112,3 +112,18 @@ proof, and the reference/G4 rewrite. One refinement stays named: catching
 the no-user case at COMPILE time in provably user-less contexts
 (task/boot/`spawn`) — the runtime fault already secures correctness; a
 static check would only move the failure earlier.
+
+Delivered 2026-07-24 — **the examples wear a design** (ADR-0016). Every
+project now declares a stylesheet in one restrained dark house language (the
+`commons` palette, re-declared per project since the runtime serves one sheet
+each, bound by `class` name); the four former API-only demos — `diary`,
+`press`, `guardrails`, `locker` — grew a small `/` view that shows their idea
+in the browser (a live pipe preview, a live policy verdict, a login gate, a
+per-user board), each driven by `t_examples`. A top-level `showcase/` runs all
+fourteen at once and flips between live frames — a launcher, not a baked
+gallery, so the running app stays the only source of truth. Making that work
+without editing any example's `port` added `ashlar run --port N` — a
+deployment fact bound at run time (B5, reference §9.1/§11), pinned by
+`cli::parse` tests — and a viewport `<meta>` now ships in every served head so
+the pages are legible on a phone. No language rule changed; the suite stays
+green in debug and release.

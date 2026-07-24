@@ -375,7 +375,9 @@ everything else enters through `foreign` (§9.10).
 
 A part with a `port` property is a server root. `ashlar run` starts the
 program's single server root, or errors listing candidates if there is not
-exactly one; `ashlar run chat.app` names one explicitly. On start the runtime
+exactly one; `ashlar run chat.app` names one explicitly. The bound port is
+the root's `port`, unless `ashlar run --port 8091` overrides it — a deployment
+fact bound at run time, never written in source (B5). On start the runtime
 loads stored state (§9.3), then calls the root's `start` stack property if
 declared. On shutdown it calls `stop`, then flushes stored state. While
 running, a source change rebuilds and hot-reloads the program in place;
@@ -661,7 +663,7 @@ to run on every edit.
 |---|---|
 | `ashlar check` | compile; emit diagnostics as JSON lines (`--human` for prose) |
 | `ashlar build` | check, then write the manifest and executable image |
-| `ashlar run [part]` | build, then start the server root, watching for changes |
+| `ashlar run [part] [--port n]` | build, then start the server root, watching for changes; `--port` overrides the bound port |
 | `ashlar fmt` | rewrite source into canonical formatting |
 | `ashlar fix [id]` | apply machine-applicable fixes from the last check |
 | `ashlar rename <full-name> <new-name>` | rename a space, part, or property |
