@@ -645,9 +645,9 @@ impl Resolver {
                 continue;
             }
             for fi in 0..self.program.files[idx].ast.foreigns.len() {
-                let (name, nspan) = {
+                let (name, nspan, react) = {
                     let f = &self.program.files[idx].ast.foreigns[fi];
-                    (f.name.clone(), f.name_span)
+                    (f.name.clone(), f.name_span, f.react.clone())
                 };
                 let full = format!("{}.{}", space, name);
                 let path = self.file_path(idx);
@@ -672,6 +672,36 @@ impl Resolver {
                         foreign_idx: fi,
                     },
                 );
+                // A reactive `reads`/`writes` names the collection's data
+                // shape (§9.10). It must resolve to some declared part;
+                // otherwise a typo would silently break reactivity, exactly
+                // the kind of quiet-wrong the checker exists to prevent.
+                if let Some(react) = react {
+                    let bare = ast::name_to_string(&react.collection);
+                    let qualified = format!("{}.{}", space, bare);
+                    let resolves = self.program.parts.contains_key(&qualified)
+                        || self.program.parts.contains_key(&bare)
+                        || self
+                            .program
+                            .parts
+                            .keys()
+                            .any(|k| k.rsplit('.').next() == Some(bare.as_str()));
+                    if !resolves {
+                        self.diags.push(
+                            Diag::new(
+                                E001_UNKNOWN_NAME,
+                                Level::Error,
+                                &path,
+                                react.span,
+                                format!("collection `{}` resolves to no part.", bare),
+                            )
+                            .with_fix(
+                                "Name a declared data shape after `reads`/`writes` (the collection's schema), or add the `use` that provides it.".to_string(),
+                                vec![],
+                            ),
+                        );
+                    }
+                }
             }
         }
     }

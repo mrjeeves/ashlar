@@ -612,13 +612,8 @@ impl<'a> Parser<'a> {
                 return None;
             }
         };
-        let decl = match shape.shape {
-            Shape::Fn(params, ret) => ForeignDecl {
-                name,
-                name_span,
-                params,
-                ret: *ret,
-            },
+        let (params, ret) = match shape.shape {
+            Shape::Fn(params, ret) => (params, *ret),
             _ => {
                 self.err(
                     shape.span,
@@ -628,8 +623,37 @@ impl<'a> Parser<'a> {
                 return None;
             }
         };
+        let react = self.parse_foreign_react();
+        let decl = ForeignDecl {
+            name,
+            name_span,
+            params,
+            ret,
+            react,
+        };
         self.line_end("the foreign declaration");
         Some(decl)
+    }
+
+    /// Optional `reads <Shape>` / `writes <Shape>` after a foreign's return
+    /// shape (§9.10): the reactive intent of the call. `reads`/`writes` are
+    /// contextual — ordinary identifiers everywhere else, special only in
+    /// this one position, so no name is reserved.
+    fn parse_foreign_react(&mut self) -> Option<crate::ast::ForeignReact> {
+        let writes = match self.cur() {
+            Some(Tok::Ident(s)) if s.as_str() == "reads" => false,
+            Some(Tok::Ident(s)) if s.as_str() == "writes" => true,
+            _ => return None,
+        };
+        self.bump(); // `reads` / `writes`
+        let (collection, span) = match self.dotted_name() {
+            Some(ns) => ns,
+            None => {
+                self.err_expected("a collection name after `reads`/`writes`");
+                return None;
+            }
+        };
+        Some(crate::ast::ForeignReact { writes, collection, span })
     }
 
     // -- shapes ---------------------------------------------------------------
@@ -1473,6 +1497,22 @@ mod tests {
         let (ast, diags) = parse_src(src);
         assert!(diags.is_empty(), "unexpected diagnostics: {:?}", diags);
         ast.expect("expected a parsed file")
+    }
+
+    #[test]
+    fn foreign_reads_writes_is_parsed_and_contextual() {
+        // `reads`/`writes` after a foreign's return shape carry reactive
+        // intent (§9.10).
+        let f = parse_ok(
+            "space s\n\npart Entry {\n  x: text\n}\n\nforeign put: (x: text) -> bool writes Entry\nforeign all: () -> [Entry] reads Entry\n",
+        );
+        let put = f.foreigns[0].react.as_ref().expect("writes parsed");
+        assert!(put.writes && put.collection == vec!["Entry".to_string()]);
+        let all = f.foreigns[1].react.as_ref().expect("reads parsed");
+        assert!(!all.writes && all.collection == vec!["Entry".to_string()]);
+        // They are contextual — ordinary property names everywhere else.
+        let g = parse_ok("space s\n\npart W {\n  reads = 1\n  writes = 2\n}\n");
+        assert_eq!(g.parts.len(), 1);
     }
 
     fn ids(diags: &[Diag]) -> Vec<&'static str> {

@@ -143,10 +143,13 @@ SQL lives entirely in `foreign/ledger.store.rs`, a std-only Rust `cdylib`
 that links the system `libsqlite3` over the C ABI. SQL is the persistence
 peer of CSS: **named in Ashlar, defined outside it** — no query string and
 no connection string ever appears in source (B5; the shim reads
-`ASHLAR_LEDGER_DB`, a deployment fact). The board renders straight from
-the database on each request and the running total is a SQL `SUM` computed
-in the shim, so the same `foreign` boundary that runs a fetch or a native
-routine also carries a database. Build the shim before running:
+`ASHLAR_LEDGER_DB`, a deployment fact). The board reads the ledger with
+`recent` and `total` — both declared `reads Entry` — while `record` is
+`writes Entry`, so the SQLite store is **reactive** (§9.3): an entry added in
+one window (over the socket, or through the `/add` API) patches every open
+board live, running total and all, with no reload. The total is a SQL `SUM`
+in the shim, so the same `foreign` boundary that runs a fetch also carries a
+live database. Build the shim before running:
 
 ```
 rustc --edition 2021 --crate-name ledger_store --crate-type cdylib \
@@ -155,9 +158,11 @@ rustc --edition 2021 --crate-name ledger_store --crate-type cdylib \
 ```
 
 The driving test builds it automatically and skips loudly where a Rust
-toolchain or `libsqlite3` is absent — a SQLite integration cannot be
-tested without SQLite. This is Stage 1 of ADR-0014; making a foreign-backed
-store reactive and adding a Postgres backend are the proposed next stages.
+toolchain or `libsqlite3` is absent — a SQLite integration cannot be tested
+without SQLite — and it drives the reactive path too: a board holding only a
+socket is patched live by another client's write. This delivers reactivity
+for a foreign store (ADR-0014); a `stored` database backend and a Postgres
+client remain the proposed next stages.
 
 ## locker
 
