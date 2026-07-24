@@ -82,6 +82,10 @@ pub struct StateStore {
     pub values: BTreeMap<String, V>,
     /// Full names of `stored` properties (the persisted subset).
     pub stored_keys: Vec<String>,
+    /// Full names of `owned` properties (scoped per user, §9.3): their
+    /// per-user values live under `name@userid` keys, and the bare full
+    /// name holds the initial template every user's copy seeds from.
+    pub owned_keys: std::collections::BTreeSet<String>,
     /// Set when any stored value changed since the last flush.
     pub dirty: bool,
 }
@@ -93,6 +97,10 @@ pub struct Instance {
     pub part: String,
     pub fields: BTreeMap<String, V>,
     pub state: BTreeMap<String, V>,
+    /// The user this instance belongs to, captured when it mounted: the
+    /// scope for its `owned` reads. Stable across re-renders even when the
+    /// re-render is driven by a scheduled task or another user (ADR-0015).
+    pub user: Option<String>,
     /// The page render this instance belongs to; when that page's socket
     /// closes, the instance unmounts (§9.5).
     pub page: Option<String>,
@@ -236,12 +244,14 @@ impl<'a> Evaluator<'a> {
                 state.insert(name, init);
             }
         }
+        let user = self.owned_user();
         self.instances.insert(
             id.clone(),
             Instance {
                 part: part.to_string(),
                 fields,
                 state,
+                user,
                 page: self.current_page.clone(),
                 children: Vec::new(),
             },
@@ -416,7 +426,7 @@ impl<'a> Evaluator<'a> {
     fn init_state(&mut self) {
         let fulls: Vec<String> = self.composed.keys().cloned().collect();
         for full in fulls {
-            let props: Vec<(String, bool)> = self.composed[&full]
+            let props: Vec<(String, bool, bool)> = self.composed[&full]
                 .props
                 .iter()
                 .filter(|(_, p)| p.storage.is_some())
@@ -424,10 +434,11 @@ impl<'a> Evaluator<'a> {
                     (
                         n.clone(),
                         matches!(p.storage, Some(crate::ast::Storage::Stored)),
+                        p.owned,
                     )
                 })
                 .collect();
-            for (name, is_stored) in props {
+            for (name, is_stored, is_owned) in props {
                 let key = format!("{}.{}", full, name);
                 let init = self
                     .prop_value_expr(&full, &name)
@@ -436,7 +447,10 @@ impl<'a> Evaluator<'a> {
                     .unwrap_or(V::None);
                 self.state.values.insert(key.clone(), init);
                 if is_stored {
-                    self.state.stored_keys.push(key);
+                    self.state.stored_keys.push(key.clone());
+                }
+                if is_owned {
+                    self.state.owned_keys.insert(key);
                 }
             }
         }
@@ -551,11 +565,28 @@ impl<'a> Evaluator<'a> {
     }
 
     pub fn assign_state(&mut self, key: &str, v: V) {
-        if self.state.stored_keys.iter().any(|k| k == key) {
+        // An `owned` value's key is `base@userid`; persistence is keyed by
+        // the base full name, so strip the user before the stored check.
+        let base = key.split('@').next().unwrap_or(key);
+        if self.state.stored_keys.iter().any(|k| k == base) {
             self.state.dirty = true;
         }
         self.state.values.insert(key.to_string(), v);
         self.dirty_readers(key);
+    }
+
+    /// The user whose `owned` state applies right now: the instance being
+    /// rendered (its captured owner), otherwise the request's session. It
+    /// is `None` when neither is present — an `owned` access then faults
+    /// (there is no such thing as a shared `owned` value, §9.3).
+    fn owned_user(&self) -> Option<String> {
+        if let Some(id) = &self.current_render {
+            if let Some(u) = self.instances.get(id).and_then(|i| i.user.clone()) {
+                return Some(u);
+            }
+        }
+        let tok = self.current_session.as_ref()?;
+        self.sessions.get(tok).cloned()
     }
 
     /// Record a state read during a render (the §9.4 dependency edge).
@@ -1035,6 +1066,21 @@ impl<'a> Evaluator<'a> {
         match base {
             V::Part(full) => {
                 let key = format!("{}.{}", full, name);
+                if self.state.owned_keys.contains(&key) {
+                    let Some(uid) = self.owned_user() else {
+                        return Err(Fault::new(format!(
+                            "`{}.{}` is `owned`, so it needs a signed-in user; this request has none.",
+                            full, name
+                        )));
+                    };
+                    let ukey = format!("{}@{}", key, uid);
+                    if !self.state.values.contains_key(&ukey) {
+                        let seed = self.state.values.get(&key).cloned().unwrap_or(V::None);
+                        self.state.values.insert(ukey.clone(), seed);
+                    }
+                    self.record_read(&ukey);
+                    return Ok(self.state.values.get(&ukey).cloned().unwrap_or(V::None));
+                }
                 if let Some(v) = self.state.values.get(&key).cloned() {
                     self.record_read(&key);
                     return Ok(v);
@@ -1146,6 +1192,17 @@ impl<'a> Evaluator<'a> {
                     }
                 }
                 let key = format!("{}.{}", env.part, name);
+                if self.state.owned_keys.contains(&key) {
+                    let Some(uid) = self.owned_user() else {
+                        return Err(Fault::new(format!(
+                            "`{}.{}` is `owned`, so writing it needs a signed-in user; this request has none.",
+                            env.part, name
+                        )));
+                    };
+                    let ukey = format!("{}@{}", key, uid);
+                    self.assign_state(&ukey, v);
+                    return Ok(Flow::Normal);
+                }
                 self.assign_state(&key, v);
                 Ok(Flow::Normal)
             }

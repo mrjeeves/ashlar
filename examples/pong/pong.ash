@@ -6,18 +6,18 @@ part app {
 
 // The whole game runs on the server: a 20fps schedule advances the
 // ball, sliders steer the paddles, and every connected page re-renders
-// from the same synced state (§9.3 + §9.7). Nobody's browser runs a
+// from the same shared state (§9.3 + §9.7). Nobody's browser runs a
 // line of game code. Field 400x240, ball 10, paddles 8x60 at the walls.
 part Game {
-  synced ball_x: number = 195
-  synced ball_y: number = 115
+  state ball_x: number = 195
+  state ball_y: number = 115
   state dx: number = 6
   state dy: number = 4
-  synced paddle_l: number = 90
-  synced paddle_r: number = 90
-  synced score_l: number = 0
-  synced score_r: number = 0
-  synced running: bool = false
+  state paddle_l: number = 90
+  state paddle_r: number = 90
+  state score_l: number = 0
+  state score_r: number = 0
+  state running: bool = false
   every = "50ms"
   run = () => {
     if running {

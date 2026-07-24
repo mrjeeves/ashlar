@@ -423,7 +423,7 @@ fn keyword(s: &str) -> Option<Tok> {
         "foreign" => Tok::KwForeign,
         "state" => Tok::KwState,
         "stored" => Tok::KwStored,
-        "synced" => Tok::KwSynced,
+        "owned" => Tok::KwOwned,
         "append" => Tok::KwAppend,
         "deep" => Tok::KwDeep,
         "stack" => Tok::KwStack,
@@ -491,7 +491,7 @@ mod tests {
 
     #[test]
     fn all_reserved_words_are_keywords() {
-        let src = "space use part foreign state stored synced append deep stack pipe reverse \
+        let src = "space use part foreign state stored owned append deep stack pipe reverse \
                     let if else for in return true false none and or not";
         let (toks, diags) = lex("t.ash", src);
         assert!(diags.is_empty());
@@ -504,7 +504,7 @@ mod tests {
                 Tok::KwForeign,
                 Tok::KwState,
                 Tok::KwStored,
-                Tok::KwSynced,
+                Tok::KwOwned,
                 Tok::KwAppend,
                 Tok::KwDeep,
                 Tok::KwStack,

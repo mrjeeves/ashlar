@@ -107,6 +107,8 @@ pub struct ComposedProp {
     pub name: String,
     /// Fixed by the base-most declaring layer (C5).
     pub storage: Option<ast::Storage>,
+    /// The `owned` per-user scope, fixed by the base-most layer (ADR-0015).
+    pub owned: bool,
     pub kind: Option<(ast::MergeKind, bool)>,
     /// Declared shape from the base-most layer that states one.
     pub shape: Option<ast::SShape>,

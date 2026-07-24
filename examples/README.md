@@ -141,3 +141,15 @@ The driving test builds it automatically and skips loudly where a Rust
 toolchain or `libsqlite3` is absent — a SQLite integration cannot be
 tested without SQLite. This is Stage 1 of ADR-0014; making a foreign-backed
 store reactive and adding a Postgres backend are the proposed next stages.
+
+## locker
+
+Per-user storage in one keyword (ADR-0015). `owned stored notes` on a
+singleton gives every signed-in user their OWN list, saved to disk and
+isolated from everyone else's — no keying by user id anywhere, and no way
+to reach another user's data. `owned` has no meaning without a user, so the
+routes guard with `allow`; an anonymous read would fault, never fall
+through to a shared value. The test signs up two people, has each keep a
+note, and proves each sees only their own — then restarts the server and
+logs back in to show the notes persisted, still isolated, keyed by the
+stable account id.

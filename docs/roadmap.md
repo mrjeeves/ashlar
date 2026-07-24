@@ -95,18 +95,20 @@ Stage 1 (the SQLite-over-`foreign` example) is delivered; Stages 2–4 wait
 on a design decision before any runtime code, and will land here as
 tested items if accepted.
 
-One accepted decision awaits implementation: **ADR-0015** (status:
-accepted) re-cuts the storage taxonomy along its two real axes. It retires
-`synced` — which the runtime never gave any behavior `state` lacks, since
-no-client-code makes cross-client reactivity universal — and adds `owned`,
-a per-user scope modifier on `state`/`stored` (each authenticated user's
-own value, isolated by construction, so the manual `[req.user.id]` keying
-that invites IDOR disappears), failing loud where there is no user: a
-compile error in task/boot/`spawn` context, a runtime fault on an
-anonymous request. The word was picked by a T-A3 cold read (`owned`/
-`personal`/`user` all read per-user 3/3; `private` misread as OOP
-access-control). Implementation — reference §1/§4/§9.3/§9.6, the checker's
-static rule, the runtime scoping, new diagnostics, the `ticker` rename, an
-`owned` example, and the G4 rewording — lands as a tracked increment
-("Phase 2a") before the ADR-0014 backend, so the backend is built against
-the final taxonomy.
+Delivered 2026-07-24 — **ADR-0015** re-cut the storage taxonomy along its
+two real axes. `synced` is retired: the runtime never gave it any behavior
+`state` lacks, since no-client-code makes cross-client reactivity
+universal. `owned` is added, a per-user scope modifier on `state`/`stored`
+— each authenticated user's own value, isolated by construction, so the
+manual `[req.user.id]` keying that invites IDOR disappears. It fails loud
+where there is no user (an anonymous request, a scheduled task, `spawn`, or
+`start` stack): a runtime fault, never a silently shared value. The word
+was chosen by a T-A3 cold read (`owned`/`personal`/`user` all read per-user
+3/3; `private` misread as OOP access-control). Shipped with the runtime
+scoping, per-user persistence keyed by the stable account id, `E029`
+(`owned` needs a storage word), the `ticker` rename, the `locker` example
+(two users, isolated and persisted, driven by the suite), a T-G fault
+proof, and the reference/G4 rewrite. One refinement stays named: catching
+the no-user case at COMPILE time in provably user-less contexts
+(task/boot/`spawn`) — the runtime fault already secures correctness; a
+static check would only move the failure earlier.

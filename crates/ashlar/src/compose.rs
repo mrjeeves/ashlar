@@ -172,6 +172,7 @@ fn compose_property(prop_name: &str, occs: &[Occ]) -> (ComposedProp, Vec<Diag>) 
     let identity_kind: Option<(MergeKind, bool)> =
         base.prop.kind.as_ref().map(|k: &KindDecl| (k.kind, k.reverse));
     let identity_storage: Option<Storage> = base.prop.storage.as_ref().map(|(s, _)| *s);
+    let identity_owned: bool = base.prop.owned;
     // Shape identity is independent: the base-most layer that *states* one,
     // which may not be the same layer that first declares the property.
     let identity_shape: Option<SShape> = per_layer.iter().find_map(|o| o.prop.shape.clone());
@@ -288,6 +289,7 @@ fn compose_property(prop_name: &str, occs: &[Occ]) -> (ComposedProp, Vec<Diag>) 
     let cp = ComposedProp {
         name: prop_name.to_string(),
         storage: identity_storage,
+        owned: identity_owned,
         kind: identity_kind,
         shape: identity_shape,
         defs,
@@ -719,7 +721,6 @@ fn storage_token(s: Storage) -> &'static str {
     match s {
         Storage::State => "state",
         Storage::Stored => "stored",
-        Storage::Synced => "synced",
     }
 }
 
@@ -803,6 +804,7 @@ mod tests {
         Prop {
             name: name.to_string(),
             name_span: sp(),
+            owned: false,
             storage: None,
             kind: None,
             shape: None,

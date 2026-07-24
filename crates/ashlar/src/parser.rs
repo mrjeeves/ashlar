@@ -18,7 +18,7 @@ use crate::ast::{
 };
 use crate::diag::{
     Diag, Edit, Level, E007_PARSE, E016_RESERVED_WORD, E018_FOREIGN_TOPLEVEL, E020_BAD_REVERSE,
-    E022_SPACE_HEADER, E023_FOREIGN_STMT,
+    E022_SPACE_HEADER, E023_FOREIGN_STMT, E029_OWNED_NEEDS_STORAGE,
 };
 use crate::tokens::{Pos, Span, Tok, Token};
 
@@ -426,6 +426,14 @@ impl<'a> Parser<'a> {
 
     /// `[storage] name [kind [reverse]] [":" shape] ["=" expr]`
     fn parse_prop(&mut self) -> Option<Prop> {
+        // `owned` scope modifier precedes the storage class (§4).
+        let owned_span = if self.at(&Tok::KwOwned) {
+            let sp = self.here_span();
+            self.bump();
+            Some(sp)
+        } else {
+            None
+        };
         let storage: Option<(Storage, Span)> = match self.cur() {
             Some(Tok::KwState) => {
                 let sp = self.here_span();
@@ -437,13 +445,34 @@ impl<'a> Parser<'a> {
                 self.bump();
                 Some((Storage::Stored, sp))
             }
-            Some(Tok::KwSynced) => {
-                let sp = self.here_span();
-                self.bump();
-                Some((Storage::Synced, sp))
-            }
             _ => None,
         };
+        // `owned` scopes a storage class to the current user; alone it is a
+        // plausible-but-wrong construct (A4): fail loud with the fix.
+        if let Some(sp) = owned_span {
+            if storage.is_none() {
+                self.diags.push(
+                    Diag::new(
+                        E029_OWNED_NEEDS_STORAGE,
+                        Level::Error,
+                        &self.file,
+                        sp,
+                        "`owned` scopes a `state` or `stored` property to the current user; it cannot stand alone."
+                            .to_string(),
+                    )
+                    .with_fix(
+                        "Write `owned state` or `owned stored`.".to_string(),
+                        vec![Edit {
+                            file: self.file.clone(),
+                            start: sp.end,
+                            end: sp.end,
+                            text: " stored".to_string(),
+                        }],
+                    ),
+                );
+            }
+        }
+        let owned = owned_span.is_some();
 
         let (name, name_span) = self.name_ident()?;
 
@@ -554,6 +583,7 @@ impl<'a> Parser<'a> {
         Some(Prop {
             name,
             name_span,
+            owned,
             storage,
             kind,
             shape,
@@ -1832,7 +1862,7 @@ fn kw_text(t: &Tok) -> Option<&'static str> {
         Tok::KwForeign => "foreign",
         Tok::KwState => "state",
         Tok::KwStored => "stored",
-        Tok::KwSynced => "synced",
+        Tok::KwOwned => "owned",
         Tok::KwAppend => "append",
         Tok::KwDeep => "deep",
         Tok::KwStack => "stack",
