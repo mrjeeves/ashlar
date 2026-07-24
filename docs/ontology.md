@@ -318,17 +318,10 @@ project is that the second must remain fully derivable from the first.** F2 — 
 manifest and rebuild it identically — is not a caching guarantee. It is the whole metaphysics
 in one test: existence adds nothing to essence, *and we check.*
 
-That last clause is what separates this from decoration. T-META's rule — a requirement with no
-test is not a requirement — applies with full force here: a metaphysics with no test is just
-marketing. Ashlar's metaphysical commitments are unusually falsifiable. One category is a
-compile-time fact. Nominal individuation is T-B. Legislated composition is T-C's exhaustive
+T-META's rule — a requirement with no test is not a requirement — applies with full force here: a metaphysics with no test is just marketing. Ashlar's metaphysical commitments are unusually falsifiable. 
+One category is a compile-time fact. Nominal individuation is T-B. Legislated composition is T-C's exhaustive
 matrix. Computable grounding is T-E. Essence-determines-existence is T-F. Intelligibility as
 maintained achievement is T-A3, re-run as the community of readers drifts. The strains
 themselves are testable in principle — the seventh is *already* exercised every time the suite
 drives `examples/chat`.
 
-An ashlar is a stone cut precisely enough to be laid without mortar: the fit is the joint. The
-philosophy underneath this project turns out to be cut the same way. There is no mortar — no
-appeal to convention, no "it just works," no unexamined category — and every strain in the
-analogy is not a gap in the wall but a place where two stones meet, and where the precision of
-the cut is what carries the load.
