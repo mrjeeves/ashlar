@@ -49,6 +49,39 @@ scored against one model at one time. If `25-foreign-reactive` fails there,
 `updates` is the word to look at first — run 4's strict dissent localized to the
 write half, and `invalidates` already scored 2/2 as a candidate.
 
+Delivered 2026-07-25 — **the showcase is an Ashlar program.** `examples/gallery`
+replaces `showcase/index.html`: a sidebar of the other fifteen examples with a
+live frame, on port 8080, launched by both `serve.sh` and `serve.ps1` alongside
+everything else. The `file://` step is gone, and so is the hand-written page —
+the quickstart is now one command and one URL.
+
+This is what settings were for, and the proof is a negative: the program renders
+fifteen addresses and **its source contains none of them.** `Catalog` declares
+`setting groups: [Group]`; deployment supplies `examples/gallery/settings.json`;
+starting without it refuses by name (`gallery.Catalog.groups : [Group]`) instead
+of serving dead frames. `t_examples_gallery_frames_a_chosen_example` drives the
+whole path — every example present in the sidebar, **no address in the page
+before a click**, then a click over the socket patching in
+`src="http://127.0.0.1:8081"`, and a final assertion that `gallery.ash` contains
+neither `http` nor `127.0.0.1`. B5's scan now covers `examples/` too (comments
+stripped — a comment binds nothing), so a location in an example's source is a
+failing test rather than a code review.
+
+Writing it found a real contradiction the reference had carried for as long as
+both sentences existed: §7 said a function literal may not be "stored in a list,
+map, or field", §9.4 said an attr value may be "an inline function", and an attr
+map is a map. The resolver enforced §7 and the renderer implemented §9.4 — so
+`onclick: (e: std.Event) => pick(s)` was documented, fully built, and rejected
+by `E024`. It went unnoticed because every example that needed a handler over a
+list item introduced a child part instead, which works; the gallery is the first
+program where a whole part per sidebar button is absurd.
+[ADR-0022](decisions/0022-a-function-is-either-named-or-handed-over.md) resolves
+it in favor of §9.4 and states the rule §7 was reaching for: a function is
+either **named** (a property value) or **handed over** (inside a call's
+argument, including a literal written there) — never *stored*. `let`, fields,
+returns, and a property's own map literal stay errors, pinned in both directions
+by `t_b_a_handler_may_be_inline_in_attrs_but_never_stored`.
+
 Delivered 2026-07-25 — **the A3 gate's isolation, and the two runs it invalidates.**
 Every in-repo agent is handed `CLAUDE.md` → `AGENTS.md` before it sees a prompt,
 and AGENTS.md carried a section stating the syntax facts agents get wrong. The

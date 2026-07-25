@@ -913,7 +913,7 @@ impl Resolver {
                         w.walk_shape(sh);
                     }
                     if let Some(v) = &p.value {
-                        w.walk_expr(v, true);
+                        w.walk_expr(v, FnLit::Here);
                     }
                 }
                 self.diags.append(&mut w.diags);
@@ -951,6 +951,36 @@ impl Resolver {
 // ---------------------------------------------------------------------------
 // Expression/statement walker: one per part declaration.
 // ---------------------------------------------------------------------------
+
+/// Where a function literal is legal (`E024`, reference §7).
+///
+/// The rule is about whether the function OUTLIVES the expression that writes
+/// it. A property value names it, so it is trackable. A call's argument hands
+/// it over for that call, so it is single-use and still lexically at the call
+/// site — and that stays true one literal deeper: an event handler written
+/// into an `el` attrs map (§9.4) is handed to `el`, registered for exactly
+/// that render, and named nowhere. `Nested` is what carries the permission
+/// through those literals. What must stay illegal is a function that is
+/// *stored*: bound with `let`, put in a property's own list or map, or
+/// returned — none of which reach here as `Nested`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum FnLit {
+    /// Illegal here.
+    No,
+    /// Legal exactly here, but not inside a literal written here.
+    Here,
+    /// Legal here and inside any list or map literal written at this position.
+    Nested,
+}
+
+impl FnLit {
+    fn inside_literal(self) -> FnLit {
+        match self {
+            FnLit::Nested => FnLit::Nested,
+            _ => FnLit::No,
+        }
+    }
+}
 
 struct Walk<'a> {
     program: &'a Program,
@@ -1255,57 +1285,59 @@ impl<'a> Walk<'a> {
         );
     }
 
-    fn walk_expr(&mut self, e: &SExpr, fnlit_ok: bool) {
+    fn walk_expr(&mut self, e: &SExpr, fnlit: FnLit) {
         match &e.expr {
             Expr::Text(_) | Expr::Number(_) | Expr::Bool(_) | Expr::NoneLit => {}
             Expr::NameRef(segs) => self.resolve_nameref(segs, e.span),
             Expr::List(items) => {
+                let inner = fnlit.inside_literal();
                 for it in items {
                     match it {
-                        ListItem::Item(x) | ListItem::Spread(x) => self.walk_expr(x, false),
+                        ListItem::Item(x) | ListItem::Spread(x) => self.walk_expr(x, inner),
                     }
                 }
             }
             Expr::MapLit(items) => {
+                let inner = fnlit.inside_literal();
                 for it in items {
                     match it {
-                        MapItem::Entry(_, _, v) => self.walk_expr(v, false),
-                        MapItem::Spread(x) => self.walk_expr(x, false),
+                        MapItem::Entry(_, _, v) => self.walk_expr(v, inner),
+                        MapItem::Spread(x) => self.walk_expr(x, inner),
                     }
                 }
             }
-            Expr::Field(b, _, _) => self.walk_expr(b, false),
+            Expr::Field(b, _, _) => self.walk_expr(b, FnLit::No),
             Expr::Index(b, i) => {
-                self.walk_expr(b, false);
-                self.walk_expr(i, false);
+                self.walk_expr(b, FnLit::No);
+                self.walk_expr(i, FnLit::No);
             }
             Expr::Call(callee, args) => {
-                self.walk_expr(callee, false);
+                self.walk_expr(callee, FnLit::No);
                 for a in args {
                     // A function literal may be the root of a call argument.
-                    self.walk_expr(a, true);
+                    self.walk_expr(a, FnLit::Nested);
                 }
             }
-            Expr::Unary(_, x) => self.walk_expr(x, false),
-            Expr::Assert(x) => self.walk_expr(x, false),
+            Expr::Unary(_, x) => self.walk_expr(x, FnLit::No),
+            Expr::Assert(x) => self.walk_expr(x, FnLit::No),
             Expr::Binary(_, l, r) => {
-                self.walk_expr(l, false);
-                self.walk_expr(r, false);
+                self.walk_expr(l, FnLit::No);
+                self.walk_expr(r, FnLit::No);
             }
             Expr::IfExpr(cond, then, els) => {
-                self.walk_expr(cond, false);
+                self.walk_expr(cond, FnLit::No);
                 self.walk_block(then);
                 self.walk_block(els);
             }
             Expr::FnLit(params, body) => {
-                if !fnlit_ok {
+                if fnlit == FnLit::No {
                     self.diags.push(
                         Diag::new(
                             E024_FNLIT_POSITION,
                             Level::Error,
                             &self.file,
                             e.span,
-                            "a function literal is only allowed as a property's value or as a call argument.".to_string(),
+                            "a function literal is only allowed as a property's value or inside a call's argument.".to_string(),
                         )
                         .with_fix(
                             "Make it a named property and reference it by name.".to_string(),
@@ -1319,7 +1351,7 @@ impl<'a> Walk<'a> {
                     self.declare_local(&p.name, p.name_span);
                 }
                 match body.as_ref() {
-                    FnBody::Expr(x) => self.walk_expr(x, false),
+                    FnBody::Expr(x) => self.walk_expr(x, FnLit::No),
                     FnBody::Block(stmts) => self.walk_block(stmts),
                 }
                 self.locals.pop();
@@ -1338,22 +1370,22 @@ impl<'a> Walk<'a> {
     fn walk_stmt(&mut self, s: &Stmt) {
         match s {
             Stmt::Let(name, span, e) => {
-                self.walk_expr(e, false);
+                self.walk_expr(e, FnLit::No);
                 self.declare_local(name, *span);
             }
             Stmt::Assign(name, span, e) => {
                 self.check_assign_target(name, *span);
-                self.walk_expr(e, false);
+                self.walk_expr(e, FnLit::No);
             }
             Stmt::If(cond, then, els) => {
-                self.walk_expr(cond, false);
+                self.walk_expr(cond, FnLit::No);
                 self.walk_block(then);
                 if let Some(els) = els {
                     self.walk_block(els);
                 }
             }
             Stmt::For(vars, iter, body) => {
-                self.walk_expr(iter, false);
+                self.walk_expr(iter, FnLit::No);
                 self.locals.push(BTreeSet::new());
                 for (v, sp) in vars {
                     self.declare_local(v, *sp);
@@ -1363,9 +1395,9 @@ impl<'a> Walk<'a> {
                 }
                 self.locals.pop();
             }
-            Stmt::Return(Some(e), _) => self.walk_expr(e, false),
+            Stmt::Return(Some(e), _) => self.walk_expr(e, FnLit::No),
             Stmt::Return(None, _) => {}
-            Stmt::Expr(e) => self.walk_expr(e, false),
+            Stmt::Expr(e) => self.walk_expr(e, FnLit::No),
         }
     }
 

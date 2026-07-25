@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-# showcase/serve.sh — run every example at once, each on its own port, so
-# showcase/index.html can iframe them side by side. Ctrl-C stops them all.
+# showcase/serve.sh — run every example at once, each on its own port. The
+# gallery (port 8080) is itself an Ashlar program: it frames the others, and it
+# learns their addresses from examples/gallery/settings.json rather than from
+# anything in its source. Ctrl-C stops them all.
 #
 # The port override is `ashlar run --port N`: the source keeps `port = 8080`,
 # and where it actually serves is a deployment fact bound here (B5). Nothing
@@ -15,8 +17,11 @@ if [ ! -x "$BIN" ]; then
   cargo build --release || { echo "build failed"; exit 1; }
 fi
 
-# name:port — the map index.html mirrors. Keep the two in sync.
+# name:port — the map examples/gallery/settings.json mirrors for the fifteen it
+# frames. Keep them in sync; t_examples_showcase_launchers_agree_on_every_port
+# asserts they are.
 EXAMPLES=(
+  "gallery:8080"
   "counter:8081"
   "todo:8082"
   "chat:8083"
@@ -102,9 +107,9 @@ for entry in "${EXAMPLES[@]}"; do
 done
 
 echo
-echo "All fifteen are up. Open the gallery:"
+echo "All sixteen are up. Open the gallery:"
 echo
-echo "  file://$(pwd)/showcase/index.html"
+echo "  http://127.0.0.1:8080"
 echo
 echo "Press Ctrl-C to stop them all."
 wait

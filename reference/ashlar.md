@@ -337,9 +337,12 @@ construct this reference does not define is a parse error.
 
 **Where functions may appear.** A function literal is legal in exactly two
 positions: as the value of a property — which names it — and inside an
-argument of a call, where it is single-use. A function literal cannot be
-bound with `let`, stored in a list, map, or field, or returned from another
-function. A *named* function — a property whose value is a function — is a
+argument of a call, where it is single-use. Inside an argument includes
+inside a list or map literal written there, which is how an event handler
+reaches an element's attrs (§9.4). A function literal cannot be bound with
+`let`, put in a property's own list or map, stored in a field, or returned
+from another function — the rule is that a function is either named or
+handed straight to a call, never squirrelled away unnamed. A *named* function — a property whose value is a function — is a
 value: `Part.save` may be passed, stored, and referenced, because it has a
 name the toolchain can rename and track.
 
