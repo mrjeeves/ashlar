@@ -73,10 +73,11 @@ attached.
 builds the release binary itself if you don't have one:
 
 ```
-./showcase/serve.sh
+./showcase/serve.sh          # macOS / Linux
+./showcase/serve.ps1         # Windows (or pwsh anywhere)
 ```
 
-It starts all fifteen examples, each on its own port, and prints the path to
+Either one starts all fifteen examples, each on its own port, and prints the path to
 open: `showcase/index.html` is a sidebar of all fifteen with **live frames** you
 swap by click or arrow key (`file://` is fine — no server needed for the page
 itself). Ctrl-C stops every example at once.
@@ -111,7 +112,8 @@ WebSockets on one event loop, live views, session auth (salted iterated
 hashing), `stored` persistence, schedules, `spawn`, hot reload, and a
 JSON foreign boundary whose transport is bound in deployment — a native
 library, a worker co-process in any language, or an http service (ADR-0017);
-the `dlopen` path is the only `unsafe` in the codebase.
+the `dlopen` path is the only `unsafe` in the codebase, and the only
+platform-specific line in it — `worker` and `http` run wherever Rust runs.
 
 ## Why it's shaped like this
 
@@ -150,7 +152,7 @@ mechanical, and each has teeth:
 | `docs/` | Vision, requirements, roadmap, diagnostics catalog, and the ADRs (see `docs/README.md`). |
 | `AGENTS.md` | The agent-facing working contract — hierarchy, hard rules, sync duties. Load-bearing (T-META enforces it). |
 | `examples/` | Fifteen complete runnable projects — including `commons` (a full team chat), `ledger` (a real SQLite datastore over the `foreign` boundary), `locker` (per-user `peruser` storage that isolates each user by construction), and `abacus` (a Python worker, no compiler in sight) — compiled, format-checked, AND runtime-driven by the suite. All wear one dark house style (ADR-0016). |
-| `showcase/` | A live gallery of all fifteen: `serve.sh` runs each on its own port, `index.html` swaps between them in a frame. |
+| `showcase/` | A live gallery of all fifteen: `serve.sh` (POSIX) or `serve.ps1` (PowerShell) runs each on its own port, `index.html` swaps between them in a frame. A test asserts both launchers and the page agree on every port. |
 | `suites/` | Test corpora and the coverage map: the cold-read gate (protocol, 25 fixtures, per-run results), the 31 loud-failure fixtures, and `coverage.md` — every requirement id to the test that proves it, kept honest by T-META. |
 | `crates/` | The Rust implementation and its 17 test binaries. |
 

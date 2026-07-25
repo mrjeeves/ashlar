@@ -65,9 +65,12 @@ and superseding one is ordinary work.
    workspace has no external crates. JSON, SHA-1, HTTP, WebSockets,
    PBKDF2 — all hand-rolled in-tree. Do not add a crate; write the code.
 3. **The only `unsafe`** is the `dlopen`/`dlsym` pair in `foreign.rs`,
-   the module that owns the whole §9.10 boundary. Do not add more — the
-   `worker` and `http` transports beside it are plain safe Rust, and a new
-   capability should reach for one of those.
+   confined to `open_library`/`lookup` and gated `#[cfg(unix)]` — the one
+   platform-specific thing in the workspace. Do not add more: the `worker`
+   and `http` transports beside it are plain safe Rust and run wherever
+   Rust runs, so a new capability should reach for one of those. Without a
+   POSIX loader the `native` transport refuses with that correction, which
+   is why the binary builds on Windows at all.
 4. **No stubs** (`t_no_stubs`): no `todo!`, `unimplemented!`, or
    commented-out "coming soon" surface. A command or construct that
    doesn't fully work does not exist.

@@ -982,3 +982,93 @@ fn t_examples_locker_scopes_storage_per_user() {
     join2.join().unwrap();
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Parse `name -> port` pairs out of a showcase launcher or the gallery page.
+/// Each of the three files states the map in its own syntax; this reduces them
+/// to the same set so they can be compared.
+fn showcase_map(text: &str) -> std::collections::BTreeMap<String, u16> {
+    let mut out = std::collections::BTreeMap::new();
+    for line in text.lines() {
+        let l = line.trim();
+        // serve.sh:    "counter:8081"
+        // serve.ps1:   @{ name = 'counter';    port = 8081 }
+        // index.html:  { name: "counter", port: 8081, blurb: "..." },
+        let (name, rest) = if l.starts_with('"') && l.contains(':') && !l.contains('=') {
+            let inner = l.trim_matches('"');
+            match inner.split_once(':') {
+                Some((n, p)) => (n.to_string(), p.to_string()),
+                None => continue,
+            }
+        } else if let Some(i) = l.find("name") {
+            let after = &l[i + 4..];
+            let name: String = after
+                .chars()
+                .skip_while(|c| !matches!(c, '\'' | '"'))
+                .skip(1)
+                .take_while(|c| !matches!(c, '\'' | '"'))
+                .collect();
+            match l.find("port") {
+                Some(j) => (name, l[j + 4..].to_string()),
+                None => continue,
+            }
+        } else {
+            continue;
+        };
+        // The FIRST digit run only: a blurb like "A 20fps game" sits on the
+        // same line in index.html and would otherwise join the port.
+        let port: String = rest
+            .chars()
+            .skip_while(|c| !c.is_ascii_digit())
+            .take_while(|c| c.is_ascii_digit())
+            .collect();
+        if name.is_empty() || port.len() != 4 {
+            continue;
+        }
+        if let Ok(p) = port.parse::<u16>() {
+            out.insert(name, p);
+        }
+    }
+    out
+}
+
+#[test]
+fn t_examples_showcase_launchers_agree_on_every_port() {
+    // The showcase states its name->port map three times — serve.sh, serve.ps1,
+    // and index.html — because each has to be readable on its own and the page
+    // must work from `file://` with no fetch. Three copies of a fact is a drift
+    // hazard, so this is the test that makes drift impossible instead of a
+    // comment asking nicely.
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let read = |rel: &str| {
+        std::fs::read_to_string(root.join(rel)).unwrap_or_else(|e| panic!("{}: {}", rel, e))
+    };
+    let sh = showcase_map(&read("showcase/serve.sh"));
+    let ps = showcase_map(&read("showcase/serve.ps1"));
+    let html = showcase_map(&read("showcase/index.html"));
+
+    assert!(!sh.is_empty(), "parsed no name:port pairs out of serve.sh");
+    assert_eq!(sh, ps, "showcase/serve.sh and serve.ps1 disagree about ports");
+    assert_eq!(sh, html, "showcase/serve.sh and index.html disagree about ports");
+
+    // Every launched name is a real example, and every example is launched —
+    // so a new example cannot quietly stay out of the gallery.
+    let mut on_disk: Vec<String> = Vec::new();
+    for entry in std::fs::read_dir(examples_root()).expect("examples/").flatten() {
+        if entry.path().is_dir() {
+            on_disk.push(entry.file_name().to_string_lossy().to_string());
+        }
+    }
+    on_disk.sort();
+    let launched: Vec<String> = sh.keys().cloned().collect();
+    assert_eq!(
+        launched, on_disk,
+        "the showcase must launch exactly the examples that exist"
+    );
+
+    // Ports are distinct, or two examples fight over one socket.
+    let mut ports: Vec<u16> = sh.values().copied().collect();
+    ports.sort();
+    let before = ports.len();
+    ports.dedup();
+    assert_eq!(before, ports.len(), "two showcase examples share a port");
+}

@@ -617,13 +617,13 @@ boundary at runtime; a mismatch is a fault at the call site.
 
 **How a capability is reached is a deployment fact, never source.** By
 default the build binds space `s` to the host library `foreign/s`
-(`.so`/`.dylib`/`.dll`). An optional `foreign.json` at the project root (or
+(`.so`/`.dylib`). An optional `foreign.json` at the project root (or
 at `ASHLAR_FOREIGN`) overrides that, per space; the manifest records
 whichever won, and a key naming no space is `E001`:
 
 | `via` | reached by | fields |
 |---|---|---|
-| `native` | `dlopen`, C ABI `char* f(const char* args_json)` | `library`, `symbols` |
+| `native` | `dlopen`, C ABI `char* f(const char* args_json)`; needs a POSIX loader | `library`, `symbols` |
 | `worker` | a co-process speaking JSON Lines on stdin/stdout | `run` |
 | `http` | POST to a URL (plaintext; TLS terminates at a proxy) | `url` |
 

@@ -31,6 +31,39 @@ never the word** (ADR-0015 scored `personal` 3/3 on the bare word; in its slot i
 reads as `private`), and **the next A3 run should be a full 25, not another
 targeted re-score**, so the whole corpus is scored against one model at one time.
 
+Delivered 2026-07-25 — **the runtime builds and the showcase starts on
+Windows.** Asked how to start the showcase, the honest answer turned out to be
+"you can't" — `serve.sh` is bash, and underneath it `dlopen`/`dlsym` were
+declared with no `cfg` gate at all, so the binary could not link on Windows and
+the reference's promise of a `.so`/`.dylib`/**`.dll`** derived path was one no
+build could keep. They were also the *only* platform-specific lines in the whole
+workspace; everything else was already portable.
+
+Fixed at the boundary rather than papered over: the POSIX loader is now confined
+to `open_library`/`lookup` behind `#[cfg(unix)]`, and without it the `native`
+transport refuses with the correction that matters — bind the space to a `worker`
+or `http` transport, both of which need nothing but std and carry the same
+envelope. That is complete behavior, not a stub, and it is ADR-0017's own
+principle applied to a platform. The reference no longer promises `.dll`, and
+`showcase/serve.ps1` is the PowerShell twin of `serve.sh`.
+
+Three copies of the name-to-port map now exist (both launchers plus
+`index.html`, which must work from `file://` with no fetch), so
+`t_examples_showcase_launchers_agree_on_every_port` makes drift impossible
+instead of asking nicely in a comment — it also asserts the gallery launches
+exactly the examples that exist, and that no two share a port. Writing it caught
+a bug in its own parser first: pong's blurb contains "20fps", whose digits
+joined the port.
+
+**What is verified, and what is not.** The unix path is unchanged and proven —
+`ledger`'s native SQLite transport and `abacus`'s worker both still pass their
+runtime tests, and `foreign check` reports both reachable. The non-POSIX branch
+was compile-checked by temporarily inverting the `cfg` gates and building it
+here, so the code a Windows build takes does compile. Not verified: an actual
+Windows build or run, and `serve.ps1`'s PowerShell syntax — this machine has
+neither a Windows Rust target nor `pwsh`. Confirming those needs a Windows
+machine, and until someone runs it there, that is the claim.
+
 Delivered 2026-07-25 — **the two A3 run-3 findings are fixed in the language**
 (ADR-0019). `owned` → `peruser` and `reads`/`writes` → `watches`/`updates`,
 across the reserved-word list, tokens, parser, AST and resolved models, the

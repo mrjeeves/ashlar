@@ -479,18 +479,13 @@ impl Boundary {
             if !path.is_file() {
                 continue;
             }
-            let Ok(c_path) = std::ffi::CString::new(path.to_string_lossy().as_bytes()) else {
-                continue;
-            };
-            let h = unsafe { dlopen(c_path.as_ptr(), RTLD_NOW) };
-            if !h.is_null() {
-                self.libs.insert(space.to_string(), h as usize);
-                return Ok(h as usize);
+            match open_library(path) {
+                Ok(h) => {
+                    self.libs.insert(space.to_string(), h);
+                    return Ok(h);
+                }
+                Err(e) => return Err(e),
             }
-            return Err(format!(
-                "foreign library `{}` could not be loaded (it exists but dlopen refused it — wrong architecture, or a missing dependency of its own).",
-                path.display()
-            ));
         }
         Err(format!(
             "foreign space `{}` has no library. Looked for {}. Build the shim, or bind the space in `foreign.json`.",
@@ -848,22 +843,61 @@ fn probe_worker(root: &Path, run: &[String]) -> Result<(), String> {
     }
 }
 
-// -- raw dl bindings --------------------------------------------------------
+// -- the dynamic loader, which is the one platform-specific thing here ------
+//
+// `native` needs a POSIX dynamic loader. `worker` and `http` need nothing but
+// std, so they run wherever Rust runs — which is why the two functions below
+// are the ONLY platform gate in the workspace, and why a platform without
+// `dlopen` still gets a complete foreign boundary through the other two
+// transports. Everything else in the runtime is portable.
 
-/// Library extensions probed for the derived path, in order.
-const LIB_EXTS: [&str; 3] = [".so", ".dylib", ".dll"];
+/// Library extensions probed for the derived path, in order. Only meaningful
+/// where a POSIX loader exists; see `open_library`.
+#[cfg(unix)]
+const LIB_EXTS: [&str; 2] = [".so", ".dylib"];
+#[cfg(not(unix))]
+const LIB_EXTS: [&str; 0] = [];
 
-// The only `unsafe` in the workspace, confined to this module (ADR-0017).
+/// Open a shared library, returning an opaque handle. The whole `unsafe`
+/// surface of this workspace is here and in `lookup` (ADR-0017).
+#[cfg(unix)]
+fn open_library(path: &Path) -> Result<usize, String> {
+    let c_path = std::ffi::CString::new(path.to_string_lossy().as_bytes())
+        .map_err(|_| format!("library path `{}` contains a NUL byte.", path.display()))?;
+    let h = unsafe { dlopen(c_path.as_ptr(), RTLD_NOW) };
+    if h.is_null() {
+        return Err(format!(
+            "foreign library `{}` could not be loaded (it exists but dlopen refused it — wrong architecture, or a missing dependency of its own).",
+            path.display()
+        ));
+    }
+    Ok(h as usize)
+}
+
+/// Without a POSIX loader there is no `native` transport — and saying so with
+/// the correction attached is the whole behavior, not a stub: `worker` and
+/// `http` carry the same envelope and need no loader at all.
+#[cfg(not(unix))]
+fn open_library(path: &Path) -> Result<usize, String> {
+    Err(format!(
+        "the `native` transport needs a POSIX dynamic loader, which this platform does not provide, so `{}` cannot be opened. Bind the space to a `worker` (a co-process in any language) or `http` transport in `foreign.json` — both carry the same envelope.",
+        path.display()
+    ))
+}
+
+#[cfg(unix)]
 extern "C" {
     fn dlopen(filename: *const std::os::raw::c_char, flags: std::os::raw::c_int) -> *mut std::os::raw::c_void;
     fn dlsym(handle: *mut std::os::raw::c_void, symbol: *const std::os::raw::c_char) -> *mut std::os::raw::c_void;
 }
+#[cfg(unix)]
 const RTLD_NOW: std::os::raw::c_int = 2;
 
 type ForeignAbi = unsafe extern "C" fn(*const std::os::raw::c_char) -> *mut std::os::raw::c_char;
 type ForeignFree = unsafe extern "C" fn(*mut std::os::raw::c_char);
 
 /// `dlsym` for one symbol, `None` when the library does not export it.
+#[cfg(unix)]
 fn lookup(handle: usize, symbol: &str) -> Option<*mut std::os::raw::c_void> {
     let c_name = std::ffi::CString::new(symbol.as_bytes()).ok()?;
     let sym = unsafe { dlsym(handle as *mut std::os::raw::c_void, c_name.as_ptr()) };
@@ -872,6 +906,14 @@ fn lookup(handle: usize, symbol: &str) -> Option<*mut std::os::raw::c_void> {
     } else {
         Some(sym)
     }
+}
+
+/// No loader, so no symbol can ever resolve. `native_handle` refuses first, so
+/// this is unreachable in practice; it exists so the module compiles as one
+/// piece on every platform rather than only where `dlopen` lives.
+#[cfg(not(unix))]
+fn lookup(_handle: usize, _symbol: &str) -> Option<*mut std::os::raw::c_void> {
+    None
 }
 
 #[cfg(test)]
@@ -983,9 +1025,15 @@ mod key_tests {
 
     #[test]
     fn derived_library_paths_cover_every_probed_extension() {
+        // The probe list is the platform's, so the assertion is too: a
+        // `native` binding is only reachable where a POSIX loader exists, and
+        // on a platform without one there is no derived library to rename.
+        #[cfg(unix)]
         assert_eq!(
             derived_library_paths("tools"),
-            vec!["foreign/tools.so", "foreign/tools.dylib", "foreign/tools.dll"]
+            vec!["foreign/tools.so", "foreign/tools.dylib"]
         );
+        #[cfg(not(unix))]
+        assert!(derived_library_paths("tools").is_empty());
     }
 }
