@@ -41,13 +41,26 @@ What run 5 did close:
   `t_meta_agents_md_does_not_teach_the_language` asserts, by intersecting
   AGENTS.md's inline-code spans with the rubrics' vocabulary.
 
-**A3-F1 remains open as a design finding**, now failed in every run whose
-readers were not handed the answer (1, 2, 5) and relocated by run 5: the misread
-is a *parse* error, not a vocabulary one, and it appears in a second fixture in
-the opposite direction. ADR-0023 records the 2×2 candidate read. Also recorded,
-not acted on: **A3-F7**, `{text: number}` read as a one-field record rather than
-a map (`17-optional-index`, 3/4, still passing) — a different misread of the
-construct ADR-0008 fixed, worth having in hand if a future run fails there.
+**A3-F1 remains open as a design finding**, now failed in every run whose readers
+were not handed the answer (1, 2, 5) — and its cause is finally identified,
+because the candidate read **refuted the hypothesis ADR-0023 proposed.** A 2×2
+over the merge-kind word and its position, three readers per cell, produced
+**0 of 11 readers stating that both functions run** — every cell, both word
+orders. So it is not the word and not its position: *cross-file layering itself
+does not cold-read*, which is also why `24-composed-program` fails the same way
+with no kind word at all. No grammar change follows; the pre-commitment in
+ADR-0023 was made before the data arrived and it holds.
+
+One lead is recorded rather than acted on: `handle chain =` produced 0/3 wrong
+claims and 3/3 explicit abstention where the control produced 3/3 wrong claims.
+Better failure mode, not comprehension, on three readers — respelling a core
+keyword on that is the over-fit ADR-0015 committed with `owned`. A future attempt
+should test **the layering construct**, not the kind word.
+
+Also recorded, not acted on: **A3-F7**, `{text: number}` read as a one-field
+record rather than a map (`17-optional-index`, 3/4, still passing) — a different
+misread of the construct ADR-0008 fixed, worth having in hand if a future run
+fails there.
 
 One thing stays true regardless and needs no decision: **cold-read the
 construct, never the word** (ADR-0015 scored `personal` 3/3 on the bare word; in

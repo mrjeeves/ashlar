@@ -1,8 +1,8 @@
 # ADR-0023 — A3 run 5: the contamination proved itself, and F1 moved
 
-**Status:** accepted and applied, 2026-07-25. The F1 candidate read is still in
-flight; this file records what run 5 settled and will be amended with that
-result, which is the only open question in it.
+**Status:** accepted and applied, 2026-07-25. Amended the same day with the F1
+candidate read, which **refuted the word-order hypothesis this ADR proposed.**
+No grammar change follows. See "What the candidate read actually found".
 **Evidence:** `suites/t_a3/results/2026-07-25-sonnet-run5.md` (55 agents, 0 errors).
 **Confirms:** ADR-0021, by experiment rather than by argument.
 **Closes:** A3-F5. **Relocates:** A3-F1. **Records:** A3-F7.
@@ -134,30 +134,109 @@ property does not tell a reader whether it replaces or composes, in either
 direction** — which is exactly the job the merge-kind system exists to do. Two of
 twenty-five fixtures hit it; one failed.
 
-### The candidate read (in flight)
+### The candidate read
 
-Acting on this would change a core grammar across every example, so it gets the
+Acting on this would change a core grammar across every example, so it got the
 ADR-0019 treatment: candidates read blind, in slot, never as bare words. A 2×2
 over the merge-kind **word** and its **position** relative to the property name,
 three readers per cell, judged only on whether the chaining fact lands and
-whether the reader explicitly refuses to decide:
+whether the reader explicitly refuses to decide. The design separates the two
+hypotheses: if position is the cause, both before-the-name cells improve; if
+vocabulary is, both `chain` cells do.
 
-| | after the name | before the name |
-|---|---|---|
-| `pipe` | `handle pipe =` (control) | `pipe handle =` |
-| `chain` | `handle chain =` | `chain handle =` |
+I pre-committed in this file, before seeing the result, that nothing clearly
+winning means the grammar stays.
 
-The design separates the two hypotheses: if position is the cause, both
-before-the-name cells improve; if vocabulary is, both `chain` cells do. The
-control's specific failure mode — an explicit refusal to decide — is scored as
-its own outcome, distinct from getting it right and from getting it wrong.
+## What the candidate read actually found
 
-**This ADR will be amended with the result.** If a cell clearly beats the
-control, the grammar changes and every example, the reference, and the corpus
-change with it. If nothing clearly wins, F1 stays a recorded finding and the
-grammar stays, because a 12-reader sample that shows no separation is not a
-mandate to rewrite a language — and over-fitting one sample in the confident
-direction is the mistake ADR-0015 made with `owned`.
+| cell | spelling | n | **states both run** | refuses to decide | reads as replacement | wrong claim |
+|---|---|---|---|---|---|---|
+| A (control) | `handle pipe =` | 3 | **0/3** | 1/3 | 1/3 | 3/3 |
+| B | `pipe handle =` | 2\* | **0/2** | 1/2 | 0/2 | 1/2 |
+| C | `handle chain =` | 3 | **0/3** | 3/3 | 0/3 | **0/3** |
+| D | `chain handle =` | 3 | **0/3** | 1/3 | 2/3 | 2/3 |
+
+\* one cell-B reader died on an API error mid-response and returned nothing; its
+slot is not counted rather than retried, so B is n=2.
+
+**Zero of eleven readers, across four spellings and both word orders, stated
+that both functions run.** Not one. Nobody stated the value-threading fact
+either.
+
+**The word-order hypothesis is refuted.** Putting the kind before the name (B, D)
+did not move the load-bearing measure at all, and D was *worse* than C on
+confidently-wrong claims. The parse-error story in the section above — that a
+reader mistakes the second word for the name — is a real thing one reader did,
+but fixing it changes nothing, because the readers who parsed the declaration
+correctly still could not tell what two declarations of one property do.
+
+So: **no grammar change, and no keyword change.** The pre-commitment holds.
+
+### What did move: the failure mode
+
+`handle chain =` produced **zero actively-wrong claims and unanimous explicit
+abstention** — every reader said, in substance, "I cannot tell from the syntax
+whether this replaces or composes," and one added the reason:
+
+> "'chain' suggests multi-stage composition, which would make this additive (log,
+> then still fall through to whatever the original chain did) rather than a full
+> override."
+
+The control produced the opposite: 3/3 actively-wrong claims, including a reader
+who confidently concluded the program is *invalid* —
+
+> "That's a duplicate/conflicting definition, which the resolution checker is
+> required to catch and reject"
+
+Against requirement A4's own principle — false familiarity is worse than
+unfamiliarity — trading confident-and-wrong for uncertain-and-leaning-right is a
+real improvement. It is also three readers, on one fixture, measuring failure
+mode rather than comprehension. Changing a core keyword on that evidence is
+precisely the over-fit ADR-0015 committed with `owned`, and this ADR said so
+before the data arrived. **Recorded as the strongest lead for any future attempt;
+not acted on.**
+
+### Where the finding actually lives now
+
+Not the kind word. Not its position. **Cross-file layering itself does not
+cold-read**, and three independent lines of evidence now say so:
+
+1. Eleven readers, four spellings, zero successes — the variable under test was
+   not the cause.
+2. `24-composed-program` fails the same way with **no kind word at all** (the
+   default is replacement), so the confusion does not require a merge kind to be
+   present.
+3. Multiple readers converged on "two declarations of one name is a duplicate
+   definition a resolver should reject." That is a *reasonable* reading. One name
+   declared twice means an error in most languages, and no token on either
+   declaration overturns a prior that strong.
+
+The information a cold reader needs is not on the property line. It is the fact
+that Ashlar merges same-named declarations across files — the vision's signature
+move, "extending someone else's part without editing their file." A single word
+in one declaration cannot carry a whole composition model.
+
+That reframes what A3 can tell us here. The gate measures whether a construct
+reads correctly to someone who has never seen the language; for 24 of 25
+constructs the answer is yes. For this one, the honest answer is that the feature
+is *unguessable by construction*, and no spelling tested changes it. Removing it
+is not on the table — it is the language's central claim.
+
+Two things bound the cost, and neither is an excuse:
+
+- **The misread is not silent for an author.** E004 and E005 force every layer to
+  restate the kind, so nobody writes a layer without naming the merge behavior;
+  the risk is in *reading* an unfamiliar codebase, not in writing one.
+- **It is not the `owned` failure mode.** ADR-0019's finding was silently wrong
+  in the direction of a security bug — a reader believing a shared store was
+  per-user. Here the wrong belief surfaces the first time the program runs.
+
+F1 therefore stays open as a recorded design finding with its cause correctly
+identified for the first time, rather than as a keyword to be respelled. A future
+attempt should test **the layering construct**, not the kind word: the candidate
+worth reading is a marker on the *extending declaration* that says it extends,
+and the question is whether that can exist without reintroducing a location or a
+declaration order the vision forbids.
 
 ## A3-F7 recorded, not acted on
 
