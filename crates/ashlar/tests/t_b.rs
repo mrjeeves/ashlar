@@ -175,7 +175,7 @@ fn t_b_foreign_binding_key_naming_no_space_is_e001() {
     assert!(d.file.ends_with("foreign.json"), "loc must name the binding file: {}", d.file);
     assert!(d.cause.contains("`tool`"), "cause must name the key: {}", d.cause);
     assert!(
-        d.fix.as_ref().is_some_and(|f| f.note.contains("tools")),
+        d.fix.as_ref().map(|f| f.note.contains("tools")) == Some(true),
         "D1: the correction must name the space it meant: {:?}",
         d.fix
     );

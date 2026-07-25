@@ -10,7 +10,7 @@ between the running apps.
 ./showcase/serve.ps1         # Windows, or pwsh anywhere
 ```
 
-One command, no arguments. It starts all fifteen — each on its own port — and
+One command, no arguments. Needs Rust 1.65+ and nothing else. It starts all fifteen — each on its own port — and
 prints a `file://` path to open; that page is the gallery. `file://` is fine,
 the page needs no server of its own. Ctrl-C stops every example at once.
 

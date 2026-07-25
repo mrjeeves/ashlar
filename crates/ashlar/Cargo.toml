@@ -3,6 +3,15 @@ name = "ashlar"
 version = "0.1.0"
 edition = "2021"
 
+# The floor, established by building and testing on it rather than guessed:
+# 1.65 is where `let ... else` stabilized, and the front end uses it ~95 times.
+# 1.60 fails on exactly that. Declaring it here is what turns "too old" into a
+# sentence cargo prints instead of a mystery further down the build. Keep
+# Cargo.lock at lockfile version 3 for the same reason — the workspace has no
+# dependencies, so a newer lock format buys nothing and locks people out
+# (t_meta_toolchain_floor_is_declared_and_reachable).
+rust-version = "1.65"
+
 # Zero external dependencies, by policy: the compiler is a single
 # self-contained binary (requirement G1), and every byte of behavior
 # is code we wrote against the reference.

@@ -299,3 +299,76 @@ fn t_meta_planned_rows_are_actually_open() {
         hollow_runs.join("\n")
     );
 }
+
+#[test]
+fn t_meta_toolchain_floor_is_declared_and_reachable() {
+    // covers: G1 (a single binary with no install step — which is only true if
+    // people can actually build it).
+    //
+    // The bug this pins: `Cargo.lock` said `version = 4`, a format that needs
+    // Cargo 1.78+. The workspace has ZERO dependencies, so that lock format
+    // bought nothing and turned a fresh clone on an older toolchain into
+    // "failed to parse lock file ... requires `-Znext-lockfile-bump`" — before
+    // a single line compiled. Nothing declared a minimum version either, so
+    // there was no way to tell whether a toolchain was even supposed to work.
+    let root = support::repo_root();
+
+    let lock = std::fs::read_to_string(root.join("Cargo.lock")).expect("Cargo.lock");
+    let version = lock
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("version = "))
+        .unwrap_or("(none)")
+        .trim();
+    assert_eq!(
+        version, "3",
+        "Cargo.lock must stay at lockfile version 3: this workspace has no \
+         dependencies, so a newer format adds nothing and refuses to parse on \
+         older toolchains. If cargo rewrote it, set it back."
+    );
+    // A lockfile with no dependency entries is the other half of the claim.
+    assert!(
+        !lock.contains("[[package]]\nname = \"") || lock.matches("[[package]]").count() == 1,
+        "Cargo.lock lists more than the workspace crate — G1 says zero \
+         dependencies:\n{}",
+        lock
+    );
+
+    let manifest =
+        std::fs::read_to_string(root.join("crates/ashlar/Cargo.toml")).expect("crate manifest");
+    let declared = manifest
+        .lines()
+        .find_map(|l| l.trim().strip_prefix("rust-version = "))
+        .map(|v| v.trim().trim_matches('"').to_string())
+        .unwrap_or_default();
+    assert!(
+        !declared.is_empty(),
+        "crates/ashlar/Cargo.toml must declare `rust-version`, so cargo says \
+         \"requires rustc 1.x\" instead of failing somewhere obscure"
+    );
+    // Parse it, and hold it to the reason it is what it is: `let ... else`.
+    let mut parts = declared.split('.');
+    let major: u32 = parts.next().unwrap_or("0").parse().unwrap_or(0);
+    let minor: u32 = parts.next().unwrap_or("0").parse().unwrap_or(0);
+    assert_eq!(major, 1, "unexpected rust-version major: {}", declared);
+    let uses_let_else = std::fs::read_to_string(root.join("crates/ashlar/src/check.rs"))
+        .map(|s| s.contains("else { continue }") || s.contains("else {"))
+        .unwrap_or(false);
+    if uses_let_else {
+        assert!(
+            minor >= 65,
+            "the front end uses `let ... else`, stable since 1.65, but \
+             rust-version says 1.{}",
+            minor
+        );
+    }
+    // And the floor must not drift upward silently: raising it strands users,
+    // so it is a deliberate act that comes with updating this number and the
+    // README's toolchain line.
+    assert!(
+        minor <= 65,
+        "rust-version rose to 1.{} — if that is deliberate, update this test \
+         and the README together; if not, something started using a newer \
+         feature than the floor allows",
+        minor
+    );
+}
