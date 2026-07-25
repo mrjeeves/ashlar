@@ -97,7 +97,7 @@ Every item this page has carried is delivered, tested, and moved off:
   subscriptions survive re-renders and `start`/`stop` fire once — the
   fix a flagship of parts-in-parts demanded.
 - **Refactor commands** — `refactor.rs` + `rename`/`rekind`/`move`/
-  `radius`, proven by T-E's 13 tests. The E6 residuals closed in
+  `radius`, proven by T-E's 21 tests. The E6 residuals closed in
   increment 9: data-shape and view fields rename through the checker's
   field-site index; spaces rename as pure prefix substitution; `move`
   relocates a home declaration with `use`-graph additions and a stated

@@ -170,3 +170,154 @@ pub fn push_json_str(out: &mut String, s: &str) {
     }
     out.push('"');
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn at(line: u32, col: u32, end_col: u32) -> Span {
+        Span {
+            start: Pos { line, col },
+            end: Pos { line, col: end_col },
+        }
+    }
+
+    #[test]
+    fn jsonl_matches_the_shape_the_reference_documents() {
+        // D4: machine-readable FIRST. Reference §8 prints an exact envelope;
+        // this asserts the binary emits that envelope, key order included, so
+        // the documented example cannot drift from the implementation.
+        let d = Diag::new(
+            E002_AMBIGUOUS_NAME,
+            Level::Error,
+            "chat/ui.ash",
+            at(4, 10, 17),
+            "`Message` resolves to chat.data.Message and note.Message.".to_string(),
+        )
+        .with_fix(
+            "Qualify the reference.".to_string(),
+            vec![Edit {
+                file: "chat/ui.ash".to_string(),
+                start: Pos { line: 4, col: 10 },
+                end: Pos { line: 4, col: 17 },
+                text: "chat.data.Message".to_string(),
+            }],
+        );
+        assert_eq!(
+            d.jsonl(),
+            concat!(
+                r#"{"id":"E002","req":"B3","level":"error","#,
+                r#""loc":{"file":"chat/ui.ash","line":4,"col":10,"end_line":4,"end_col":17},"#,
+                r#""cause":"`Message` resolves to chat.data.Message and note.Message.","#,
+                r#""fix":{"note":"Qualify the reference.","edits":[{"file":"chat/ui.ash","#,
+                r#""line":4,"col":10,"end_line":4,"end_col":17,"text":"chat.data.Message"}]}}"#,
+            )
+        );
+        // One line, always: JSONL is only parseable if nothing embeds a newline.
+        assert_eq!(d.jsonl().lines().count(), 1);
+    }
+
+    #[test]
+    fn a_diagnostic_without_a_fix_omits_the_fix_key() {
+        let d = Diag::new(
+            E003_CASE_COLLISION,
+            Level::Error,
+            "a.ash",
+            at(1, 1, 2),
+            "Two names collide.".to_string(),
+        );
+        let line = d.jsonl();
+        assert!(!line.contains("\"fix\""), "{}", line);
+        assert!(line.ends_with("\"cause\":\"Two names collide.\"}"), "{}", line);
+    }
+
+    #[test]
+    fn warnings_serialize_as_warn_and_never_claim_error() {
+        let d = Diag::new(
+            W001_UNORDERED_LAYERS,
+            Level::Warn,
+            "a.ash",
+            at(2, 1, 4),
+            "Two spaces layer one part.".to_string(),
+        );
+        assert!(d.jsonl().contains("\"level\":\"warn\""));
+        assert!(!d.is_error());
+        assert!(d.human().starts_with("warning[W001] a.ash:2:1 "));
+    }
+
+    #[test]
+    fn causes_escape_everything_that_would_break_a_parser() {
+        // A cause quoting source text can carry any byte. If escaping were
+        // wrong, one diagnostic would corrupt the whole JSONL stream.
+        let nasty = format!(
+            "expected {}text{}, found{}a{}num{}{}",
+            '"', '"', '\t', '\n', '\r', '\u{1}'
+        );
+        let d = Diag::new(
+            E006_SHAPE,
+            Level::Error,
+            "q\\dir/a.ash",
+            at(1, 1, 2),
+            nasty,
+        );
+        let line = d.jsonl();
+        assert!(line.contains("\"file\":\"q\\\\dir/a.ash\""), "{}", line);
+        assert!(line.contains("expected \\\"text\\\", found\\ta\\nnum\\r"), "{}", line);
+        assert!(line.contains("\\u0001"), "control chars need \\u escapes: {}", line);
+        // Still exactly one physical line — the escaping is what guarantees it.
+        assert_eq!(line.lines().count(), 1);
+    }
+
+    #[test]
+    fn every_catalog_code_carries_a_requirement_and_a_unique_id() {
+        // The catalog here is the single source of truth in code
+        // (docs/diagnostics.md is its prose twin). A code with an empty `req`
+        // would publish a diagnostic that enforces nothing, and a duplicate id
+        // would silently retire one of them.
+        let all: &[Code] = &[
+            E001_UNKNOWN_NAME,
+            E002_AMBIGUOUS_NAME,
+            E003_CASE_COLLISION,
+            E004_KIND_CHANGED,
+            E005_KIND_OMITTED,
+            E006_SHAPE,
+            E007_PARSE,
+            E008_USE_NOT_SPACE,
+            E009_INTERPOLATION,
+            E010_SEMICOLON,
+            E011_HASH_COMMENT,
+            E012_NEWLINE_IN_TEXT,
+            E013_DUP_PROP,
+            E014_DUP_LAYER,
+            E015_USE_CYCLE,
+            E016_RESERVED_WORD,
+            E017_STD_LAYER,
+            E018_FOREIGN_TOPLEVEL,
+            E019_STACK_PIPE_ARITY,
+            E020_BAD_REVERSE,
+            E021_ROUTE_CONFLICT,
+            E022_SPACE_HEADER,
+            E023_FOREIGN_STMT,
+            E024_FNLIT_POSITION,
+            E025_BAD_ASSIGN,
+            E026_EVERY_NO_RUN,
+            E027_STORAGE_CHANGED,
+            E028_UNMERGEABLE,
+            E029_PERUSER_NEEDS_STORAGE,
+            W001_UNORDERED_LAYERS,
+        ];
+        for (id, req) in all {
+            assert!(!id.is_empty() && !req.is_empty(), "{} has no requirement", id);
+            assert!(
+                id.starts_with('E') || id.starts_with('W'),
+                "unexpected id prefix: {}",
+                id
+            );
+        }
+        let mut ids: Vec<&str> = all.iter().map(|(id, _)| *id).collect();
+        ids.sort();
+        let before = ids.len();
+        ids.dedup();
+        assert_eq!(before, ids.len(), "duplicate diagnostic id in the catalog");
+    }
+}

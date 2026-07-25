@@ -136,7 +136,7 @@ mechanical, and each has teeth:
 | `AGENTS.md` | The agent-facing working contract — hierarchy, hard rules, sync duties. Load-bearing (T-META enforces it). |
 | `examples/` | Fifteen complete runnable projects — including `commons` (a full team chat), `ledger` (a real SQLite datastore over the `foreign` boundary), `locker` (per-user `peruser` storage that isolates each user by construction), and `abacus` (a Python worker, no compiler in sight) — compiled, format-checked, AND runtime-driven by the suite. All wear one dark house style (ADR-0016). |
 | `showcase/` | A live gallery of all fifteen: `serve.sh` runs each on its own port, `index.html` swaps between them in a frame. |
-| `suites/` | Test corpora: the cold-read gate protocol and the loud-failure fixture corpus. |
+| `suites/` | Test corpora and the coverage map: the cold-read gate (protocol, 25 fixtures, per-run results), the 31 loud-failure fixtures, and `coverage.md` — every requirement id to the test that proves it, kept honest by T-META. |
 | `crates/` | The Rust implementation and its 17 test binaries. |
 
 ## The hierarchy
