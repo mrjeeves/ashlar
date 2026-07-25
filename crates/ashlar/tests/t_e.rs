@@ -695,14 +695,13 @@ fn t_e_space_rename_carries_foreign_lib_and_only_stored_migrations() {
     )]);
     let plan = refactor::plan_rename_space(&srcs, "old", "fresh").unwrap();
     // The derivation rule names a library per probed extension (ADR-0017), so
-    // all three are radius — a `.dylib` shim is no less bound by space name
-    // than a `.so` one.
+    // each is radius — a `.dylib` shim is no less bound by space name than a
+    // `.so` one. The list is POSIX-only because the `native` transport is.
     assert_eq!(
         plan.foreign_renames,
         vec![
             ("foreign/old.so".to_string(), "foreign/fresh.so".to_string()),
             ("foreign/old.dylib".to_string(), "foreign/fresh.dylib".to_string()),
-            ("foreign/old.dll".to_string(), "foreign/fresh.dll".to_string()),
         ]
     );
     // The binding file keys by space name too, so the key moves with it (E2).
@@ -806,8 +805,8 @@ fn t_e_space_rename_carries_the_foreign_binding_key() {
         "E3: the radius of a space rename must name the binding file that keys it: {}",
         radius_out
     );
-    // The derivation rule probes three extensions; all three are radius.
-    for ext in [".so", ".dylib", ".dll"] {
+    // The derivation rule probes each POSIX extension; all are radius.
+    for ext in [".so", ".dylib"] {
         assert!(
             radius_out.contains(&format!("foreign/tools{}", ext)),
             "E3: radius omitted foreign/tools{}: {}",
