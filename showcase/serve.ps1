@@ -1,7 +1,9 @@
 #!/usr/bin/env pwsh
 # showcase/serve.ps1 — the PowerShell twin of serve.sh: run every example at
-# once, each on its own port, so showcase/index.html can iframe them. Ctrl-C
-# stops them all. Works on Windows PowerShell 5.1, and on pwsh anywhere.
+# once, each on its own port. The gallery (port 8080) is itself an Ashlar
+# program and frames the others, learning their addresses from
+# examples/gallery/settings.json. Ctrl-C stops them all. Works on Windows
+# PowerShell 5.1, and on pwsh anywhere.
 #
 # The port override is `ashlar run --port N`: the source keeps `port = 8080`,
 # and where it actually serves is a deployment fact bound here (B5). Nothing in
@@ -19,9 +21,11 @@ if (-not (Test-Path $bin)) {
   if ($LASTEXITCODE -ne 0) { throw 'build failed' }
 }
 
-# name:port — the map serve.sh and index.html mirror. Keep all three in sync;
-# t_examples_showcase_launchers_agree_on_every_port asserts they do.
+# name:port — the map serve.sh and examples/gallery/settings.json mirror. Keep
+# all three in sync; t_examples_showcase_launchers_agree_on_every_port asserts
+# they are.
 $examples = @(
+  @{ name = 'gallery';    port = 8080 }
   @{ name = 'counter';    port = 8081 }
   @{ name = 'todo';       port = 8082 }
   @{ name = 'chat';       port = 8083 }
@@ -91,11 +95,10 @@ try {
     Write-Host ("  {0,-12} http://127.0.0.1:{1}" -f $ex.name, $ex.port)
   }
 
-  $page = (Resolve-Path 'showcase/index.html').Path -replace '\\', '/'
   Write-Host ''
-  Write-Host 'All fifteen are up. Open the gallery:'
+  Write-Host 'All sixteen are up. Open the gallery:'
   Write-Host ''
-  Write-Host "  file:///$($page -replace '^/', '')"
+  Write-Host '  http://127.0.0.1:8080'
   Write-Host ''
   Write-Host 'Press Ctrl-C to stop them all.'
 

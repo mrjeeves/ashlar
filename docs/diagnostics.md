@@ -37,7 +37,7 @@ Rules for every diagnostic (D1):
 | E021 | A4 | checker | route rules: two patterns can match one path (duplicates and capture overlaps alike), a capture bound twice in one route, or an illegal capture name | note names both parts (or the offending capture); changing a path is the author's choice |
 | E022 | B6 | parser | file does not begin with a `space` header, or `space`/`use` appear after declarations | note: add `space <name>` as the first line (name is the author's choice — no edits) |
 | E023 | A4 | parser | foreign statement construct: `while`, `switch`, `match`, `try`, `catch`, `throw`, `var`, `const`, `elif` | note names the Ashlar construct to use instead (`for`/recursion, `if`, `??`/`none`, `let`) |
-| E024 | E2 | resolver | function literal outside the two legal positions (property value, call argument) | note: name it as a property, or inline it at the call |
+| E024 | E2 | resolver | function literal outside the two legal positions (property value, or inside a call's argument — including a list/map literal written there, which is how an attrs handler is legal) | note: name it as a property, or inline it at the call |
 | E025 | A4 | resolver | assignment target is not a state/stored property of the enclosing part | note: declare the property with a storage word, or use `let` for a local |
 | E026 | G4 | composer | part has `every` but no `run` function property | note: add `run = () => { ... }` |
 | E027 | C5 | composer | layer states a different storage word than the property's identity (omitting is allowed) | edits restating the declared storage |

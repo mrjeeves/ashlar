@@ -1,0 +1,49 @@
+{
+  "gallery.Catalog.groups": [
+    {
+      "label": "Views & forms",
+      "sites": [
+        { "name": "counter", "blurb": "Server-side state, live over a socket", "url": "http://127.0.0.1:8081" },
+        { "name": "todo", "blurb": "A live form; items commit over the socket", "url": "http://127.0.0.1:8082" },
+        { "name": "chat", "blurb": "Composition across four files; a live feed", "url": "http://127.0.0.1:8083" }
+      ]
+    },
+    {
+      "label": "Realtime",
+      "sites": [
+        { "name": "poll", "blurb": "A channel carries the ephemeral event", "url": "http://127.0.0.1:8084" },
+        { "name": "ticker", "blurb": "A schedule drives reactive re-renders", "url": "http://127.0.0.1:8085" },
+        { "name": "pong", "blurb": "A 20fps game with zero client code", "url": "http://127.0.0.1:8086" },
+        { "name": "foundry", "blurb": "Background work patched into a live board", "url": "http://127.0.0.1:8087" }
+      ]
+    },
+    {
+      "label": "Composition",
+      "sites": [
+        { "name": "press", "blurb": "A layered pipe, previewed live", "url": "http://127.0.0.1:8088" },
+        { "name": "guardrails", "blurb": "A typed policy pipe decides live", "url": "http://127.0.0.1:8089" }
+      ]
+    },
+    {
+      "label": "Auth & data",
+      "sites": [
+        { "name": "diary", "blurb": "Sessions and an allow-guarded page", "url": "http://127.0.0.1:8090" },
+        { "name": "locker", "blurb": "Per-user storage, isolated by construction", "url": "http://127.0.0.1:8091" },
+        { "name": "ledger", "blurb": "A real SQLite datastore over foreign", "url": "http://127.0.0.1:8092" },
+        { "name": "abacus", "blurb": "A Python worker — no compiler, no C ABI", "url": "http://127.0.0.1:8095" }
+      ]
+    },
+    {
+      "label": "Flagship",
+      "sites": [
+        { "name": "commons", "blurb": "A full team chat — the whole language", "url": "http://127.0.0.1:8093" }
+      ]
+    },
+    {
+      "label": "Minimal",
+      "sites": [
+        { "name": "hello", "blurb": "The smallest server: two parts", "url": "http://127.0.0.1:8094" }
+      ]
+    }
+  ]
+}

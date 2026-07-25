@@ -71,20 +71,28 @@ attached.
 
 **See the whole language running, in one command.** From a fresh clone — it
 builds the release binary itself if you don't have one. Needs **Rust 1.65 or
-newer** — there are no crates to fetch. Fourteen of the fifteen examples need
+newer** — there are no crates to fetch. Fifteen of the sixteen examples need
 nothing more; `ledger` also needs SQLite's development package, because it links
 the real library (`sudo apt install libsqlite3-dev`, or `sqlite-devel` on
-Fedora). Without it the other fourteen still run and the launcher says so:
+Fedora). Without it the other fifteen still run and the launcher says so:
 
 ```
 ./showcase/serve.sh          # macOS / Linux
 ./showcase/serve.ps1         # Windows (or pwsh anywhere)
 ```
 
-Either one starts all fifteen examples, each on its own port, and prints the path to
-open: `showcase/index.html` is a sidebar of all fifteen with **live frames** you
-swap by click or arrow key (`file://` is fine — no server needed for the page
-itself). Ctrl-C stops every example at once.
+Either one starts all sixteen examples, each on its own port, then tells you to
+open **<http://127.0.0.1:8080>** — the gallery: a sidebar of the other fifteen
+with **live frames** you swap by click. Ctrl-C stops every example at once.
+
+The gallery is itself an Ashlar program (`examples/gallery`), and it is the
+sharpest demonstration of what a `setting` is for: it renders fifteen addresses
+and its source contains none of them. They arrive from
+`examples/gallery/settings.json`, which is deployment's file, so a test can
+assert the launchers and the gallery agree about every port. Before settings
+existed this page could not be written in Ashlar at all — it was hand-written
+HTML opened over a local file URL, outside the language it advertised
+([ADR-0020](docs/decisions/0020-settings-and-what-b5-actually-forbids.md)).
 
 The frames are the real servers, not screenshots, so what you see is what the
 code does. Then run one on its own, or use the toolchain directly:
@@ -160,8 +168,8 @@ mechanical, and each has teeth:
 | `reference/` | The complete language reference — the source of truth for every language decision. |
 | `docs/` | Vision, requirements, roadmap, diagnostics catalog, and the ADRs (see `docs/README.md`). |
 | `AGENTS.md` | The agent-facing working contract — hierarchy, hard rules, sync duties. Load-bearing (T-META enforces it). |
-| `examples/` | Fifteen complete runnable projects — including `commons` (a full team chat), `ledger` (a real SQLite datastore over the `foreign` boundary), `locker` (per-user `peruser` storage that isolates each user by construction), and `abacus` (a Python worker, no compiler in sight) — compiled, format-checked, AND runtime-driven by the suite. All wear one dark house style (ADR-0016). |
-| `showcase/` | A live gallery of all fifteen: `serve.sh` (POSIX) or `serve.ps1` (PowerShell) runs each on its own port, `index.html` swaps between them in a frame. A test asserts both launchers and the page agree on every port. |
+| `examples/` | Sixteen complete runnable projects — including `commons` (a full team chat), `ledger` (a real SQLite datastore over the `foreign` boundary), `locker` (per-user `peruser` storage that isolates each user by construction), `abacus` (a Python worker, no compiler in sight), and `gallery` (the showcase itself, which renders fifteen addresses it learns from a `setting`) — compiled, format-checked, AND runtime-driven by the suite. All wear one dark house style (ADR-0016). |
+| `showcase/` | The launchers: `serve.sh` (POSIX) or `serve.ps1` (PowerShell) runs every example on its own port, with the `gallery` on 8080 framing the rest. A test asserts both launchers and the gallery's settings agree on every port. |
 | `suites/` | Test corpora and the coverage map: the cold-read gate (protocol, 25 fixtures, per-run results), the 31 loud-failure fixtures, and `coverage.md` — every requirement id to the test that proves it, kept honest by T-META. |
 | `crates/` | The Rust implementation and its 17 test binaries. |
 

@@ -128,6 +128,44 @@ fn t_b5_no_locations_in_fixtures_or_reference() {
         }
     }
 
+    // The examples are corpus too (AGENTS.md rule 8), and they are where a
+    // location would actually be tempting: the gallery renders a page of
+    // addresses. Comments are stripped here — a comment binds nothing, and two
+    // examples legitimately name a sibling file in prose while explaining
+    // composition. Everything that can bind is scanned at full strength.
+    fn strip_comments(content: &str) -> String {
+        content
+            .lines()
+            .map(|l| match l.find("//") {
+                Some(i) => &l[..i],
+                None => l,
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    let mut example_files = 0;
+    for f in support::ash_files_sorted(&root.join("examples")) {
+        checked_any = true;
+        example_files += 1;
+        let content = strip_comments(&support::read_text(&f));
+        for token in FORBIDDEN {
+            assert!(
+                !content.contains(token),
+                "B5: {} contains forbidden substring `{}` — a program depends on a \
+                 location by declaring a `setting`, never by writing one down",
+                f.display(),
+                token
+            );
+        }
+    }
+    assert!(
+        example_files >= 15,
+        "B5 scanned only {} example files; the corpus is larger than that, so the \
+         scan is looking in the wrong place",
+        example_files
+    );
+
     assert!(
         checked_any,
         "B5 checked nothing: expected at least the reference's ```ash blocks to exist"
@@ -202,6 +240,49 @@ fn t_b_foreign_binding_key_naming_no_space_is_e001() {
         broken.diags.iter().any(|d| d.id == "E001" && d.cause.contains("unreadable")),
         "a malformed binding file must be reported: {:?}",
         broken.diags
+    );
+
+    let _ = std::fs::remove_dir_all(&proj);
+}
+
+#[test]
+fn t_b_a_handler_may_be_inline_in_attrs_but_never_stored() {
+    // Regression: the reference has always said an attr value may be "an inline
+    // function taking zero parameters or one" (§9.4), and the renderer has
+    // always registered one — but the resolver rejected it with E024, because
+    // map-literal values were walked as if no function could be legal there.
+    // The rule §7 states is about whether the function is STORED, not about
+    // which bracket it sits in: a property value names it, a call's argument
+    // hands it over single-use, and that stays true one literal deeper.
+    let proj = std::env::temp_dir().join(format!("ashlar_tb_fnlit_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&proj);
+    std::fs::create_dir_all(&proj).unwrap();
+
+    // Legal: an inline handler in an `el` attrs map, closing over a local.
+    std::fs::write(
+        proj.join("app.ash"),
+        "space demo\n\npart app {\n  port = 8080\n}\n\npart page {\n  route = \"/\"\n           state n: number = 0\n  view = () => el(\"div\", {}, rows())\n           rows = () => map(range(3), (i: number) => el(\"button\", { onclick: (e: std.Event) => bump(i) },          [text(i)]))\n  bump = (by: number) => {\n    n = n + by\n  }\n}\n",
+    )
+    .unwrap();
+    let ok = ashlar::check_project(&proj);
+    assert!(
+        ok.diags.is_empty(),
+        "an inline attr handler is legal (§9.4) and must not be E024: {:?}",
+        ok.diags
+    );
+
+    // Illegal, all four ways a function can be stored rather than handed over.
+    std::fs::write(
+        proj.join("app.ash"),
+        "space demo\n\npart app {\n  port = 8080\n  state saved: {text: data} = { go: () => 1 }\n           listed: [data] = [() => 2]\n  run = () => {\n    let f = (x: number) => x\n    return none\n  }\n           give = () => (() => 3)\n}\n",
+    )
+    .unwrap();
+    let bad = ashlar::check_project(&proj);
+    let e024 = bad.diags.iter().filter(|d| d.id == "E024").count();
+    assert_eq!(
+        e024, 4,
+        "storing a function in a map, a list, a `let`, or a return is still E024: {:?}",
+        bad.diags
     );
 
     let _ = std::fs::remove_dir_all(&proj);

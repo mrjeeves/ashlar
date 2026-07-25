@@ -1047,24 +1047,73 @@ fn showcase_map(text: &str) -> std::collections::BTreeMap<String, u16> {
     out
 }
 
+/// The gallery's own view of the world: name -> port, read out of the URLs in
+/// `examples/gallery/settings.json`. This is deployment data, not source — the
+/// program that renders it contains no address at all (B5).
+fn gallery_map(text: &str) -> std::collections::BTreeMap<String, u16> {
+    let mut out = std::collections::BTreeMap::new();
+    let mut name: Option<String> = None;
+    for chunk in text.split('"') {
+        // Entries are `{ "name": "counter", ..., "url": "http://127.0.0.1:8081" }`,
+        // so a quoted run either IS the name value or IS the url value; both
+        // arrive in order within one object.
+        if let Some(rest) = chunk.strip_prefix("http://127.0.0.1:") {
+            let port: String = rest.chars().take_while(|c| c.is_ascii_digit()).collect();
+            if let (Some(n), Ok(p)) = (name.take(), port.parse::<u16>()) {
+                out.insert(n, p);
+            }
+            continue;
+        }
+        // A bare identifier-looking run is a candidate name; the url that
+        // follows within the same object claims it.
+        if !chunk.is_empty()
+            && chunk.chars().all(|c| c.is_ascii_lowercase())
+            && chunk.len() > 2
+            && chunk != "name"
+            && chunk != "blurb"
+            && chunk != "url"
+            && chunk != "label"
+            && chunk != "sites"
+        {
+            name = Some(chunk.to_string());
+        }
+    }
+    out
+}
+
 #[test]
 fn t_examples_showcase_launchers_agree_on_every_port() {
     // The showcase states its name->port map three times — serve.sh, serve.ps1,
-    // and index.html — because each has to be readable on its own and the page
-    // must work from `file://` with no fetch. Three copies of a fact is a drift
-    // hazard, so this is the test that makes drift impossible instead of a
-    // comment asking nicely.
+    // and the gallery's own settings.json — because each has to be readable on
+    // its own. Three copies of a fact is a drift hazard, so this is the test
+    // that makes drift impossible instead of a comment asking nicely.
+    //
+    // The two launchers agree exactly. The gallery's settings list everything
+    // it FRAMES, which is every example except the gallery itself: a page
+    // cannot be an item in its own sidebar.
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let read = |rel: &str| {
         std::fs::read_to_string(root.join(rel)).unwrap_or_else(|e| panic!("{}: {}", rel, e))
     };
     let sh = showcase_map(&read("showcase/serve.sh"));
     let ps = showcase_map(&read("showcase/serve.ps1"));
-    let html = showcase_map(&read("showcase/index.html"));
+    let gallery = gallery_map(&read("examples/gallery/settings.json"));
 
     assert!(!sh.is_empty(), "parsed no name:port pairs out of serve.sh");
+    assert!(!gallery.is_empty(), "parsed no name->url pairs out of the gallery settings");
     assert_eq!(sh, ps, "showcase/serve.sh and serve.ps1 disagree about ports");
-    assert_eq!(sh, html, "showcase/serve.sh and index.html disagree about ports");
+
+    let mut framed = sh.clone();
+    framed.remove("gallery");
+    assert_eq!(
+        framed, gallery,
+        "the gallery's settings.json and the launchers disagree about where the \
+         examples serve — an operator would get dead frames"
+    );
+    assert!(
+        sh.contains_key("gallery"),
+        "the launchers must start the gallery itself, or there is nothing to open"
+    );
 
     // Every launched name is a real example, and every example is launched —
     // so a new example cannot quietly stay out of the gallery.
@@ -1087,4 +1136,78 @@ fn t_examples_showcase_launchers_agree_on_every_port() {
     let before = ports.len();
     ports.dedup();
     assert_eq!(before, ports.len(), "two showcase examples share a port");
+}
+
+#[test]
+fn t_examples_gallery_frames_a_chosen_example() {
+    // The showcase is an Ashlar program now. It could not be one before
+    // settings existed: a page of links needs addresses, B5 forbade a location
+    // in source, and `std` has no file I/O — so the gallery lived as
+    // hand-written HTML opened over a local file URL, outside the language it
+    // was advertising. This test is the proof that it came inside.
+    let dir = staged("gallery");
+    let (port, stop, join) = start(dir.clone());
+    let (status, _, html) = req(port, "GET", "/", None, None);
+    assert_eq!(status, 200);
+
+    // Every example the settings name is in the sidebar, under its heading.
+    for name in [
+        "counter", "todo", "chat", "poll", "ticker", "pong", "foundry", "press", "guardrails",
+        "diary", "locker", "ledger", "abacus", "commons", "hello",
+    ] {
+        assert!(
+            html.contains(&format!(">{}<", name)),
+            "the sidebar is missing `{}`: {}",
+            name,
+            html
+        );
+    }
+    assert!(
+        html.contains("Realtime") && html.contains("Flagship"),
+        "group headings come from the settings too: {}",
+        html
+    );
+
+    // Nothing is open yet, so no address has been rendered anywhere. This is
+    // the load-bearing assertion: the URLs are values the program was handed,
+    // not text it carries.
+    assert!(
+        !html.contains("127.0.0.1:80"),
+        "no example address may appear before a click: {}",
+        html
+    );
+    assert!(html.contains("Pick one on the left"), "the landing panel: {}", html);
+
+    // Click the first sidebar item over the socket. The handler is an inline
+    // function in the button's attrs (§9.4) closing over the mapped Site, so
+    // this also exercises E024's call-argument case.
+    let (inst, h) = event_target(&html, "onclick", 0).unwrap();
+    let mut ws = ws_open(port);
+    ws_send(
+        &mut ws,
+        &format!("{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onclick\"}}}}", inst, h),
+    );
+    let reply = unescape(&ws_expect(&mut ws, "iframe", 8));
+    assert!(
+        reply.contains("src=\"http://127.0.0.1:8081\""),
+        "the frame must point at counter's deployed address: {}",
+        reply
+    );
+    assert!(reply.contains("item active"), "the clicked item marks itself: {}", reply);
+    assert!(
+        reply.contains("ashlar run examples/counter"),
+        "the bar names the command for the chosen example: {}",
+        reply
+    );
+
+    // And the address is nowhere in the source that rendered it.
+    let src = std::fs::read_to_string(dir.join("gallery.ash")).unwrap();
+    assert!(
+        !src.contains("127.0.0.1") && !src.contains("http"),
+        "gallery.ash must contain no location — that is the entire point of it"
+    );
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
 }
