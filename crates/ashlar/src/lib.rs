@@ -23,6 +23,7 @@ pub mod parser;
 pub mod refactor;
 pub mod resolve;
 pub mod resolved;
+pub mod settings;
 pub mod tokens;
 
 use std::collections::BTreeMap;
@@ -105,8 +106,16 @@ pub fn check_project(root: &Path) -> CheckResult {
     // deliberately knows nothing outside the sources it was handed.
     let spaces: Vec<String> = result.program.spaces.keys().cloned().collect();
     let mut binding_diags = foreign::check_bindings(root, &spaces);
-    if !binding_diags.is_empty() {
+
+    // `settings.json` keys full property names (§9.12), so it is the second
+    // non-`.ash` file carrying names the compiler reasons about, and it gets
+    // the same treatment: a key naming nothing is E001, a bad shape is E006.
+    let declared = settings::declared(&result.composed);
+    let mut setting_diags = settings::check_file(root, &declared);
+
+    if !binding_diags.is_empty() || !setting_diags.is_empty() {
         result.diags.append(&mut binding_diags);
+        result.diags.append(&mut setting_diags);
         sort_diags(&mut result.diags);
     }
     result

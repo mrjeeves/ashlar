@@ -18,7 +18,7 @@ use crate::ast::{
 };
 use crate::diag::{
     Diag, Edit, Level, E007_PARSE, E016_RESERVED_WORD, E018_FOREIGN_TOPLEVEL, E020_BAD_REVERSE,
-    E022_SPACE_HEADER, E023_FOREIGN_STMT, E029_PERUSER_NEEDS_STORAGE,
+    E022_SPACE_HEADER, E023_FOREIGN_STMT, E029_PERUSER_NEEDS_STORAGE, E030_SETTING_RULES,
 };
 use crate::tokens::{Pos, Span, Tok, Token};
 
@@ -424,8 +424,17 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// `[storage] name [kind [reverse]] [":" shape] ["=" expr]`
+    /// `[setting] [peruser] [storage] name [kind [reverse]] [":" shape] ["=" expr]`
     fn parse_prop(&mut self) -> Option<Prop> {
+        // `setting` leads: it says where the VALUE comes from, which is a fact
+        // about the whole declaration (§9.12, ADR-0020).
+        let setting_span = if self.at(&Tok::KwSetting) {
+            let sp = self.here_span();
+            self.bump();
+            Some(sp)
+        } else {
+            None
+        };
         // `peruser` scope modifier precedes the storage class (§4).
         let peruser_span = if self.at(&Tok::KwPeruser) {
             let sp = self.here_span();
@@ -560,7 +569,7 @@ impl<'a> Parser<'a> {
             None
         };
 
-        if shape.is_none() && value.is_none() {
+        if shape.is_none() && value.is_none() && setting_span.is_none() {
             self.diags.push(
                 Diag::new(
                     E007_PARSE,
@@ -576,6 +585,51 @@ impl<'a> Parser<'a> {
             );
         }
 
+        // A setting is a promise about a value that is not here yet, so the
+        // shape is the only thing that can check it when it arrives — an
+        // unshaped setting could not be verified at all (§9.12).
+        if let Some(sp) = setting_span {
+            if shape.is_none() {
+                self.diags.push(
+                    Diag::new(
+                        E030_SETTING_RULES,
+                        Level::Error,
+                        &self.file,
+                        sp,
+                        format!(
+                            "setting `{}` has no shape, so a supplied value could not be checked.",
+                            name
+                        ),
+                    )
+                    .with_fix(
+                        format!("Give `{}` a shape, as in `setting {}: text`.", name, name),
+                        vec![],
+                    ),
+                );
+            }
+            // A setting is immutable: its value is a deployment fact, decided
+            // before the program runs. `state`/`stored` would claim otherwise.
+            if let Some((_, st_span)) = &storage {
+                self.diags.push(
+                    Diag::new(
+                        E030_SETTING_RULES,
+                        Level::Error,
+                        &self.file,
+                        *st_span,
+                        format!(
+                            "setting `{}` cannot also be `state` or `stored`; a setting is fixed at deployment.",
+                            name
+                        ),
+                    )
+                    .with_fix(
+                        "Drop the storage word, or drop `setting` and give the property a value."
+                            .to_string(),
+                        vec![],
+                    ),
+                );
+            }
+        }
+
         if !self.line_end("the property") {
             // Diagnostic already emitted; the property itself is still usable.
         }
@@ -584,6 +638,7 @@ impl<'a> Parser<'a> {
             name,
             name_span,
             peruser,
+            setting: setting_span.is_some(),
             storage,
             kind,
             shape,
@@ -1904,6 +1959,7 @@ fn kw_text(t: &Tok) -> Option<&'static str> {
         Tok::KwState => "state",
         Tok::KwStored => "stored",
         Tok::KwPeruser => "peruser",
+        Tok::KwSetting => "setting",
         Tok::KwAppend => "append",
         Tok::KwDeep => "deep",
         Tok::KwStack => "stack",

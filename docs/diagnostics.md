@@ -14,7 +14,7 @@ Rules for every diagnostic (D1):
 
 | id | req | emitted by | condition | fix |
 |---|---|---|---|---|
-| E001 | B3 | resolver | name resolves to nothing (incl. dotted part declaration matching no visible part, and a `foreign.json` key naming no space — or a binding file that will not parse) | note nearest matches and the `use` that would provide them; `null`/`nil`/`undefined` get edits replacing with `none` |
+| E001 | B3 | resolver | name resolves to nothing (incl. dotted part declaration matching no visible part, a `foreign.json` key naming no space, a `settings.json` key naming no declared setting — or either file failing to parse) | note nearest matches and the `use` that would provide them; `null`/`nil`/`undefined` get edits replacing with `none` |
 | E002 | B3 | resolver | name resolves to more than one definition, or a `let`/param declares a name already visible | edits qualifying the reference with its full dotted name; for shadowing, note says rename the local |
 | E003 | B4 | resolver | two names in one scope differ only by case or separator convention | note names both declarations; no edits (renaming is a judgment) |
 | E004 | C5 | composer | layer states a different merge kind than the property's identity | edits restating the declared kind |
@@ -43,6 +43,7 @@ Rules for every diagnostic (D1):
 | E027 | C5 | composer | layer states a different storage word than the property's identity (omitting is allowed) | edits restating the declared storage |
 | E028 | C4 | composer | `append`/`deep` on a number, bool, or function value, or layered literals of differing mergeable shapes | note states the mergeable shapes |
 | E029 | A4 | parser | `peruser` with no `state`/`stored` word — it is a per-user scope modifier, not a storage class | fix inserts ` stored` to make `peruser stored` |
+| E030 | A4 | parser | `setting` without a shape (a supplied value could not be checked), or `setting` combined with `state`/`stored` (a setting is fixed at deployment) | note states which rule and the edit that satisfies it |
 | W001 | C3 | resolver | two spaces layer one part and neither uses the other | edits adding the `use` that orders them (to the lexicographically later space's file, after its header) |
 
 E013 also covers a duplicate key inside one map literal (same layer, same

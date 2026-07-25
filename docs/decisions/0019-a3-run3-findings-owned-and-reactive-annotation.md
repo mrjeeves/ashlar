@@ -1,6 +1,10 @@
 # ADR-0019 — A3 run-3 findings: `owned` and the reactive foreign annotation
 
-**Status:** accepted and applied, 2026-07-25.
+**Status:** accepted and applied, 2026-07-25. **The decision stands; the scores
+quoted below do not** — runs 3 and 4 were later found not to be cold reads, so
+`23/25` and `25/25` are withdrawn per
+[ADR-0021](0021-the-a3-readers-were-not-cold.md). This ADR acted on run 3's
+*failures*, which a leak cannot manufacture, so the respellings are unaffected.
 **Evidence:** `suites/t_a3/results/2026-07-25-sonnet-run3.md`, plus the
 candidate run recorded below.
 **Amends:** ADR-0015 (`owned` -> `peruser`) and ADR-0014's reactive stage

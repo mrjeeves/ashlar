@@ -1942,3 +1942,91 @@ part reg {
     stop.store(true, Ordering::Relaxed);
     join.join().unwrap();
 }
+
+#[test]
+fn t_g_missing_required_setting_refuses_before_serving() {
+    // covers: B5, reference 9.12 — a program may depend on a value it cannot
+    // know when it is written, and deployment supplies it. The whole point is
+    // that the failure is loud and EARLY: an operator who forgot the file gets
+    // every gap named at once, before the first request, not a 500 on the
+    // route that happens to read the setting first.
+    let app = r#"space site
+
+part app {
+  port = 0
+  setting endpoint: text
+  setting label: text
+  setting retries: number = 3
+}
+
+part link {
+  route = "/link"
+  handle pipe = (req: std.Request) => site.app.endpoint + " x" + text(site.app.retries)
+}
+"#;
+    let root = fixture("settings", &[("app.ash", app)]);
+
+    // No settings.json at all: both required settings are named, WITH their
+    // shapes, and the defaulted one is not (it has a value).
+    let stop = Arc::new(AtomicBool::new(false));
+    let err = http::serve(root.clone(), None, Some(0), |_| {}, stop).unwrap_err();
+    assert!(err.contains("site.app.endpoint : text"), "{}", err);
+    assert!(err.contains("site.app.label : text"), "{}", err);
+    assert!(
+        !err.contains("site.app.retries"),
+        "a setting with a default is not missing: {}",
+        err
+    );
+    assert!(err.contains("2 setting(s)"), "report every gap at once: {}", err);
+    assert!(err.contains("settings.json"), "name the file to edit: {}", err);
+
+    // Filling in one of two still refuses, and now names only the one left.
+    std::fs::write(
+        root.join("settings.json"),
+        "{\"site.app.endpoint\": \"http://127.0.0.1:9000\"}",
+    )
+    .unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let err = http::serve(root.clone(), None, Some(0), |_| {}, stop).unwrap_err();
+    assert!(err.contains("1 setting(s)"), "{}", err);
+    assert!(err.contains("site.app.label"), "{}", err);
+    assert!(!err.contains("site.app.endpoint :"), "supplied is not missing: {}", err);
+
+    // A value of the wrong shape refuses too, naming the key.
+    std::fs::write(
+        root.join("settings.json"),
+        "{\"site.app.endpoint\": 8080, \"site.app.label\": \"home\"}",
+    )
+    .unwrap();
+    let stop = Arc::new(AtomicBool::new(false));
+    let err = http::serve(root.clone(), None, Some(0), |_| {}, stop).unwrap_err();
+    assert!(err.contains("site.app.endpoint"), "{}", err);
+    assert!(err.contains("text"), "the cause must name the expected shape: {}", err);
+
+    // Correct settings: the program serves, the supplied value reaches the
+    // response, and the untouched default is still the source's.
+    std::fs::write(
+        root.join("settings.json"),
+        "{\"site.app.endpoint\": \"http://127.0.0.1:9000\", \"site.app.label\": \"home\"}",
+    )
+    .unwrap();
+    let (port, stop, join) = start(root.clone());
+    let (status, body) = http_get(port, "/link");
+    assert_eq!(status, 200);
+    assert_eq!(body, "http://127.0.0.1:9000 x3");
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+
+    // A supplied value overrides the default — same program, no source edit.
+    std::fs::write(
+        root.join("settings.json"),
+        "{\"site.app.endpoint\": \"http://example.test\", \"site.app.label\": \"home\", \
+         \"site.app.retries\": 7}",
+    )
+    .unwrap();
+    let (port, stop, join) = start(root);
+    let (status, body) = http_get(port, "/link");
+    assert_eq!((status, body.as_str()), (200, "http://example.test x7"));
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}

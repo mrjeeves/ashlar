@@ -9,27 +9,95 @@ with no passing test is not a satisfied requirement (T-META). An empty open
 section is a claim, so it is kept honest: an item leaves it only when its
 test runs for real.
 
-## Open — nothing
+## Open — one item
 
-The one item this page carried — re-scoring the two A3 fixtures whose keywords
-changed — is done. **Run 4** (`suites/t_a3/results/2026-07-25-sonnet-run4.md`)
-re-read `11-peruser` and `25-foreign-reactive` under the full protocol: both
-PASS, so the corpus stands at **25/25** (23 unchanged run-3 passes plus these
-two). `peruser` passed unanimously with all four bullets, closing A3-F5.
+**A3 needs a full 25-fixture re-run under the revised protocol.** This page said
+"nothing" yesterday on the strength of runs 3 and 4. Both were void: their
+readers were in-repo subagents, so each received `CLAUDE.md` → `AGENTS.md` as
+project instructions, and AGENTS.md then carried a section stating `let`, block
+-vs-map arrow bodies, no-shadowing, chain-kind restating, the event shape, map
+shapes, and the view rules — rubric answers, in the prompt, before the snippet.
+`23/25` and `25/25` are **withdrawn** ([ADR-0021](decisions/0021-the-a3-readers-were-not-cold.md)).
 
-One observation is recorded rather than acted on, because acting on it would be
-over-fitting a single reader: `25-foreign-reactive` passed on a 2–1 panel, and
-the strict judge's dissent localizes to the write half — `watches` conveys the
-dependency outright, while `updates` conveyed invalidation only by inference
-from its partner ("presumably including when `save` runs"). Still a large
-improvement on `reads`/`writes`, which conveyed no reactivity at all. If a
-future run fails there, `updates` is the word to look at first, and
-`invalidates` already scored 2/2 as a candidate.
+What that leaves is precise, not vague:
+
+- **A3's standing evidence is run 2: 23/24, clean, 2026-07-22.** Neither
+  `CLAUDE.md` nor `AGENTS.md` existed in the tree that day (checked:
+  `git show 2a663b4^:CLAUDE.md` reports no such path), so that run had nothing
+  injected. It clears the 80% bar. It predates `25-foreign-reactive` and
+  ADR-0019's respellings, so it does not cover the current corpus.
+- **Run 3's two FAILs stand**, and ADR-0019 with them: a leak can only raise a
+  score, so a reader that misread `owned` and `reads`/`writes` while holding a
+  cheat sheet is stronger evidence, not weaker.
+- **Unproven: that `peruser` and `watches`/`updates` read correctly.** Run 4's
+  passes were that claim's only evidence. None of the three words appears in
+  AGENTS.md, which bounds the doubt — it does not discharge it.
+
+The leak itself is fixed and cannot recur silently: the syntax moved to
+`docs/writing-ashlar.md`, and `t_meta_agents_md_does_not_teach_the_language`
+fails the suite on one backticked keyword in AGENTS.md. So a run under the
+revised `PROTOCOL.md` is now worth performing — 25 fresh readers, one snippet
+each, isolation reported and recorded. It will be a **reduced-contamination**
+run, not a cold one: an in-repo reader still learns the project's name and that
+it composes. A provably cold read needs a reader whose working directory is not
+this repository, which is the honest reason this item is open rather than done.
 
 Two things stay true regardless and need no decision: **cold-read the construct,
 never the word** (ADR-0015 scored `personal` 3/3 on the bare word; in its slot it
-reads as `private`), and **the next A3 run should be a full 25, not another
-targeted re-score**, so the whole corpus is scored against one model at one time.
+reads as `private`), and **the next run is a full 25**, so the whole corpus is
+scored against one model at one time. If `25-foreign-reactive` fails there,
+`updates` is the word to look at first — run 4's strict dissent localized to the
+write half, and `invalidates` already scored 2/2 as a candidate.
+
+Delivered 2026-07-25 — **the A3 gate's isolation, and the two runs it invalidates.**
+Every in-repo agent is handed `CLAUDE.md` → `AGENTS.md` before it sees a prompt,
+and AGENTS.md carried a section stating the syntax facts agents get wrong. The
+A3 readers are in-repo agents. So runs 3 and 4 read their snippets with rubric
+answers already in context, and their scores are withdrawn
+([ADR-0021](decisions/0021-the-a3-readers-were-not-cold.md)); what survives is
+listed under Open above. The syntax moved to `docs/writing-ashlar.md` — a link,
+never an `@`-import — and the invariant became a test rather than a resolution:
+`t_meta_agents_md_does_not_teach_the_language` reads the reserved-word list out
+of `lexer.rs` and fails on one backticked keyword, one fenced ```ash block, one
+`std.` reference, or one `@`-import in AGENTS.md. `PROTOCOL.md` step 1 now names
+project instructions as context a reader may not have and requires the isolation
+to be *reported and recorded* per run, so the next leak shows up in the results
+file instead of in an audit two days later.
+
+The uncomfortable part is worth writing down: the gate had found two real design
+bugs and the repo had rewarded itself with `25/25`. The findings were sound —
+contamination inflates scores, so a fail under contamination is a stronger fail
+— but the number was not, and it took reading the harness rather than the
+results to see it. A gate that grades its own isolation grades nothing.
+
+Delivered 2026-07-25 — **settings: a program may depend on a value it cannot
+know.** The showcase is a page of links to running examples, and writing it in
+Ashlar was impossible: B5 banned a location from source and `std` has no file
+I/O, so a list of addresses could only arrive across the `foreign` boundary. The
+language demanded a Python co-process to know a port number. B5 is revised to
+forbid *binding* by location — what the vision actually asks — and the `setting`
+construct supplies the rest
+([ADR-0020](decisions/0020-settings-and-what-b5-actually-forbids.md)):
+
+```
+setting endpoint: text        // required — no default
+setting retries: number = 3   // optional
+```
+
+A shape is mandatory, because it is the only thing that can check a value which
+does not exist yet; `setting` never combines with `state`/`stored`; and values
+live in `settings.json` at the project root or at `ASHLAR_SETTINGS`, keyed by
+full property name — the third instance of the `foreign.json`/`--port` pattern,
+not a fourth mechanism. Reading one is an ordinary property read, so `rename`
+and `radius` already worked over settings the day they existed.
+
+One new diagnostic id (`E030`: no shape, or combined with a storage word) and no
+others: an unknown key in `settings.json` is `E001` and a wrong value is `E006`,
+exactly as `foreign.json` keys are. Proved by
+`t_g_missing_required_setting_refuses_before_serving` — startup names **every**
+gap with its shape at once and refuses before binding a port, a supplied value
+reaches the response, and a default is overridden without touching source — plus
+four unit tests in `settings.rs` and check-time validation in `check_project`.
 
 Delivered 2026-07-25 — **a fresh clone builds on an old toolchain.**
 `./showcase/serve.sh` on a real machine failed before compiling anything:
@@ -43,7 +111,8 @@ supposed to work.
 and the crate declares `rust-version = "1.65"` so cargo prints a sentence instead
 of a mystery. The floor was **measured, not guessed**: old toolchains were
 installed and the suite run on each. 1.60 fails on `let ... else` (used ~95
-times); 1.65 builds and passes all 299 tests with zero warnings; 1.70 and 1.74
+times); 1.65 builds and passes all 299 tests the suite then held, with zero
+warnings; 1.70 and 1.74
 likewise. One test of mine had quietly raised the floor to 1.70 by using
 `is_some_and` — rewritten, since a convenience in an assertion is not worth five
 minor versions of reach.
@@ -178,9 +247,10 @@ Every item this page has carried is delivered, tested, and moved off:
   printed on every run; §9.10 is the largest construct as the boundary
   grew (ADR-0017), still far under the 20% per-construct cap.
 - **T-A3 surface findings** — the run-1/2 findings resolved by ADR-0008,
-  validated by gate run 2 (23/24). Run 3 (2026-07-25, 23/25) cleared the bar
-  again and raised two findings, both fixed by ADR-0019 and re-scored as
-  passing by run 4 — the corpus stands at 25/25.
+  validated by gate run 2 (23/24, and the last provably clean run). Run 3
+  raised two more findings, both fixed by ADR-0019; runs 3 and 4 are void as
+  cold reads (ADR-0021), so their scores are withdrawn and a full re-run is
+  the one item open above. The findings survive; the numbers do not.
 - **Showcase corpus** — fifteen complete projects, crowned by
   `commons`: a full team chat (auth, rooms, DMs, live messaging,
   presence-by-lifecycle, unread counts, plus moderation and mentions as

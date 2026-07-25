@@ -109,6 +109,9 @@ pub struct ComposedProp {
     pub storage: Option<ast::Storage>,
     /// The `peruser` per-user scope, fixed by the base-most layer (ADR-0015).
     pub peruser: bool,
+    /// A `setting`: the value comes from deployment, not source (ADR-0020).
+    /// Fixed by the base-most layer, like storage.
+    pub setting: bool,
     pub kind: Option<(ast::MergeKind, bool)>,
     /// Declared shape from the base-most layer that states one.
     pub shape: Option<ast::SShape>,

@@ -41,6 +41,7 @@ pub enum Tok {
     KwState,
     KwStored,
     KwPeruser,
+    KwSetting,
     KwAppend,
     KwDeep,
     KwStack,
