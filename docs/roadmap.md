@@ -9,23 +9,49 @@ with no passing test is not a satisfied requirement (T-META). An empty open
 section is a claim, so it is kept honest: an item leaves it only when its
 test runs for real.
 
-## Open — 1 item
+## Open — 2 items, both from A3 gate run 3
 
-**T-A3 has not been re-run since the language grew.** Requirements §9 calls
-the cold-read gate "the primary gate on syntax decisions," and its last
-scoring run is `suites/t_a3/results/2026-07-22-sonnet-run2.md` (23/24). Since
-then the surface gained `owned` (ADR-0015) and the `reads`/`writes` foreign
-annotation (ADR-0014's reactive stage). `11-owned.ash` was added to the corpus
-but has never been scored, and `reads`/`writes` has no fixture at all — it is
-also the riskiest of the three to cold-read, being a contextual keyword that a
-reader could take for a property name. The transport vocabulary
-(`via`/`worker`/`native`/`http`) lives in `foreign.json`, not the language, so
-it is out of A3's scope by construction.
+The cold-read gate ran on 2026-07-25 against a 25-snippet corpus:
+**23/25 PASS**, clearing the 80% bar, recorded in
+`suites/t_a3/results/2026-07-25-sonnet-run3.md`. A3 is therefore satisfied as
+a requirement. But the two constructs added since run 2 — `owned` (ADR-0015)
+and the `reads`/`writes` foreign annotation (ADR-0014's reactive stage) — are
+the only two snippets that failed, both unanimously across a three-judge
+panel. Requirements §9: "Every failure is a design bug in the syntax, not a
+documentation gap." So each is an open item until it gets a design decision.
 
-Proving this needs a fresh reader with no reference in context, per
-`suites/t_a3/PROTOCOL.md` — it is deliberately not a CI job, and it is the one
-requirement in this document that code cannot satisfy. Until it runs, A3 is
-claimed for 22 of 24 fixtures, not 24.
+**A3-F5 — `owned` reads as encapsulation, not per-user scope.** A cold reader
+took `owned stored items` to mean "state this part holds itself, as opposed to
+a prop passed in" and described the result as one shared persisted list. The
+per-user meaning — the entire purpose of the modifier — never appeared. This
+misreads in the direction of a security bug, since `owned` exists precisely so
+that per-user isolation is the naive reading. The meta-finding matters as much:
+ADR-0015 chose the word by cold-reading the WORD, where `owned` scored 3/3,
+and rejected `private` for landing in the OOP access-control frame — which is
+the frame `owned` lands in once it is read inside the construct. A word-level
+cold read does not substitute for a construct-level one.
+
+**A3-F6 — `reads`/`writes` read as an effect annotation, not a reactive edge.**
+The worst score in the corpus (2/4). The reader described "only reads Row state
+(no mutation)" and praised the effect being "declared right in the signature";
+views, re-rendering, and propagation were entirely absent. This is the A4
+failure mode by name — the annotations resemble an effect system, so the reader
+stops at effects, and nothing about that guess fails loudly.
+
+Both are keyword-choice questions, and the corpus is fixed (a snippet is never
+edited to make a reader pass). **The candidate cold read is done** and recorded
+in the run-3 results file and **ADR-0019** (proposed): `peruser` conveys
+per-user scope 2/2 where `owned`, `personal`, `mine`, and `each` all score 0/2,
+and `watches`/`updates` conveys the reactive edge 2/2 where `reads`/`writes`
+scores 0/2. What remains is the decision to apply them — a keyword rename
+touching the reference, the diagnostics catalog, the examples, and the corpus
+at once — plus a run 4 to re-score fixtures 11 and 25 afterwards.
+
+The methodological finding needs no decision and is already binding:
+**cold-read the construct, never the word.** ADR-0015 scored `personal` 3/3 by
+testing the bare word; in its actual slot it reads as `private`, the very frame
+`private` was rejected for. Any future naming decision tests the syntax a
+reader will meet, with its neighbors.
 
 Delivered 2026-07-25 — **the binding file is a name-bearing fact, and the
 name-governing systems now see it.** An audit of ADR-0017 against the vision
@@ -99,8 +125,9 @@ Every item this page has carried is delivered, tested, and moved off:
 - **A5 reference budget** — under 40,000 bytes with the distribution
   printed on every run; §9.10 is the largest construct as the boundary
   grew (ADR-0017), still far under the 20% per-construct cap.
-- **T-A3 surface findings** — resolved by ADR-0008, validated by gate
-  run 2 (23/24 cold-read PASS).
+- **T-A3 surface findings** — the run-1/2 findings resolved by ADR-0008,
+  validated by gate run 2 (23/24). Run 3 (2026-07-25, 23/25) clears the bar
+  again and raises two new findings, open at the top of this page.
 - **Showcase corpus** — fifteen complete projects, crowned by
   `commons`: a full team chat (auth, rooms, DMs, live messaging,
   presence-by-lifecycle, unread counts, plus moderation and mentions as
@@ -122,11 +149,11 @@ Every item this page has carried is delivered, tested, and moved off:
 
 What remains is not debt but doctrine, named where it lives:
 `Unknown`-permissiveness for what the checker cannot prove (no false
-positives, check.rs module docs), `move`'s byte-identity class
-(ADR-0009), and the open cold-read thread recorded in the run-2 results
-file. (The once-weak v1 password hash is gone: v2 is salted, iterated
-PBKDF2, and v1 hashes upgrade transparently on login.) New requirements
-enter here as new numbered items; none are open today.
+positives, check.rs module docs) and reversal-as-property rather than
+byte-identity-as-law (ADR-0018, generalizing ADR-0009's `move` trade). (The
+once-weak v1 password hash is gone: v2 is salted, iterated PBKDF2, and v1
+hashes upgrade transparently on login.) New requirements enter here as new
+numbered items; the open ones are listed at the top of this page.
 
 One proposed trajectory is partly delivered: **ADR-0014** sketches the data
 layer beyond the `foreign` shim the `ledger` example demonstrates — a

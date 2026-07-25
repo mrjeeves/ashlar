@@ -60,8 +60,17 @@ requirement" is the only one.
    test, not a discovery. New feature → consider showing it in an
    example; new example → it gets a runtime test.
 9. **Refactors never partially apply** (E-series): blast radius first,
-   atomic apply, post-verify rollback, byte-identical reversibility
-   (`move`'s stated class excepted — ADR-0009).
+   atomic apply, post-verify rollback, and reversal to the same PROGRAM
+   — same parts and homes, same composition order, and a `use` closure
+   that may only have WIDENED (not the same manifest: `move` never
+   removes a `use`, so reversal leaves visibility broader, and a widening
+   that changed a resolution would be the B3 error post-verify refuses).
+   Byte-identical reversal is a property specific commands have
+   (`rename`, `rekind`, and `move` within ADR-0009's class), not a law
+   over all of them: a refactor may add a declaration it reported rather
+   than refuse correct work (ADR-0018). Do not weaken a byte-identity
+   assertion that currently passes — the requirement got weaker, the
+   delivered facts did not.
 
 ## The suite is the definition of done
 

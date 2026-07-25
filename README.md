@@ -106,7 +106,8 @@ mechanical, and each has teeth:
 - **Guessable.** The whole surface fits in one ≤40,000-byte reference
   (`reference/ashlar.md`), and guessability is *gate-tested*: fresh models
   cold-read program snippets and their misreads are design bugs
-  (`suites/t_a3/`, last run 23/24).
+  (`suites/t_a3/`, last run 23/25 — the two failures are open items on the
+  roadmap, exactly as that gate is meant to produce).
 - **Derivable.** Ashlar minimizes semantic freedom so the toolchain can
   compute and explain what names mean, which implementations run, and what
   a change affects ([ADR-0012](docs/decisions/0012-semantic-freedom-and-derivability.md)).
@@ -115,7 +116,10 @@ mechanical, and each has teeth:
   (check → apply fixes → check) converges in a mean of **1.00 rounds**
   over the whole error corpus.
 - **Refactors are commands, not text edits.** Blast radius reported first,
-  applied atomically or not at all, forward-then-back byte-identical.
+  applied atomically or not at all, and reversing one restores the same
+  program. Renaming in place restores every byte; a refactor that must add a
+  declaration keeps the line it reported rather than refuse correct work
+  ([ADR-0018](docs/decisions/0018-reversibility-is-a-property-not-a-law.md)).
 - **Fast enough to verify every edit.** A single-file change in a
   1,000-file project re-checks in ~40ms (hard-gated under 100ms).
 
@@ -149,6 +153,12 @@ the vision. Nothing overrides the vision.
 ## Status
 
 Complete against its own definitions: every sentence in the reference has
-code and a test behind it, the roadmap ledger (`docs/roadmap.md`) is
-empty, and the final increments were adversarially re-reviewed. The suite
-is 17 green test binaries in debug and release with zero warnings.
+code and a test behind it, and the increments were adversarially
+re-reviewed. The suite is 17 green test binaries in debug and release with
+zero warnings.
+
+Two items are open on the ledger (`docs/roadmap.md`), both raised by A3 gate
+run 3 rather than by a failing test: `owned` and the `reads`/`writes` foreign
+annotation each cold-read to the wrong mental model. The gate found them by
+doing its job, and they stay listed until they get a design decision — an
+honest open ledger beats an empty one.

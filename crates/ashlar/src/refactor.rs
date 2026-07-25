@@ -6,8 +6,14 @@
 //! * **E3** — the complete blast radius (every file/position/replacement)
 //!   is computed first and reported before anything is applied.
 //! * **E4** — application is atomic and reversible: edits are pure span
-//!   substitutions, applied to an in-memory copy; the inverse command
-//!   restores byte-identical sources (T-E proves the roundtrip).
+//!   substitutions, applied to an in-memory copy, and the inverse command
+//!   restores the same PROGRAM — same parts and homes, same composition
+//!   order, and a `use` closure that may only have widened (ADR-0018).
+//!   Byte-identical reversal is a property specific commands have, not a
+//!   law over all of them: `rename` and `rekind` substitute names in place
+//!   and do restore every byte; `move` does so only within ADR-0009's
+//!   class, because it adds the `use` lines both sides need. T-E proves
+//!   both the byte roundtrips and the structural one.
 //! * **E5** — a refactor that cannot compute its complete radius refuses
 //!   with the reason and applies nothing. Today that includes: any
 //!   diagnostic in the project (radius over broken code is undefined)
@@ -25,7 +31,9 @@
 //! adding the `use` lines both sides need (it never removes any): forward
 //! then back is byte-identical when the part sits at the canonical
 //! position (end of file) and neither direction needs a `use` addition —
-//! the position caveat is ADR-0009's recorded trade.
+//! the position caveat is ADR-0009's recorded trade — and outside that
+//! class it still reverses to the same program, with the added `use` lines
+//! remaining exactly as the radius reported them.
 
 use crate::ast::{self, Expr, FnBody, ListItem, MapItem, SExpr, SShape, Shape, Stmt};
 use crate::resolved::Program;
