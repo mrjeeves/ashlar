@@ -149,13 +149,27 @@ no connection string ever appears in source (B5; the shim reads
 one window (over the socket, or through the `/add` API) patches every open
 board live, running total and all, with no reload. The total is a SQL `SUM`
 in the shim, so the same `foreign` boundary that runs a fetch also carries a
-live database. Build the shim before running:
+live database. Because the shim *links* SQLite rather than bundling it, it needs
+the development package — the runtime library most systems already ship is not
+enough for `-l sqlite3`:
+
+```
+sudo apt install libsqlite3-dev      # Debian/Ubuntu (incl. WSL)
+sudo dnf install sqlite-devel        # Fedora/RHEL
+sudo pacman -S sqlite                # Arch
+# macOS: ships with the Xcode command line tools
+```
+
+Then build the shim before running:
 
 ```
 rustc --edition 2021 --crate-name ledger_store --crate-type cdylib \
   -l sqlite3 -o examples/ledger/foreign/ledger.store.so \
   examples/ledger/foreign/ledger.store.rs
 ```
+
+Missing it produces `cannot find -lsqlite3` from the linker; `ashlar foreign
+check examples/ledger` confirms the result either way.
 
 The driving test builds it automatically and skips loudly where a Rust
 toolchain or `libsqlite3` is absent — a SQLite integration cannot be tested

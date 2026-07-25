@@ -71,7 +71,10 @@ attached.
 
 **See the whole language running, in one command.** From a fresh clone — it
 builds the release binary itself if you don't have one. Needs **Rust 1.65 or
-newer** and nothing else; there are no dependencies to fetch:
+newer** — there are no crates to fetch. Fourteen of the fifteen examples need
+nothing more; `ledger` also needs SQLite's development package, because it links
+the real library (`sudo apt install libsqlite3-dev`, or `sqlite-devel` on
+Fedora). Without it the other fourteen still run and the launcher says so:
 
 ```
 ./showcase/serve.sh          # macOS / Linux
