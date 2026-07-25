@@ -9,7 +9,7 @@ part app {
 // The board renders the whole ledger from SQLite on every request: the
 // entries newest-first, and the running total, which SQL sums in the shim
 // (ledger.store.total) — Ashlar composes, the database aggregates. Because
-// `recent`/`total` are `reads Entry` (data.ash), the view depends on the
+// `recent`/`total` are `watches Entry` (data.ash), the view depends on the
 // Entry collection; the moment anything `writes Entry`, this board
 // re-renders and patches — live, over SQL, across every open window.
 part board {

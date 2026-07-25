@@ -16,6 +16,7 @@ CODE            Whatever makes the tests pass.
 ```
 This hierarchy exists to answer the only question that matters during implementation: *when something conflicts, which thing yields?* Code yields to tests. Tests yield to requirements. Requirements yield to the vision. Nothing overrides the vision.
 Tests are not sacred. A test that passes while the requirement goes unmet is a broken test. A test that fails while the requirement is met is a broken test. Both get fixed against the requirement, not defended.
+**Nor is this document sacred.** The hierarchy is a grant of authority as much as a tie-breaker: exactly one layer — the vision — is fixed and outside the implementer's reach. Every layer below it, this document included, is revisable by whoever is doing the work, on one condition: the revision serves the layer above it and arrives with the evidence and tests that show it does. Waiting for permission to revise a requirement that demonstrably fails the vision is the same failure as quietly weakening a test to spare the code — both replace the argument from above with someone's comfort. Where the deciding evidence cannot be obtained, say what is missing; do not guess and call it a decision.
 ---
 ## 2. The method
 For every unit of work, at every scale:
@@ -82,7 +83,7 @@ D2 is the requirement that converts "errors are corrections" from an aspiration 
 **E1.** Every refactor is a command issued to the toolchain, not a text edit. The compiler computes the change set from the manifest and applies it atomically.
 **E2.** After a refactor completes, no stale reference to the prior state exists anywhere in the program. This is checkable by exhaustive search.
 **E3.** Every refactor reports its complete blast radius before applying.
-**E4.** Every refactor is atomically reversible. Forward then back yields byte-identical source.
+**E4.** Every refactor is atomically reversible: the toolchain undoes it with another command, and the undone program **means** what the program that preceded it meant — the same parts with the same homes, the same composition order, and every name resolving to the same definition. A refactor may leave behind a declaration it reported adding: a widened `use` graph cannot silently change what an existing name resolves to, because a widening that did would be an ambiguity error (B3) that the refactor's own post-verify refuses. What it may never do is change what the program means. Byte-identical source on reversal is a stronger guarantee, which renaming in place does provide and which is preserved wherever it holds; it is not required of every refactor. Requiring it universally would force a refactor that must add a declaration to stay correct to refuse work it can do correctly, which costs E6 more than the stronger guarantee is worth.
 **E5.** A refactor that cannot compute complete blast radius refuses to run and reports why. It never applies partially.
 **E6.** The refactor command set is complete enough that editing text to refactor is never the easier path.
 ### Build
@@ -93,7 +94,7 @@ D2 is the requirement that converts "errors are corrections" from an aspiration 
 **G1.** A single binary. No install step, no runtime dependency resolution, no package manager, no registry.
 **G2.** The same handler serves HTTP and WebSocket. Transport is not visible in handler code.
 **G3.** Hot reload on source change preserves process state.
-**G4.** The builtin set covers routing, request handling, persistence, reactive state along two axes — lifetime (in-memory or persisted) and scope (shared or per-user `owned`), with cross-client synchronization a property of the no-client-code architecture rather than a distinct class (ADR-0015) — authentication, authorization, file serving, background tasks, scheduled tasks, real-time channels, and structured logging. Everything else is foreign-function interface.
+**G4.** The builtin set covers routing, request handling, persistence, reactive state along two axes — lifetime (in-memory or persisted) and scope (shared or per-user `peruser`), with cross-client synchronization a property of the no-client-code architecture rather than a distinct class (ADR-0015, renamed by ADR-0019) — authentication, authorization, file serving, background tasks, scheduled tasks, real-time channels, and structured logging. Everything else is foreign-function interface.
 **G5.** The absence of a package registry is a requirement, not a gap. It removes version resolution, transitive conflict, and supply-chain surface — all pure cost to an agent author.
 ---
 ## 9. Test suites
@@ -106,7 +107,7 @@ This suite exists before the compiler does and is the primary gate on syntax dec
 **T-B — Resolution.** Given a dependency graph, asserts which names are visible where. Includes: transitive visibility, zero-resolution errors, multi-resolution errors, case/separator collision errors, and the assertion that no source fixture contains a path.
 **T-C — Composition and merge.** Exhaustive matrix: five merge kinds × value shape combinations × two and three composed sources. Plus: flattening determinism across file layouts, tie-break warning emission, merge-kind-change rejection.
 **T-D — Correction.** For each error class the compiler can emit: a broken fixture, an assertion that the diagnostic contains a correction, and — the essential part — **an assertion that applying the correction produces compiling source.** This suite is the proof of D2 and should be the largest in the project.
-**T-E — Refactor.** For each command: blast radius correctness, post-refactor absence of the old state, roundtrip byte-identity, and refusal-on-incomplete-radius.
+**T-E — Refactor.** For each command: blast radius correctness, post-refactor absence of the old state, roundtrip reversal — byte-identity for the commands that guarantee it, structural identity of the program for every command — and refusal-on-incomplete-radius.
 **T-F — Build.** Manifest determinism (delete and rebuild), relocation invariance (move files, diff manifest modulo locations), and incremental latency benchmarked as a hard-failing test.
 **T-G — Runtime conformance.** Behavioral tests for each builtin. Protocol transparency: the same handler fixture exercised over HTTP and WebSocket must produce identical results.
 **T-META — Coverage.** Parses this document for requirement identifiers, parses the test suites for requirement annotations, asserts every requirement has at least one test. A requirement with no test is not a requirement.
@@ -136,3 +137,5 @@ The first artifact is therefore the reference under 40,000 characters, and the f
 ## Revisions
 
 2026-07-22 — §0 corrected: the most-repeated name is the unit keyword, not the language name (see docs/decisions/0002-unit-part.md). Revised per §1: requirements are revised when they fail to express the vision.
+
+2026-07-25 — **E4 revised** from byte-identical reversal to reversal of the program, with byte-identity kept as a property of the commands that have it (see docs/decisions/0018-reversibility-is-a-property-not-a-law.md). The vision asks that changing intent have computable blast radius and that changes be *provably contained*; it never asks that reversal be byte-exact. Byte-identity was a proof mechanism promoted to a law, and as a law it outranked E6: `move` already had to be carved out as an exception (ADR-0009), and any future refactor needing to add a declaration would have had to refuse correct work to preserve it. T-E's byte-identity assertions are all retained — the guarantee is weaker as a requirement and unchanged as a delivered fact. Revised per §1: requirements are revised when they fail to express the vision.

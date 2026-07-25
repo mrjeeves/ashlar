@@ -455,7 +455,7 @@ struct Tables {
     part_props: BTreeMap<String, BTreeMap<String, S>>,
     /// data-shape parts only: full name -> field name -> (shape, has default).
     data_shape_fields: BTreeMap<String, BTreeMap<String, (S, bool)>>,
-    /// full part name -> names of its storage (state/stored, maybe owned) props —
+    /// full part name -> names of its storage (state/stored, maybe peruser) props —
     /// the only legal keys of a `stack` return literal.
     storage_props: BTreeMap<String, BTreeSet<String>>,
     /// foreign full name and per-space bare -> function shape.
@@ -2332,17 +2332,17 @@ mod tests {
 
     #[test]
     fn foreign_react_collection_must_resolve() {
-        // A reactive `reads`/`writes` naming no part is E001 — a typo must
+        // A reactive `watches`/`updates` naming no part is E001 — a typo must
         // not silently break reactivity (§9.10, §9.3).
         let r = check_sources(vec![(
             "t.ash".to_string(),
-            "space s\n\nforeign put: (x: text) -> bool writes Bogus\n".to_string(),
+            "space s\n\nforeign put: (x: text) -> bool updates Bogus\n".to_string(),
         )]);
         assert!(r.diags.iter().any(|d| d.id == "E001"), "{:?}", r.diags);
         // A declared data shape resolves clean.
         let r = check_sources(vec![(
             "t.ash".to_string(),
-            "space s\n\npart Entry {\n  x: text\n}\n\nforeign all: () -> [Entry] reads Entry\n"
+            "space s\n\npart Entry {\n  x: text\n}\n\nforeign all: () -> [Entry] watches Entry\n"
                 .to_string(),
         )]);
         assert!(!r.diags.iter().any(|d| d.id == "E001"), "{:?}", r.diags);

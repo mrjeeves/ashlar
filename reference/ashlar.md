@@ -32,7 +32,7 @@ same fix. Blocks are enclosed in `{ }`. Indentation is not significant; the
 formatter (`ashlar fmt`) canonicalizes it to two spaces. Commas separate items
 inside `( )`, `[ ]`, and inline `{ }` literals; a trailing comma is allowed.
 
-Reserved words: `space use part foreign state stored owned append deep stack
+Reserved words: `space use part foreign state stored peruser append deep stack
 pipe reverse let if else for in return true false none and or not`. A
 reserved word cannot name anything. The shape names of §5 (`text`, `number`,
 `bool`, `data`) are recognized only in shape positions and are ordinary names
@@ -131,15 +131,15 @@ deliberately.
 A property is declared as:
 
 ```
-[owned] [state|stored] name [kind [reverse]] [: shape] [= expression]
+[peruser] [state|stored] name [kind [reverse]] [: shape] [= expression]
 ```
 
 - With `= expression` and no storage word, the property is a **value
   property**: a build-time fact, immutable at runtime.
 - With a shape and no `=`, it is a **field**: data shapes and view parts
   declare fields; a field with `= expression` has a default.
-- With `state` or `stored`, optionally prefixed `owned` (§9.3), it is a
-  **state property**: runtime-mutable, initial value required. `owned`
+- With `state` or `stored`, optionally prefixed `peruser` (§9.3), it is a
+  **state property**: runtime-mutable, initial value required. `peruser`
   without a storage word is a compile error.
 
 Within one part, each property name is declared at most once per layer.
@@ -433,7 +433,7 @@ is a compile error naming both.
 
 State properties are the runtime-mutable data of a part. Two axes describe
 one: its **lifetime** — `state` (in memory) or `stored` (on disk) — and its
-**scope** — shared by everyone, or `owned` (per user).
+**scope** — shared by everyone, or `peruser`.
 
 ```ash
 space chat.data
@@ -441,7 +441,7 @@ space chat.data
 part Store {
   state draft: text = ""                            // in memory, shared
   stored messages: {text: chat.data.Message} = {}   // on disk, shared
-  owned stored seen: number = 0                      // on disk, per user
+  peruser stored seen: number = 0                    // on disk, per user
 }
 ```
 
@@ -449,9 +449,9 @@ part Store {
 - `stored` — persisted by the runtime's embedded store, keyed by the
   property's full name; survives restarts. Values are validated against the
   current shape at startup, and a mismatch is a startup error.
-- `owned` — a modifier before `state` or `stored`: the value is scoped to
+- `peruser` — a modifier before `state` or `stored`: the value is scoped to
   the current user, so each signed-in user has their own, isolated from
-  every other by construction. Reading or writing an `owned` property with
+  every other by construction. Reading or writing a `peruser` property with
   no user in scope — an anonymous request, or a scheduled task, `spawn`, or
   `start` stack — is a runtime fault (§9.9), never a silently shared value.
   Whether a user is in scope is a fact about the call, not the declaration:
@@ -461,7 +461,7 @@ part Store {
 Every state property is reactive, and because views render on the server
 with no client code (§9.4) that reach is universal: any view that read a
 value re-renders when it changes. A shared value reaches every client's
-views; an `owned` value reaches only its own user's.
+views; a `peruser` value reaches only its own user's.
 
 Assignment (`name = expression`) rebinds a state property. Values themselves
 are immutable: to change a list or map, assign a new one
@@ -664,15 +664,15 @@ part Row {
   key: text
 }
 
-foreign save: (key: text) -> bool writes Row
-foreign all: () -> [Row] reads Row
+foreign save: (key: text) -> bool updates Row
+foreign all: () -> [Row] watches Row
 ```
 
-`reads <Shape>` makes the call a dependency edge — a view that calls it
-re-renders when the collection changes — and `writes <Shape>` marks that
+`watches <Shape>` makes the call a dependency edge — a view that calls it
+re-renders when the collection changes — and `updates <Shape>` marks that
 collection changed, so every view that read it re-renders and patches, across
 every connected client (§9.3). The collection is the data shape it names.
-`reads`/`writes` are contextual (ordinary names elsewhere); one that resolves
+`watches`/`updates` are contextual (ordinary names elsewhere); one that resolves
 to no part is E001.
 
 ### 9.11 std
@@ -734,11 +734,13 @@ to run on every edit.
 Refactors are commands, not text edits. Each one first computes and reports
 its complete blast radius from the manifest; applies atomically or not at
 all, refusing with a reason if the radius cannot be fully computed; leaves no
-stale reference behind; and is reversible. `rename` and `rekind` reversed
-yield byte-identical source; `move` does too when the part sits at its
-file's end and no `use` line needed adding — `move` adds `use` lines but
-never removes them. `radius` alone answers "what would this touch"
-without touching it.
+stale reference behind; and reverses to the same program. Reversal restores
+the program, not necessarily the bytes: `rename` and `rekind` substitute
+names in place and reversed yield byte-identical source, while `move` adds
+the `use` lines both sides need and never removes one, so reversing it
+returns the same program with those lines still present (ADR-0018). Every
+added line appears in the radius. `radius` alone answers "what would this
+touch" without touching it.
 
 ## 12. What programs cannot do
 

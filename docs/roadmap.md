@@ -9,23 +9,38 @@ with no passing test is not a satisfied requirement (T-META). An empty open
 section is a claim, so it is kept honest: an item leaves it only when its
 test runs for real.
 
-## Open — 1 item
+## Open — nothing
 
-**T-A3 has not been re-run since the language grew.** Requirements §9 calls
-the cold-read gate "the primary gate on syntax decisions," and its last
-scoring run is `suites/t_a3/results/2026-07-22-sonnet-run2.md` (23/24). Since
-then the surface gained `owned` (ADR-0015) and the `reads`/`writes` foreign
-annotation (ADR-0014's reactive stage). `11-owned.ash` was added to the corpus
-but has never been scored, and `reads`/`writes` has no fixture at all — it is
-also the riskiest of the three to cold-read, being a contextual keyword that a
-reader could take for a property name. The transport vocabulary
-(`via`/`worker`/`native`/`http`) lives in `foreign.json`, not the language, so
-it is out of A3's scope by construction.
+The one item this page carried — re-scoring the two A3 fixtures whose keywords
+changed — is done. **Run 4** (`suites/t_a3/results/2026-07-25-sonnet-run4.md`)
+re-read `11-peruser` and `25-foreign-reactive` under the full protocol: both
+PASS, so the corpus stands at **25/25** (23 unchanged run-3 passes plus these
+two). `peruser` passed unanimously with all four bullets, closing A3-F5.
 
-Proving this needs a fresh reader with no reference in context, per
-`suites/t_a3/PROTOCOL.md` — it is deliberately not a CI job, and it is the one
-requirement in this document that code cannot satisfy. Until it runs, A3 is
-claimed for 22 of 24 fixtures, not 24.
+One observation is recorded rather than acted on, because acting on it would be
+over-fitting a single reader: `25-foreign-reactive` passed on a 2–1 panel, and
+the strict judge's dissent localizes to the write half — `watches` conveys the
+dependency outright, while `updates` conveyed invalidation only by inference
+from its partner ("presumably including when `save` runs"). Still a large
+improvement on `reads`/`writes`, which conveyed no reactivity at all. If a
+future run fails there, `updates` is the word to look at first, and
+`invalidates` already scored 2/2 as a candidate.
+
+Two things stay true regardless and need no decision: **cold-read the construct,
+never the word** (ADR-0015 scored `personal` 3/3 on the bare word; in its slot it
+reads as `private`), and **the next A3 run should be a full 25, not another
+targeted re-score**, so the whole corpus is scored against one model at one time.
+
+Delivered 2026-07-25 — **the two A3 run-3 findings are fixed in the language**
+(ADR-0019). `owned` → `peruser` and `reads`/`writes` → `watches`/`updates`,
+across the reserved-word list, tokens, parser, AST and resolved models, the
+composer's storage identity, the formatter, the evaluator's per-user scoping and
+its two runtime faults, `E029`'s cause and machine fix, reference
+§1/§4/§9.3/§9.10, the diagnostics catalog, G4, the `locker` and `ledger`
+examples, and the A3 fixtures. `owned`, `reads`, and `writes` are ordinary
+identifiers again — `commons` already declares a property called `reads`, which
+is now a live proof of it. E029's machine fix still converges in one round
+(D2), and all 15 examples check clean and canonically formatted.
 
 Delivered 2026-07-25 — **the binding file is a name-bearing fact, and the
 name-governing systems now see it.** An audit of ADR-0017 against the vision
@@ -99,8 +114,10 @@ Every item this page has carried is delivered, tested, and moved off:
 - **A5 reference budget** — under 40,000 bytes with the distribution
   printed on every run; §9.10 is the largest construct as the boundary
   grew (ADR-0017), still far under the 20% per-construct cap.
-- **T-A3 surface findings** — resolved by ADR-0008, validated by gate
-  run 2 (23/24 cold-read PASS).
+- **T-A3 surface findings** — the run-1/2 findings resolved by ADR-0008,
+  validated by gate run 2 (23/24). Run 3 (2026-07-25, 23/25) cleared the bar
+  again and raised two findings, both fixed by ADR-0019 and re-scored as
+  passing by run 4 — the corpus stands at 25/25.
 - **Showcase corpus** — fifteen complete projects, crowned by
   `commons`: a full team chat (auth, rooms, DMs, live messaging,
   presence-by-lifecycle, unread counts, plus moderation and mentions as
@@ -122,11 +139,11 @@ Every item this page has carried is delivered, tested, and moved off:
 
 What remains is not debt but doctrine, named where it lives:
 `Unknown`-permissiveness for what the checker cannot prove (no false
-positives, check.rs module docs), `move`'s byte-identity class
-(ADR-0009), and the open cold-read thread recorded in the run-2 results
-file. (The once-weak v1 password hash is gone: v2 is salted, iterated
-PBKDF2, and v1 hashes upgrade transparently on login.) New requirements
-enter here as new numbered items; none are open today.
+positives, check.rs module docs) and reversal-as-property rather than
+byte-identity-as-law (ADR-0018, generalizing ADR-0009's `move` trade). (The
+once-weak v1 password hash is gone: v2 is salted, iterated PBKDF2, and v1
+hashes upgrade transparently on login.) New requirements enter here as new
+numbered items; the open ones are listed at the top of this page.
 
 One proposed trajectory is partly delivered: **ADR-0014** sketches the data
 layer beyond the `foreign` shim the `ledger` example demonstrates — a
@@ -139,9 +156,11 @@ Delivered so far: Stage 1 (the SQLite-over-`foreign` example) and, on
 `recent`/`total` `reads Entry`, `record` `writes Entry`, so a write from any
 client patches every open `ledger` board live — no new threads, no `stored`
 backend, a typo'd collection caught as E001, and a T-Examples test that drives
-the cross-client patch. The `stored` database backend, the Postgres client,
-and horizontal scale remain proposed, awaiting a design decision before any
-further runtime code.
+the cross-client patch. The `stored` database backend, the Postgres client, and
+horizontal scale remain unbuilt — not blocked on a decision, since the design is
+this page's to make, but un-started: no requirement compels them and nothing in
+the suite is failing for want of them. They are speculative scope, and scope is
+the one thing the hierarchy does not hand you.
 
 Delivered 2026-07-24 — **ADR-0015** re-cut the storage taxonomy along its
 two real axes. `synced` is retired: the runtime never gave it any behavior
@@ -151,8 +170,9 @@ universal. `owned` is added, a per-user scope modifier on `state`/`stored`
 manual `[req.user.id]` keying that invites IDOR disappears. It fails loud
 where there is no user (an anonymous request, a scheduled task, `spawn`, or
 `start` stack): a runtime fault, never a silently shared value. The word
-was chosen by a T-A3 cold read (`owned`/`personal`/`user` all read per-user
-3/3; `private` misread as OOP access-control). Shipped with the runtime
+was chosen by a T-A3 cold read of the WORD (`owned`/`personal`/`user` all read
+per-user 3/3; `private` misread as OOP access-control) — a method ADR-0019 later
+showed to be the wrong unit of measurement, respelling the keyword `peruser`. Shipped with the runtime
 scoping, per-user persistence keyed by the stable account id, `E029`
 (`owned` needs a storage word), the `ticker` rename, the `locker` example
 (two users, isolated and persisted, driven by the suite), a T-G fault

@@ -87,7 +87,7 @@ using the date the run was performed and a short model identifier (e.g.
 - the model under test and the date;
 - for each of the 25 snippets: pass/fail, which bullets were checked correct
   (by number), and whether an actively-wrong-claim flag was raised;
-- the overall corpus score (`<passing>/24`) and pass/fail against the 80%
+- the overall corpus score (`<passing>/25`) and pass/fail against the 80%
   bar;
 - verbatim or lightly-trimmed candidate answers for any snippet that
   failed, so a syntax fix can be judged against the actual wrong reading.

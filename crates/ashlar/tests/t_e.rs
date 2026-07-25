@@ -336,6 +336,114 @@ part Two {
 }
 
 #[test]
+fn t_e_move_outside_the_byte_class_still_reverses_to_the_same_program() {
+    // covers: E4 as revised (ADR-0018). Byte-identity is a property specific
+    // commands have, not a law over all of them — so the guarantee that
+    // carries the vision's weight has to be asserted on its own terms:
+    // reversal restores the PROGRAM (same parts, same composition order, same
+    // manifest modulo recorded locations), even where the SOURCE legitimately
+    // differs because the move added a `use` line it reported.
+    //
+    // Without this test, relaxing E4 would just be lowering the bar.
+    let a = r#"space a
+
+part One {
+  greet = () => "hi"
+}
+
+part Two {
+  n = len(One.greet())
+}
+"#;
+    let b = "space b\n\npart Three {\n  m = 2\n}\n";
+    let c = "space c\nuse a\n\npart Four {\n  k = () => Two.n + One.greet()\n}\n";
+    let srcs = sources(&[("a.ash", a), ("b.ash", b), ("c.ash", c)]);
+
+    let before = ashlar::check_sources(srcs.clone());
+    assert!(before.diags.is_empty(), "{:?}", before.diags);
+
+    // Forward: `a.Two` -> `b`, which must add `use a` to b and `use b` to c.
+    let plan = refactor::plan_move(&srcs, "a.Two", "b").unwrap();
+    let moved = refactor::execute(&srcs, &plan).unwrap();
+    let moved_vec: Vec<(String, String)> =
+        moved.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+
+    // Back again.
+    let back = refactor::plan_move(&moved_vec, "b.Two", "a").unwrap();
+    let restored = refactor::execute(&moved_vec, &back).unwrap();
+    let restored_vec: Vec<(String, String)> =
+        restored.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
+
+    // The source is NOT byte-identical, and that is the point of this test:
+    // the added `use` lines remain, exactly as the radius said they would.
+    assert_ne!(
+        &restored["b.ash"], &srcs[1].1,
+        "this fixture is meant to sit OUTSIDE the byte-identical class; if it \
+         now round-trips byte-for-byte the test no longer proves anything"
+    );
+
+    // What must be restored is the program's MEANING. First: it still checks
+    // clean — which is also what proves the widened `use` graph introduced no
+    // ambiguity, since an ambiguity would be a B3 error right here.
+    let after = ashlar::check_sources(restored_vec);
+    assert!(after.diags.is_empty(), "{:?}", after.diags);
+
+    // Same parts, with the same homes.
+    let homes = |r: &ashlar::CheckResult| -> Vec<(String, String)> {
+        r.program
+            .parts
+            .iter()
+            .map(|(n, p)| (n.clone(), p.home.clone()))
+            .collect()
+    };
+    assert_eq!(homes(&before), homes(&after), "E4: the part set or its homes changed");
+    assert_eq!(
+        after.program.parts["a.Two"].home, "a",
+        "`Two` did not come home"
+    );
+
+    // Same composition order, and every part's layers in the same order.
+    assert_eq!(
+        before.program.order, after.program.order,
+        "E4: composition order changed across a reversal"
+    );
+    for (name, p_before) in &before.program.parts {
+        let spaces_before: Vec<&String> = p_before.layers.iter().map(|l| &l.space).collect();
+        let spaces_after: Vec<&String> = after.program.parts[name]
+            .layers
+            .iter()
+            .map(|l| &l.space)
+            .collect();
+        assert_eq!(spaces_before, spaces_after, "E4: `{}` composes differently", name);
+    }
+
+    // The `use` graph may only have WIDENED. ADR-0009's rule is that a move
+    // never removes a `use`, because removal can cut another space's
+    // transitive closure — so the honest invariant is a superset, not equality.
+    for (space, info_before) in &before.program.spaces {
+        let info_after = &after.program.spaces[space];
+        assert!(
+            info_before.uses.is_subset(&info_after.uses),
+            "E4: reversal REMOVED a `use` from `{}`: {:?} -> {:?}",
+            space,
+            info_before.uses,
+            info_after.uses
+        );
+        assert!(
+            info_before.closure.is_subset(&info_after.closure),
+            "E4: reversal narrowed `{}`'s visibility",
+            space
+        );
+    }
+    // And the widening is real in this fixture, so the subset check above is
+    // load-bearing rather than vacuously an equality.
+    assert!(
+        before.program.spaces["b"].uses.len() < after.program.spaces["b"].uses.len(),
+        "fixture no longer widens the use graph; the subset assertion proves nothing"
+    );
+}
+
+#[test]
 fn t_e_rename_stored_prop_and_part_carry_state_migrations() {
     // covers: the ADR-0007 orphaned-rows note, closed — plans name the
     // stored keys they migrate, and the CLI applies them to

@@ -18,6 +18,34 @@ Lower layers yield to higher ones — always. "The test is inconvenient"
 is never a reason to change a test; "the test mis-encodes the
 requirement" is the only one.
 
+**The hierarchy is a grant of authority, not only a tie-breaker.** Exactly
+one layer is user-controlled: the vision. Everything below it — the
+requirements, the reference, the tests, the corpora, the ADRs, the code —
+is yours to change without asking, *provided the change serves the layer
+above it and lands with the evidence and tests that show it does.* That is
+the point of writing the hierarchy down: an agent that stops to request
+permission for a requirements revision has failed the same way an agent
+that quietly weakens a test has failed. Both substitute someone's comfort
+for the argument from the layer above.
+
+So: if a gate you can run says a construct is wrong, fix the construct.
+If a requirement fails the vision, revise the requirement and record why.
+Do not mark a decision "proposed" and wait, when the evidence to decide it
+is already in hand — write the ADR as accepted and apply it.
+
+Stop and say so in exactly two cases:
+
+1. **The vision itself looks wrong.** That is the user's to change; you
+   may argue for it, never edit it.
+2. **You cannot get the evidence.** A cold-read gate needs a fresh reader,
+   a benchmark needs a machine — if the deciding evidence is out of reach,
+   say what you would need rather than guessing and calling it a decision.
+
+Neither case covers "this change is large" or "this reverses an earlier
+ADR." Large and reversing are normal. An earlier ADR is a record of a
+decision made on the evidence then available; new evidence outranks it,
+and superseding one is ordinary work.
+
 ## What outranks what, concretely
 
 - **`reference/ashlar.md` is the language contract.** Every sentence in
@@ -60,8 +88,17 @@ requirement" is the only one.
    test, not a discovery. New feature → consider showing it in an
    example; new example → it gets a runtime test.
 9. **Refactors never partially apply** (E-series): blast radius first,
-   atomic apply, post-verify rollback, byte-identical reversibility
-   (`move`'s stated class excepted — ADR-0009).
+   atomic apply, post-verify rollback, and reversal to the same PROGRAM
+   — same parts and homes, same composition order, and a `use` closure
+   that may only have WIDENED (not the same manifest: `move` never
+   removes a `use`, so reversal leaves visibility broader, and a widening
+   that changed a resolution would be the B3 error post-verify refuses).
+   Byte-identical reversal is a property specific commands have
+   (`rename`, `rekind`, and `move` within ADR-0009's class), not a law
+   over all of them: a refactor may add a declaration it reported rather
+   than refuse correct work (ADR-0018). Do not weaken a byte-identity
+   assertion that currently passes — the requirement got weaker, the
+   delivered facts did not.
 
 ## The suite is the definition of done
 

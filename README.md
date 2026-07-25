@@ -106,7 +106,12 @@ mechanical, and each has teeth:
 - **Guessable.** The whole surface fits in one ≤40,000-byte reference
   (`reference/ashlar.md`), and guessability is *gate-tested*: fresh models
   cold-read program snippets and their misreads are design bugs
-  (`suites/t_a3/`, last run 23/24).
+  (`suites/t_a3/`, currently **25/25**). It earns that: run 3 scored 23/25 and
+  its two failures were real design bugs — `owned` and `reads`/`writes` both
+  cold-read to the wrong mental model — so they became `peruser` and
+  `watches`/`updates`
+  ([ADR-0019](docs/decisions/0019-a3-run3-findings-owned-and-reactive-annotation.md)),
+  and run 4 re-scored both as passing.
 - **Derivable.** Ashlar minimizes semantic freedom so the toolchain can
   compute and explain what names mean, which implementations run, and what
   a change affects ([ADR-0012](docs/decisions/0012-semantic-freedom-and-derivability.md)).
@@ -115,7 +120,10 @@ mechanical, and each has teeth:
   (check → apply fixes → check) converges in a mean of **1.00 rounds**
   over the whole error corpus.
 - **Refactors are commands, not text edits.** Blast radius reported first,
-  applied atomically or not at all, forward-then-back byte-identical.
+  applied atomically or not at all, and reversing one restores the same
+  program. Renaming in place restores every byte; a refactor that must add a
+  declaration keeps the line it reported rather than refuse correct work
+  ([ADR-0018](docs/decisions/0018-reversibility-is-a-property-not-a-law.md)).
 - **Fast enough to verify every edit.** A single-file change in a
   1,000-file project re-checks in ~40ms (hard-gated under 100ms).
 
@@ -126,7 +134,7 @@ mechanical, and each has teeth:
 | `reference/` | The complete language reference — the source of truth for every language decision. |
 | `docs/` | Vision, requirements, roadmap, diagnostics catalog, and the ADRs (see `docs/README.md`). |
 | `AGENTS.md` | The agent-facing working contract — hierarchy, hard rules, sync duties. Load-bearing (T-META enforces it). |
-| `examples/` | Fifteen complete runnable projects — including `commons` (a full team chat), `ledger` (a real SQLite datastore over the `foreign` boundary), `locker` (per-user `owned` storage that isolates each user by construction), and `abacus` (a Python worker, no compiler in sight) — compiled, format-checked, AND runtime-driven by the suite. All wear one dark house style (ADR-0016). |
+| `examples/` | Fifteen complete runnable projects — including `commons` (a full team chat), `ledger` (a real SQLite datastore over the `foreign` boundary), `locker` (per-user `peruser` storage that isolates each user by construction), and `abacus` (a Python worker, no compiler in sight) — compiled, format-checked, AND runtime-driven by the suite. All wear one dark house style (ADR-0016). |
 | `showcase/` | A live gallery of all fifteen: `serve.sh` runs each on its own port, `index.html` swaps between them in a frame. |
 | `suites/` | Test corpora: the cold-read gate protocol and the loud-failure fixture corpus. |
 | `crates/` | The Rust implementation and its 17 test binaries. |
@@ -149,6 +157,12 @@ the vision. Nothing overrides the vision.
 ## Status
 
 Complete against its own definitions: every sentence in the reference has
-code and a test behind it, the roadmap ledger (`docs/roadmap.md`) is
-empty, and the final increments were adversarially re-reviewed. The suite
-is 17 green test binaries in debug and release with zero warnings.
+code and a test behind it, and the increments were adversarially
+re-reviewed. The suite is 17 green test binaries in debug and release with
+zero warnings.
+
+The ledger (`docs/roadmap.md`) is currently empty, and one note is carried there
+anyway: `25-foreign-reactive` passed run 4 on a 2–1 panel, with the dissent
+localizing to `updates` rather than `watches`. It is recorded instead of acted
+on, because respelling a keyword off one reader would repeat ADR-0015's mistake
+in the opposite direction.

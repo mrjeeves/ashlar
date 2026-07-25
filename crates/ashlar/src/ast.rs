@@ -64,18 +64,18 @@ pub struct KindDecl {
     pub span: Span,
 }
 
-/// `[owned] [storage] name [kind [reverse]] [: shape] [= expression]`
+/// `[peruser] [storage] name [kind [reverse]] [: shape] [= expression]`
 ///
-/// `owned` scopes a `state`/`stored` property to the current user: each
+/// `peruser` scopes a `state`/`stored` property to the current user: each
 /// authenticated user has their own value, isolated from every other
 /// user (reference §9.3, ADR-0015).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Prop {
     pub name: String,
     pub name_span: Span,
-    /// The `owned` scope modifier: per-user storage. Only meaningful with a
-    /// `storage` class; the parser rejects `owned` on a value property.
-    pub owned: bool,
+    /// The `peruser` scope modifier: per-user storage. Only meaningful with a
+    /// `storage` class; the parser rejects `peruser` on a value property.
+    pub peruser: bool,
     pub storage: Option<(Storage, Span)>,
     pub kind: Option<KindDecl>,
     pub shape: Option<SShape>,
@@ -101,7 +101,7 @@ pub struct ForeignDecl {
 /// data-shape name — "the Shape is the schema" (ADR-0014).
 #[derive(Debug, Clone, PartialEq)]
 pub struct ForeignReact {
-    pub writes: bool,
+    pub updates: bool,
     pub collection: Name,
     pub span: Span,
 }

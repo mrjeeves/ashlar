@@ -18,7 +18,7 @@ use crate::ast::{
 };
 use crate::diag::{
     Diag, Edit, Level, E007_PARSE, E016_RESERVED_WORD, E018_FOREIGN_TOPLEVEL, E020_BAD_REVERSE,
-    E022_SPACE_HEADER, E023_FOREIGN_STMT, E029_OWNED_NEEDS_STORAGE,
+    E022_SPACE_HEADER, E023_FOREIGN_STMT, E029_PERUSER_NEEDS_STORAGE,
 };
 use crate::tokens::{Pos, Span, Tok, Token};
 
@@ -426,8 +426,8 @@ impl<'a> Parser<'a> {
 
     /// `[storage] name [kind [reverse]] [":" shape] ["=" expr]`
     fn parse_prop(&mut self) -> Option<Prop> {
-        // `owned` scope modifier precedes the storage class (§4).
-        let owned_span = if self.at(&Tok::KwOwned) {
+        // `peruser` scope modifier precedes the storage class (§4).
+        let peruser_span = if self.at(&Tok::KwPeruser) {
             let sp = self.here_span();
             self.bump();
             Some(sp)
@@ -447,21 +447,21 @@ impl<'a> Parser<'a> {
             }
             _ => None,
         };
-        // `owned` scopes a storage class to the current user; alone it is a
+        // `peruser` scopes a storage class to the current user; alone it is a
         // plausible-but-wrong construct (A4): fail loud with the fix.
-        if let Some(sp) = owned_span {
+        if let Some(sp) = peruser_span {
             if storage.is_none() {
                 self.diags.push(
                     Diag::new(
-                        E029_OWNED_NEEDS_STORAGE,
+                        E029_PERUSER_NEEDS_STORAGE,
                         Level::Error,
                         &self.file,
                         sp,
-                        "`owned` scopes a `state` or `stored` property to the current user; it cannot stand alone."
+                        "`peruser` scopes a `state` or `stored` property to the current user; it cannot stand alone."
                             .to_string(),
                     )
                     .with_fix(
-                        "Write `owned state` or `owned stored`.".to_string(),
+                        "Write `peruser state` or `peruser stored`.".to_string(),
                         vec![Edit {
                             file: self.file.clone(),
                             start: sp.end,
@@ -472,7 +472,7 @@ impl<'a> Parser<'a> {
                 );
             }
         }
-        let owned = owned_span.is_some();
+        let peruser = peruser_span.is_some();
 
         let (name, name_span) = self.name_ident()?;
 
@@ -583,7 +583,7 @@ impl<'a> Parser<'a> {
         Some(Prop {
             name,
             name_span,
-            owned,
+            peruser,
             storage,
             kind,
             shape,
@@ -640,20 +640,20 @@ impl<'a> Parser<'a> {
     /// contextual — ordinary identifiers everywhere else, special only in
     /// this one position, so no name is reserved.
     fn parse_foreign_react(&mut self) -> Option<crate::ast::ForeignReact> {
-        let writes = match self.cur() {
-            Some(Tok::Ident(s)) if s.as_str() == "reads" => false,
-            Some(Tok::Ident(s)) if s.as_str() == "writes" => true,
+        let updates = match self.cur() {
+            Some(Tok::Ident(s)) if s.as_str() == "watches" => false,
+            Some(Tok::Ident(s)) if s.as_str() == "updates" => true,
             _ => return None,
         };
-        self.bump(); // `reads` / `writes`
+        self.bump(); // `watches` / `updates`
         let (collection, span) = match self.dotted_name() {
             Some(ns) => ns,
             None => {
-                self.err_expected("a collection name after `reads`/`writes`");
+                self.err_expected("a collection name after `watches`/`updates`");
                 return None;
             }
         };
-        Some(crate::ast::ForeignReact { writes, collection, span })
+        Some(crate::ast::ForeignReact { updates, collection, span })
     }
 
     // -- shapes ---------------------------------------------------------------
@@ -1500,18 +1500,19 @@ mod tests {
     }
 
     #[test]
-    fn foreign_reads_writes_is_parsed_and_contextual() {
-        // `reads`/`writes` after a foreign's return shape carry reactive
-        // intent (§9.10).
+    fn foreign_watches_updates_is_parsed_and_contextual() {
+        // `watches`/`updates` after a foreign's return shape carry reactive
+        // intent (§9.10, ADR-0019).
         let f = parse_ok(
-            "space s\n\npart Entry {\n  x: text\n}\n\nforeign put: (x: text) -> bool writes Entry\nforeign all: () -> [Entry] reads Entry\n",
+            "space s\n\npart Entry {\n  x: text\n}\n\nforeign put: (x: text) -> bool updates Entry\nforeign all: () -> [Entry] watches Entry\n",
         );
-        let put = f.foreigns[0].react.as_ref().expect("writes parsed");
-        assert!(put.writes && put.collection == vec!["Entry".to_string()]);
-        let all = f.foreigns[1].react.as_ref().expect("reads parsed");
-        assert!(!all.writes && all.collection == vec!["Entry".to_string()]);
-        // They are contextual — ordinary property names everywhere else.
-        let g = parse_ok("space s\n\npart W {\n  reads = 1\n  writes = 2\n}\n");
+        let put = f.foreigns[0].react.as_ref().expect("updates parsed");
+        assert!(put.updates && put.collection == vec!["Entry".to_string()]);
+        let all = f.foreigns[1].react.as_ref().expect("watches parsed");
+        assert!(!all.updates && all.collection == vec!["Entry".to_string()]);
+        // They are contextual — ordinary property names everywhere else. The
+        // retired spellings must be ordinary names now too.
+        let g = parse_ok("space s\n\npart W {\n  watches = 1\n  updates = 2\n  reads = 3\n  writes = 4\n}\n");
         assert_eq!(g.parts.len(), 1);
     }
 
@@ -1902,7 +1903,7 @@ fn kw_text(t: &Tok) -> Option<&'static str> {
         Tok::KwForeign => "foreign",
         Tok::KwState => "state",
         Tok::KwStored => "stored",
-        Tok::KwOwned => "owned",
+        Tok::KwPeruser => "peruser",
         Tok::KwAppend => "append",
         Tok::KwDeep => "deep",
         Tok::KwStack => "stack",

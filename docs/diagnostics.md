@@ -42,7 +42,7 @@ Rules for every diagnostic (D1):
 | E026 | G4 | composer | part has `every` but no `run` function property | note: add `run = () => { ... }` |
 | E027 | C5 | composer | layer states a different storage word than the property's identity (omitting is allowed) | edits restating the declared storage |
 | E028 | C4 | composer | `append`/`deep` on a number, bool, or function value, or layered literals of differing mergeable shapes | note states the mergeable shapes |
-| E029 | A4 | parser | `owned` with no `state`/`stored` word — it is a per-user scope modifier, not a storage class | fix inserts ` stored` to make `owned stored` |
+| E029 | A4 | parser | `peruser` with no `state`/`stored` word — it is a per-user scope modifier, not a storage class | fix inserts ` stored` to make `peruser stored` |
 | W001 | C3 | resolver | two spaces layer one part and neither uses the other | edits adding the `use` that orders them (to the lexicographically later space's file, after its header) |
 
 E013 also covers a duplicate key inside one map literal (same layer, same

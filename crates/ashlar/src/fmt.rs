@@ -281,7 +281,7 @@ impl Printer {
         self.out.push_str(") -> ");
         self.out.push_str(&shape_text(&d.ret));
         if let Some(r) = &d.react {
-            self.out.push_str(if r.writes { " writes " } else { " reads " });
+            self.out.push_str(if r.updates { " updates " } else { " watches " });
             self.out.push_str(&crate::ast::name_to_string(&r.collection));
         }
         self.close_line(line);
@@ -290,8 +290,8 @@ impl Printer {
     fn prop(&mut self, p: &Prop) {
         let line = p.name_span.start.line;
         self.open_line(line);
-        if p.owned {
-            self.out.push_str("owned ");
+        if p.peruser {
+            self.out.push_str("peruser ");
         }
         if let Some((s, _)) = &p.storage {
             self.out.push_str(match s {
@@ -667,7 +667,7 @@ fn prec(e: &Expr) -> u8 {
 /// including reserved words, which would re-lex as keywords — stays quoted.
 fn is_bare_key(k: &str) -> bool {
     const RESERVED: &[&str] = &[
-        "space", "use", "part", "foreign", "state", "stored", "owned", "append", "deep",
+        "space", "use", "part", "foreign", "state", "stored", "peruser", "append", "deep",
         "stack", "pipe", "reverse", "let", "if", "else", "for", "in", "return", "true",
         "false", "none", "and", "or", "not",
     ];

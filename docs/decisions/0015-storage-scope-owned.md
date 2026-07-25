@@ -1,5 +1,12 @@
 # ADR-0015: Storage scope — retire `synced`, add `owned` (per-user state)
 
+**Superseded in part by [ADR-0019](0019-a3-run3-findings-owned-and-reactive-annotation.md):**
+the keyword this ADR chose, `owned`, is now spelled `peruser`. The two-axis
+taxonomy and everything else here stands — only the word changed, after A3 gate
+run 3 showed `owned` cold-reading as encapsulation rather than per-user scope.
+The word-choice reasoning below is left exactly as written: it is the record of
+a decision made in good faith on a *word-level* cold read, and ADR-0019 explains
+why that method, not that judgment, was the mistake.
 Date: 2026-07-23
 
 Status: accepted

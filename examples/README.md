@@ -144,8 +144,8 @@ that links the system `libsqlite3` over the C ABI. SQL is the persistence
 peer of CSS: **named in Ashlar, defined outside it** — no query string and
 no connection string ever appears in source (B5; the shim reads
 `ASHLAR_LEDGER_DB`, a deployment fact). The board reads the ledger with
-`recent` and `total` — both declared `reads Entry` — while `record` is
-`writes Entry`, so the SQLite store is **reactive** (§9.3): an entry added in
+`recent` and `total` — both declared `watches Entry` — while `record` is
+`updates Entry`, so the SQLite store is **reactive** (§9.3): an entry added in
 one window (over the socket, or through the `/add` API) patches every open
 board live, running total and all, with no reload. The total is a SQL `SUM`
 in the shim, so the same `foreign` boundary that runs a fetch also carries a
@@ -179,13 +179,14 @@ does. Needs `python3`; the driving test skips loudly without it.
 
 ## locker
 
-Per-user storage in one keyword (ADR-0015). `owned stored notes` on a
+Per-user storage in one keyword (ADR-0015, spelled by ADR-0019).
+`peruser stored notes` on a
 singleton gives every signed-in user their OWN list, saved to disk and
 isolated from everyone else's — no keying by user id anywhere, and no way
-to reach another user's data. `owned` has no meaning without a user, so the
+to reach another user's data. `peruser` has no meaning without a user, so the
 routes guard with `allow`; an anonymous read would fault, never fall
 through to a shared value. The test signs up two people, has each keep a
 note, and proves each sees only their own — then restarts the server and
 logs back in to show the notes persisted, still isolated, keyed by the
 stable account id. The `/` page is a gated board: sign in and keep notes,
-each user seeing only their own — the owned read rendering right in the view.
+each user seeing only their own — the per-user read rendering right in the view.
