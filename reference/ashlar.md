@@ -32,7 +32,7 @@ same fix. Blocks are enclosed in `{ }`. Indentation is not significant; the
 formatter (`ashlar fmt`) canonicalizes it to two spaces. Commas separate items
 inside `( )`, `[ ]`, and inline `{ }` literals; a trailing comma is allowed.
 
-Reserved words: `space use part foreign state stored peruser append deep stack
+Reserved words: `space use part foreign state stored peruser setting append deep stack
 pipe reverse let if else for in return true false none and or not`. A
 reserved word cannot name anything. The shape names of §5 (`text`, `number`,
 `bool`, `data`) are recognized only in shape positions and are ordinary names
@@ -131,7 +131,7 @@ deliberately.
 A property is declared as:
 
 ```
-[peruser] [state|stored] name [kind [reverse]] [: shape] [= expression]
+[setting] [peruser] [state|stored] name [kind [reverse]] [: shape] [= expression]
 ```
 
 - With `= expression` and no storage word, the property is a **value
@@ -141,6 +141,9 @@ A property is declared as:
 - With `state` or `stored`, optionally prefixed `peruser` (§9.3), it is a
   **state property**: runtime-mutable, initial value required. `peruser`
   without a storage word is a compile error.
+- With `setting`, it is a **setting** (§9.12): the shape is source, the value
+  is a deployment fact. A shape is required; a storage word is a compile
+  error, since a setting is fixed before the program runs.
 
 Within one part, each property name is declared at most once per layer.
 
@@ -674,6 +677,34 @@ collection changed, so every view that read it re-renders and patches, across
 every connected client (§9.3). The collection is the data shape it names.
 `watches`/`updates` are contextual (ordinary names elsewhere); one that resolves
 to no part is E001.
+
+### 9.12 Settings
+
+A program often depends on something it cannot know when it is written — where
+another service is, a key, a limit. `setting` declares that dependency: the
+name and shape are source, the value arrives at deployment.
+
+```ash
+space site
+
+part app {
+  port = 8080
+  setting endpoint: text
+  setting retries: number = 3
+}
+```
+
+Values live in `settings.json` at the project root (or at `ASHLAR_SETTINGS`),
+a JSON object keyed by full property name — `{"site.app.endpoint": "..."}`.
+A setting with a default is optional; one without is required, and starting
+without it fails before the first request, naming every missing setting and
+its shape at once. A supplied value that does not fit the declared shape fails
+the same way. Read a setting like any other property (`site.app.endpoint`);
+it is immutable, so it cannot be assigned.
+
+This is how a location reaches a program without being written in source
+(B5): the name binds, the value is deployment's to supply. A key naming no
+declared setting is `E001`, and a value of the wrong shape is `E006`.
 
 ### 9.11 std
 

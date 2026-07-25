@@ -35,6 +35,24 @@ finding to raise against the language, not the test.
    this repo, or any other Ashlar material in context — no system prompt
    excerpting the spec, no retrieval over the repo, nothing. The only prior
    knowledge it may draw on is whatever it already knows unprompted.
+
+   **This includes the repository's project instructions, which are injected
+   automatically.** An in-repo agent receives `CLAUDE.md` — and everything it
+   `@`-imports — before it sees any prompt. Forbidding the reader to open
+   files does not help: nothing was opened. This is how runs 3 and 4 were
+   invalidated (ADR-0021), and why `AGENTS.md` no longer states any language
+   fact, a rule with a test
+   (`t_meta_agents_md_does_not_teach_the_language`).
+
+   Therefore the isolation is **verified, not assumed**: before or after the
+   read, ask each reader to report verbatim the project instructions it was
+   given, and record that report in the results file (once per run is enough
+   if every reader is spawned identically). If it contains a statement of
+   Ashlar syntax or semantics, the run is void — fix the leak and re-run.
+   Knowing the project's name and that it is a composition language is an
+   unavoidable consequence of running inside the repo; a run so isolated is
+   **reduced-contamination** and must be labelled that way, not "cold". A
+   provably cold read needs a reader outside this working directory.
 2. **One snippet at a time.** For each of the 25 `.ash` files, in a clean
    turn (no memory of previous snippets in the run — treat each as an
    independent cold read), paste the file's contents verbatim and ask
@@ -85,6 +103,9 @@ using the date the run was performed and a short model identifier (e.g.
 `2026-07-22-claude-sonnet-5.md`). That file records, at minimum:
 
 - the model under test and the date;
+- **the isolation evidence from step 1** — what project instructions the
+  readers received, and whether the run is labelled cold or
+  reduced-contamination;
 - for each of the 25 snippets: pass/fail, which bullets were checked correct
   (by number), and whether an actively-wrong-claim flag was raised;
 - the overall corpus score (`<passing>/25`) and pass/fail against the 80%
@@ -110,3 +131,12 @@ Bullets about unexhibited behavior move to a separate reference-in-context
 comprehension suite. The strict 2026-07-22 result stands as recorded;
 re-baseline against the recalibrated rubrics after the F1/F2 surface
 findings in that results file receive a design decision.
+
+2026-07-25 — Step 1 gained the project-instructions clause and the positive
+isolation check above, and "Recording results" gained the isolation-evidence
+line, after runs 3 and 4 were found to have read with `AGENTS.md`'s syntax
+section in their system prompts (ADR-0021). The corpus and rubrics are
+unchanged; only the isolation requirement and how it is evidenced changed.
+Runs 3 and 4 keep their files, annotated as void; their FAILs remain valid
+findings, because a leak can only raise a score. A3's standing evidence is
+run 2 (23/24, clean, against that day's 24-snippet corpus).

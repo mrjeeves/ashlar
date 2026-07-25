@@ -789,7 +789,23 @@ fn build_foreign_shim(dir: &std::path::Path, space: &str, crate_name: &str, link
             let why = other
                 .map(|o| String::from_utf8_lossy(&o.stderr).into_owned())
                 .unwrap_or_else(|e| e.to_string());
-            eprintln!("SKIP: cannot build foreign shim `{}` (needs a Rust toolchain + lib{}):\n{}", space, link, why);
+            eprintln!(
+                "SKIP: cannot build foreign shim `{}` (needs a Rust toolchain + lib{}):\n{}",
+                space, link, why
+            );
+            // Linking needs the DEVELOPMENT package, not the runtime library
+            // most systems already ship — `cannot find -lsqlite3` is what that
+            // looks like, and a skip note that does not name the fix is a
+            // shrug. Same correction the showcase launchers print.
+            if why.contains(&format!("-l{}", link)) {
+                eprintln!(
+                    "      install lib{}'s development package and re-run:\n\
+                     \x20       Debian/Ubuntu   sudo apt install lib{}-dev\n\
+                     \x20       Fedora/RHEL     sudo dnf install {}-devel\n\
+                     \x20       Arch            sudo pacman -S {}",
+                    link, link, link, link
+                );
+            }
             false
         }
     }

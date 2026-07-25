@@ -173,6 +173,7 @@ fn compose_property(prop_name: &str, occs: &[Occ]) -> (ComposedProp, Vec<Diag>) 
         base.prop.kind.as_ref().map(|k: &KindDecl| (k.kind, k.reverse));
     let identity_storage: Option<Storage> = base.prop.storage.as_ref().map(|(s, _)| *s);
     let identity_peruser: bool = base.prop.peruser;
+    let identity_setting: bool = base.prop.setting;
     // Shape identity is independent: the base-most layer that *states* one,
     // which may not be the same layer that first declares the property.
     let identity_shape: Option<SShape> = per_layer.iter().find_map(|o| o.prop.shape.clone());
@@ -289,6 +290,7 @@ fn compose_property(prop_name: &str, occs: &[Occ]) -> (ComposedProp, Vec<Diag>) 
     let cp = ComposedProp {
         name: prop_name.to_string(),
         storage: identity_storage,
+        setting: identity_setting,
         peruser: identity_peruser,
         kind: identity_kind,
         shape: identity_shape,
@@ -804,6 +806,7 @@ mod tests {
         Prop {
             name: name.to_string(),
             name_span: sp(),
+            setting: false,
             peruser: false,
             storage: None,
             kind: None,

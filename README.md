@@ -71,7 +71,10 @@ attached.
 
 **See the whole language running, in one command.** From a fresh clone — it
 builds the release binary itself if you don't have one. Needs **Rust 1.65 or
-newer** and nothing else; there are no dependencies to fetch:
+newer** — there are no crates to fetch. Fourteen of the fifteen examples need
+nothing more; `ledger` also needs SQLite's development package, because it links
+the real library (`sudo apt install libsqlite3-dev`, or `sqlite-devel` on
+Fedora). Without it the other fourteen still run and the launcher says so:
 
 ```
 ./showcase/serve.sh          # macOS / Linux
@@ -124,12 +127,17 @@ mechanical, and each has teeth:
 - **Guessable.** The whole surface fits in one ≤40,000-byte reference
   (`reference/ashlar.md`), and guessability is *gate-tested*: fresh models
   cold-read program snippets and their misreads are design bugs
-  (`suites/t_a3/`, currently **25/25**). It earns that: run 3 scored 23/25 and
-  its two failures were real design bugs — `owned` and `reads`/`writes` both
-  cold-read to the wrong mental model — so they became `peruser` and
-  `watches`/`updates`
-  ([ADR-0019](docs/decisions/0019-a3-run3-findings-owned-and-reactive-annotation.md)),
-  and run 4 re-scored both as passing.
+  (`suites/t_a3/`). The standing result is **23/24, clean, from run 2** —
+  above the 80% bar. Runs 3 and 4 were later found to have read with the
+  repo's own project instructions in their prompts and are void as cold reads,
+  so their scores are withdrawn
+  ([ADR-0021](docs/decisions/0021-the-a3-readers-were-not-cold.md)); a full
+  re-run against the current corpus is the one item open on the roadmap.
+  The gate earns its keep even so: run 3's *failures* survive contamination
+  (a leak can only inflate a score), and they were real design bugs — `owned`
+  and `reads`/`writes` both cold-read to the wrong mental model, so they became
+  `peruser` and `watches`/`updates`
+  ([ADR-0019](docs/decisions/0019-a3-run3-findings-owned-and-reactive-annotation.md)).
 - **Derivable.** Ashlar minimizes semantic freedom so the toolchain can
   compute and explain what names mean, which implementations run, and what
   a change affects ([ADR-0012](docs/decisions/0012-semantic-freedom-and-derivability.md)).

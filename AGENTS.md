@@ -74,7 +74,7 @@ and superseding one is ordinary work.
 4. **No stubs** (`t_no_stubs`): no `todo!`, `unimplemented!`, or
    commented-out "coming soon" surface. A command or construct that
    doesn't fully work does not exist.
-5. **Diagnostic ids are stable** (`docs/diagnostics.md`): E001–E029 +
+5. **Diagnostic ids are stable** (`docs/diagnostics.md`): E001–E030 +
    W001. New checks reuse an existing id with a new cause when they
    enforce the same requirement; a genuinely new id is appended, never
    renumbered, and its catalog row lands in the same commit.
@@ -92,10 +92,11 @@ and superseding one is ordinary work.
    example; new example → it gets a runtime test.
 9. **Refactors never partially apply** (E-series): blast radius first,
    atomic apply, post-verify rollback, and reversal to the same PROGRAM
-   — same parts and homes, same composition order, and a `use` closure
-   that may only have WIDENED (not the same manifest: `move` never
-   removes a `use`, so reversal leaves visibility broader, and a widening
-   that changed a resolution would be the B3 error post-verify refuses).
+   — same parts and homes, same composition order, and a visibility
+   closure that may only have WIDENED (not the same manifest: `move`
+   never narrows visibility, so reversal leaves it broader, and a
+   widening that changed a resolution would be the B3 error post-verify
+   refuses).
    Byte-identical reversal is a property specific commands have
    (`rename`, `rekind`, and `move` within ADR-0009's class), not a law
    over all of them: a refactor may add a declaration it reported rather
@@ -136,25 +137,17 @@ the test that would catch its regression — no exceptions, that is what
 
 ## Writing Ashlar code (examples, fixtures, tests)
 
-Read `reference/ashlar.md` first — it is short on purpose. The traps
-that catch agents who guess instead:
+Read `reference/ashlar.md` first — it is short on purpose. Then read
+**docs/writing-ashlar.md**, which collects the traps that catch agents
+who guess instead.
 
-- `let` takes no shape annotation; locals are inferred.
-- `=> {` always opens a BLOCK; to return a map literal, write
-  `=> { return { k: v } }`.
-- No shadowing anywhere: a local or parameter may not reuse any visible
-  name (parts, props, std) — and part names like `login`, `signup`,
-  `count` collide with builtins or case-fold against other names (E002/
-  E003 will tell you).
-- Chain properties (`stack`/`pipe`) must restate their kind on every
-  layer; pipe layers must agree in parameter AND return shape.
-- Event handlers get `std.Event`; the input's text is `e.data.value`.
-- Map shapes are written `{text: Shape}`; computed keys reach data only.
-- Views: an instance IS its root element and nested `el(Part)` children
-  reuse their instance across re-renders (`start` once, `stop` on
-  removal) — so nest freely and lean on the lifecycle. Style by `class`
-  name bound to the root's declared `style = "sheet"`
-  (`assets/sheet.css`); a `style="..."` attribute is the wrong tool.
+That page is a link, not an import, and this file must never teach the
+language itself. Everything in AGENTS.md is injected into every in-repo
+agent's context automatically — including the readers of the A3 cold-read
+gate, whose whole job is to read Ashlar having never seen it. Syntax in
+this file is answers in the reader's system prompt, and it invalidated
+gate runs 3 and 4 (ADR-0021). Keep language facts behind the path;
+`t_meta_agents_md_does_not_teach_the_language` enforces it.
 
 ## Sync duties — what must move together
 

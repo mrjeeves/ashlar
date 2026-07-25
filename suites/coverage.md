@@ -10,7 +10,13 @@ landed.
 `t_no_stubs` proves there is no `todo!()` anywhere in `src/`. The one requirement
 that cannot be a CI job is **A3**: it needs a fresh model with no reference in
 context, so it runs by hand via `suites/t_a3/PROTOCOL.md` and its results are
-recorded per-run in `suites/t_a3/results/` (currently 25/25, run 4).
+recorded per-run in `suites/t_a3/results/`. Its standing result is **23/24 from
+run 2**, the last run whose readers provably had nothing injected; runs 3 and 4
+are void as cold reads and a full re-run is open on the roadmap
+(ADR-0021). One part of A3 *is* mechanical and does run in CI:
+`t_meta_agents_md_does_not_teach_the_language` guards the gate's isolation, since
+the leak that voided those runs was a file every in-repo agent is handed
+automatically.
 
 A `[runs]` row has real `#[test]`s behind it — in `crates/ashlar/tests/` for the
 integration suites, or in a `#[cfg(test)]` module inside the named source file
@@ -32,14 +38,23 @@ every ```ash block from the reference and compiles it, which is also what proves
 **C1**. A4 and A6 are the loud-failure corpus — 31 fixtures under `suites/t_a4`,
 each a plausible-but-wrong construct paired with the diagnostic it must produce.
 A3 is the cold-read gate: fixture data plus a hand-run protocol, with no CI
-runner by design (a model that could read the repo would not be cold).
+runner by design (a model that could read the repo would not be cold). Its
+*isolation*, though, is mechanical —
+`t_meta_agents_md_does_not_teach_the_language` bans Ashlar syntax from the one
+file every in-repo agent is handed unasked, which is how two runs came to be
+scored against readers holding the answers (ADR-0021). The row below points at
+the corpus because that is what the requirement's evidence lives in; the guard
+rides in T-META because that is where it can run.
 
 **B (resolution).** B3/B4/B5/B7 are inline fixtures in `t_b.rs` — deliberately
 inline so each failure mode (zero-resolution, ambiguous, case-collision,
 `use`-of-a-part) is pinned in the test rather than in a fixture that may drift.
 B5 also scans every `.ash` in the repo for a path, URL, or port literal, and
 covers `foreign.json` keys, the one non-`.ash` file that carries a name the
-compiler reasons about. B1 is `t_f.rs`'s relocation test; B2 is the `t_a4`
+compiler reasons about. B5's other half — a program may *depend* on a location it
+cannot know, via a `setting` deployment supplies — is proved in T-G by
+`t_g_missing_required_setting_refuses_before_serving` (every gap named with its
+shape, refused before a port is bound) and in `settings.rs`'s own unit tests. B1 is `t_f.rs`'s relocation test; B2 is the `t_a4`
 corpus; B6 is `resolve.rs`'s own unit tests, since the space-header rule is a
 parse-time structural property.
 

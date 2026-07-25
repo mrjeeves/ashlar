@@ -64,11 +64,16 @@ pub struct KindDecl {
     pub span: Span,
 }
 
-/// `[peruser] [storage] name [kind [reverse]] [: shape] [= expression]`
+/// `[setting] [peruser] [storage] name [kind [reverse]] [: shape] [= expression]`
 ///
 /// `peruser` scopes a `state`/`stored` property to the current user: each
 /// authenticated user has their own value, isolated from every other
 /// user (reference §9.3, ADR-0015).
+///
+/// `setting` marks a value the program cannot know when it is written: the
+/// name and shape are source, the value is a deployment fact (reference §9.12,
+/// ADR-0020). A shape is required; `= expression` supplies a default, and
+/// without one the setting is required and a missing value stops startup.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Prop {
     pub name: String,
@@ -76,6 +81,9 @@ pub struct Prop {
     /// The `peruser` scope modifier: per-user storage. Only meaningful with a
     /// `storage` class; the parser rejects `peruser` on a value property.
     pub peruser: bool,
+    /// The `setting` modifier: the value arrives from deployment, not source.
+    /// Mutually exclusive with a storage class — a setting is immutable.
+    pub setting: bool,
     pub storage: Option<(Storage, Span)>,
     pub kind: Option<KindDecl>,
     pub shape: Option<SShape>,

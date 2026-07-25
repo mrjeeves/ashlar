@@ -234,7 +234,7 @@ impl<'a> Evaluator<'a> {
             let names: Vec<String> = cp
                 .props
                 .iter()
-                .filter(|(_, p)| p.storage.is_some())
+                .filter(|(_, p)| p.storage.is_some() || p.setting)
                 .map(|(n, _)| n.clone())
                 .collect();
             for name in names {
@@ -423,6 +423,17 @@ impl<'a> Evaluator<'a> {
         self.call_with_instance(f, args, Some(instance.to_string()))
     }
 
+    /// Bind deployment settings (§9.12). Values land in the same map state
+    /// properties use, so reading a setting is an ordinary property read and
+    /// needs no special case anywhere else. A setting with no supplied value
+    /// keeps its source default; one with neither is reported by the caller,
+    /// which refuses to start.
+    pub fn bind_settings(&mut self, bound: &BTreeMap<String, V>) {
+        for (key, v) in bound {
+            self.state.values.insert(key.clone(), v.clone());
+        }
+    }
+
     /// Initialize every state-class property to its declared initial value.
     fn init_state(&mut self) {
         let fulls: Vec<String> = self.composed.keys().cloned().collect();
@@ -430,7 +441,7 @@ impl<'a> Evaluator<'a> {
             let props: Vec<(String, bool, bool)> = self.composed[&full]
                 .props
                 .iter()
-                .filter(|(_, p)| p.storage.is_some())
+                .filter(|(_, p)| p.storage.is_some() || p.setting)
                 .map(|(n, p)| {
                     (
                         n.clone(),

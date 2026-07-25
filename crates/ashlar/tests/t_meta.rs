@@ -229,6 +229,102 @@ fn t_meta_core_docs_exist() {
 }
 
 #[test]
+fn t_meta_agents_md_does_not_teach_the_language() {
+    // covers: A3 — the cold-read gate's isolation, made mechanical.
+    //
+    // CLAUDE.md is `@AGENTS.md`, so AGENTS.md is injected into every in-repo
+    // agent's context as project instructions before it sees any prompt —
+    // including the readers of the A3 gate, whose entire job is to read Ashlar
+    // having never seen it. A syntax section in AGENTS.md is rubric answers in
+    // the reader's system prompt, and that is not hypothetical: it voided gate
+    // runs 3 and 4 (ADR-0021). Language facts live in docs/writing-ashlar.md,
+    // linked by path so nothing imports it.
+    let root = support::repo_root();
+    let agents = std::fs::read_to_string(root.join("AGENTS.md")).expect("AGENTS.md");
+
+    // Take the reserved words from the lexer rather than a copy, so this ban
+    // can never drift behind the language it is protecting.
+    let lexer =
+        std::fs::read_to_string(root.join("crates/ashlar/src/lexer.rs")).expect("src/lexer.rs");
+    let mut reserved: BTreeSet<String> = BTreeSet::new();
+    for line in lexer.lines() {
+        let Some(rest) = line.trim().strip_prefix('"') else {
+            continue;
+        };
+        let Some((word, tail)) = rest.split_once('"') else {
+            continue;
+        };
+        if tail.trim_start().starts_with("=> Tok::Kw") {
+            reserved.insert(word.to_string());
+        }
+    }
+    assert!(
+        reserved.len() >= 20,
+        "expected the reserved-word list to come out of lexer.rs's `keyword()`, \
+         recovered only {:?} — if that function moved, point this test at it",
+        reserved
+    );
+
+    // Prose only: fenced blocks are skipped wholesale, and within a prose line
+    // the odd-index segments of a backtick split are exactly its inline-code
+    // spans. A reserved word appearing as English ("use the same PR") is fine;
+    // one presented as code is teaching syntax.
+    let mut offenders: Vec<String> = Vec::new();
+    let mut in_fence = false;
+    for (n, line) in agents.lines().enumerate() {
+        let at = n + 1;
+        if line.trim_start().starts_with("```") {
+            if line.trim_start().starts_with("```ash") {
+                offenders.push(format!("line {}: a fenced ```ash block", at));
+            }
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        for (i, span) in line.split('`').enumerate() {
+            if i % 2 == 1 && reserved.contains(span) {
+                offenders.push(format!("line {}: `{}` is a reserved word", at, span));
+            }
+        }
+        if line.contains("std.") {
+            offenders.push(format!("line {}: names a std builtin", at));
+        }
+        if line.starts_with('@') {
+            offenders.push(format!("line {}: an @-import injects another file too", at));
+        }
+    }
+    assert!(
+        offenders.is_empty(),
+        "AGENTS.md must not teach the language — it is injected into every \
+         in-repo agent's context, the A3 readers included (ADR-0021). Move the \
+         fact to docs/writing-ashlar.md and link it:\n{}",
+        offenders.join("\n")
+    );
+
+    // And the link must be real, or the facts are simply lost.
+    assert!(
+        agents.contains("docs/writing-ashlar.md"),
+        "AGENTS.md must point agents at docs/writing-ashlar.md for the syntax traps"
+    );
+    assert!(
+        root.join("docs/writing-ashlar.md").exists(),
+        "docs/writing-ashlar.md must exist — AGENTS.md sends agents there"
+    );
+
+    // The protocol has to state the threat this test enforces, or the two drift
+    // and a future run is "cold" by a definition nobody wrote down.
+    let protocol =
+        std::fs::read_to_string(root.join("suites/t_a3/PROTOCOL.md")).expect("t_a3/PROTOCOL.md");
+    assert!(
+        protocol.contains("project instructions"),
+        "suites/t_a3/PROTOCOL.md must say that project instructions count as \
+         context a reader may not have"
+    );
+}
+
+#[test]
 fn t_meta_planned_rows_are_actually_open() {
     // covers: G1 (the documentation half — a coverage map that lies is worse
     // than none). The old T-META checked only that a row's PATH existed, so

@@ -900,6 +900,20 @@ pub fn serve(
         let mut ev = Evaluator::new(&result.program, &result.composed);
         ev.foreign_root = Some(root.clone());
 
+        // §9.12: settings are deployment facts. Bind them before anything runs,
+        // and refuse to start if a required one is absent — naming every gap at
+        // once. A program that cannot know its own configuration must fail here,
+        // where an operator is watching, not at the first request that needed it.
+        let declared = crate::settings::declared(&result.composed);
+        if !declared.is_empty() {
+            let supplied = crate::settings::load(&root)?;
+            let (bound, missing) = crate::settings::resolve(&declared, &supplied);
+            if !missing.is_empty() {
+                return Err(missing.report(&root));
+            }
+            ev.bind_settings(&bound);
+        }
+
         // §9.4: the server root may name a stylesheet. It resolves like
         // `files` and `foreign` — a name in source, a location the build
         // finds under `assets/`, and a loud error if the named sheet is

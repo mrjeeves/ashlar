@@ -290,6 +290,12 @@ impl Printer {
     fn prop(&mut self, p: &Prop) {
         let line = p.name_span.start.line;
         self.open_line(line);
+        // `setting` leads the declaration (§4). Dropping it here would silently
+        // turn a deployment-bound value into a bare field — the formatter must
+        // preserve meaning, not just shape.
+        if p.setting {
+            self.out.push_str("setting ");
+        }
         if p.peruser {
             self.out.push_str("peruser ");
         }
@@ -667,7 +673,8 @@ fn prec(e: &Expr) -> u8 {
 /// including reserved words, which would re-lex as keywords — stays quoted.
 fn is_bare_key(k: &str) -> bool {
     const RESERVED: &[&str] = &[
-        "space", "use", "part", "foreign", "state", "stored", "peruser", "append", "deep",
+        "space", "use", "part", "foreign", "state", "stored", "peruser", "setting",
+        "append", "deep",
         "stack", "pipe", "reverse", "let", "if", "else", "for", "in", "return", "true",
         "false", "none", "and", "or", "not",
     ];
