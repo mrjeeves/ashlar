@@ -9,7 +9,7 @@ wrong mental model, which is a design bug in the syntax.
 
 ## What the corpus is
 
-24 files, `01`–`24`, each a pair:
+25 files, `01`–`25`, each a pair:
 
 - `NN-slug.ash` — a self-contained, valid Ashlar snippet (space header, any
   `use` it needs, and a minimal definition of anything it references from
@@ -35,7 +35,7 @@ finding to raise against the language, not the test.
    this repo, or any other Ashlar material in context — no system prompt
    excerpting the spec, no retrieval over the repo, nothing. The only prior
    knowledge it may draw on is whatever it already knows unprompted.
-2. **One snippet at a time.** For each of the 24 `.ash` files, in a clean
+2. **One snippet at a time.** For each of the 25 `.ash` files, in a clean
    turn (no memory of previous snippets in the run — treat each as an
    independent cold read), paste the file's contents verbatim and ask
    exactly:
@@ -69,8 +69,8 @@ finding to raise against the language, not the test.
     storage semantics, even if that claim isn't one of the listed bullets.
     A snippet with 100% of its bullets checked off but one confidently wrong
     claim elsewhere in the answer still fails.
-- **The corpus passes** when at least 80% of its 24 snippets pass (i.e. at
-  least 20 of 24). Below that, A3 is not satisfied and the syntax needs
+- **The corpus passes** when at least 80% of its 25 snippets pass (i.e. at
+  least 20 of 25). Below that, A3 is not satisfied and the syntax needs
   revisiting before the language, not the corpus, is called done.
 
 ## Recording results
@@ -85,7 +85,7 @@ using the date the run was performed and a short model identifier (e.g.
 `2026-07-22-claude-sonnet-5.md`). That file records, at minimum:
 
 - the model under test and the date;
-- for each of the 24 snippets: pass/fail, which bullets were checked correct
+- for each of the 25 snippets: pass/fail, which bullets were checked correct
   (by number), and whether an actively-wrong-claim flag was raised;
 - the overall corpus score (`<passing>/24`) and pass/fail against the 80%
   bar;

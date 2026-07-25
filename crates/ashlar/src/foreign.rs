@@ -14,7 +14,9 @@
 //! as `--port` overrides `port`. This module owns the only `unsafe` in the
 //! workspace: the dlopen/dlsym pair below.
 
+use crate::diag::{Diag, Level, E001_UNKNOWN_NAME};
 use crate::eval::{from_json, to_json, V};
+use crate::tokens::{Pos, Span};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
@@ -150,6 +152,228 @@ pub fn parse_bindings(text: &str) -> Result<BTreeMap<String, Via>, String> {
         out.insert(space, bound);
     }
     Ok(out)
+}
+
+// -- the binding as a name-bearing fact -------------------------------------
+//
+// A binding is keyed by SPACE NAME, which makes `foreign.json` the one file
+// outside `.ash` that carries a name the compiler reasons about. The three
+// systems that govern names therefore all have to see it: the manifest records
+// what resolved (§10), `check` reports a key that names no space (B3), and a
+// space rename carries the key with it (E2). The scanner below is what they
+// share — depth- and string-aware, so a nested `"native"` value can never be
+// mistaken for a space key.
+
+/// Char offsets of a top-level key's opening and closing quote.
+fn key_offsets(text: &str, key: &str) -> Option<(usize, usize)> {
+    let c: Vec<char> = text.chars().collect();
+    let mut depth = 0usize;
+    let mut i = 0usize;
+    while i < c.len() {
+        match c[i] {
+            '{' | '[' => {
+                depth += 1;
+                i += 1;
+            }
+            '}' | ']' => {
+                depth = depth.saturating_sub(1);
+                i += 1;
+            }
+            '"' => {
+                let open = i;
+                i += 1;
+                let mut content = String::new();
+                while i < c.len() && c[i] != '"' {
+                    if c[i] == '\\' && i + 1 < c.len() {
+                        content.push(c[i]);
+                        content.push(c[i + 1]);
+                        i += 2;
+                        continue;
+                    }
+                    content.push(c[i]);
+                    i += 1;
+                }
+                let close = i;
+                i += 1;
+                // A key is a depth-1 string followed by `:`.
+                if depth == 1 && content == key {
+                    let mut j = i;
+                    while j < c.len() && c[j].is_whitespace() {
+                        j += 1;
+                    }
+                    if j < c.len() && c[j] == ':' {
+                        return Some((open, close));
+                    }
+                }
+            }
+            _ => i += 1,
+        }
+    }
+    None
+}
+
+/// Rewrite one top-level space key, leaving every other byte alone so that
+/// reversing a rename restores the file exactly (E4).
+pub fn rename_key(text: &str, old: &str, new: &str) -> Option<String> {
+    let (open, close) = key_offsets(text, old)?;
+    let c: Vec<char> = text.chars().collect();
+    let mut out: String = c[..=open].iter().collect();
+    out.push_str(new);
+    out.extend(&c[close..]);
+    Some(out)
+}
+
+/// The span of a top-level key, as a diagnostic location (1-based, chars).
+fn key_span(text: &str, key: &str) -> Span {
+    let Some((open, close)) = key_offsets(text, key) else {
+        return Span {
+            start: Pos { line: 1, col: 1 },
+            end: Pos { line: 1, col: 1 },
+        };
+    };
+    let (mut line, mut col) = (1u32, 1u32);
+    let mut start = Pos { line: 1, col: 1 };
+    for (i, ch) in text.chars().enumerate() {
+        if i == open {
+            start = Pos { line, col };
+        }
+        if i == close {
+            return Span {
+                start,
+                end: Pos { line, col: col + 1 },
+            };
+        }
+        if ch == '\n' {
+            line += 1;
+            col = 1;
+        } else {
+            col += 1;
+        }
+    }
+    Span { start, end: start }
+}
+
+/// The transport and the concrete thing it names, as the manifest records it.
+/// Pure: it reads the binding file and opens nothing, so writing a manifest
+/// never dlopens a library or spawns a co-process.
+pub fn describe(root: &Path, space: &str) -> (String, String) {
+    let via = Boundary::new()
+        .via(root, space)
+        .unwrap_or_else(|_| Via::derived());
+    let detail = match &via {
+        Via::Native { library, .. } => library
+            .clone()
+            .unwrap_or_else(|| format!("foreign/{}", space)),
+        Via::Worker { run } => run.join(" "),
+        Via::Http { url } => url.clone(),
+    };
+    (via.label().to_string(), detail)
+}
+
+/// The derived library paths a space rename must carry, one per probed
+/// extension — the derivation rule names all three (ADR-0017).
+pub fn derived_library_paths(space: &str) -> Vec<String> {
+    LIB_EXTS
+        .iter()
+        .map(|ext| format!("foreign/{}{}", space, ext))
+        .collect()
+}
+
+/// Diagnose the binding file against the program's spaces. Two conditions,
+/// both of which used to pass `check` in silence and surface only when a
+/// request reached the boundary:
+///
+/// - a key naming no space in the program — a name that resolves to nothing
+///   (B3, E001), which is exactly what a space rename leaves behind;
+/// - a file that cannot be parsed, since deployment facts that are
+///   unreadable must not quietly become the derived default.
+///
+/// Deliberately silent on a key whose space exists but declares no `foreign`:
+/// that binding is inert, not wrong, and guessing at intent here would be a
+/// false positive.
+pub fn check_bindings(root: &Path, spaces: &[String]) -> Vec<Diag> {
+    let path = binding_path(root);
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return Vec::new();
+    };
+    let file = path
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "foreign.json".to_string());
+    let whole = Span {
+        start: Pos { line: 1, col: 1 },
+        end: Pos { line: 1, col: 1 },
+    };
+    let bindings = match parse_bindings(&text) {
+        Ok(b) => b,
+        Err(e) => {
+            return vec![Diag::new(
+                E001_UNKNOWN_NAME,
+                Level::Error,
+                &file,
+                whole,
+                format!("the foreign binding file is unreadable: {}", e),
+            )
+            .with_fix(
+                "Correct the binding file, or delete it to take the derived default (the native library at `foreign/<space>`).".to_string(),
+                vec![],
+            )]
+        }
+    };
+    let mut out = Vec::new();
+    for space in bindings.keys() {
+        if spaces.iter().any(|s| s == space) {
+            continue;
+        }
+        let near = nearest(space, spaces);
+        let note = match &near {
+            Some(n) => format!(
+                "Rename the key to `{}`, or delete the binding if that space is gone.",
+                n
+            ),
+            None => "Delete the binding, or add a file declaring that space.".to_string(),
+        };
+        out.push(
+            Diag::new(
+                E001_UNKNOWN_NAME,
+                Level::Error,
+                &file,
+                key_span(&text, space),
+                format!("foreign binding `{}` names no space in this program.", space),
+            )
+            .with_fix(note, vec![]),
+        );
+    }
+    out
+}
+
+/// The closest space name by edit distance, when one is close enough to name
+/// in a correction rather than guess at.
+fn nearest(needle: &str, hay: &[String]) -> Option<String> {
+    let mut best: Option<(usize, &String)> = None;
+    for h in hay {
+        let d = distance(needle, h);
+        if d <= (needle.len() / 2).max(2) && best.map(|(bd, _)| d < bd).unwrap_or(true) {
+            best = Some((d, h));
+        }
+    }
+    best.map(|(_, h)| h.clone())
+}
+
+/// Levenshtein distance, two rows.
+fn distance(a: &str, b: &str) -> usize {
+    let (a, b): (Vec<char>, Vec<char>) = (a.chars().collect(), b.chars().collect());
+    let mut prev: Vec<usize> = (0..=b.len()).collect();
+    let mut cur = vec![0usize; b.len() + 1];
+    for i in 1..=a.len() {
+        cur[0] = i;
+        for j in 1..=b.len() {
+            let sub = prev[j - 1] + usize::from(a[i - 1] != b[j - 1]);
+            cur[j] = sub.min(prev[j] + 1).min(cur[j - 1] + 1);
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    prev[b.len()]
 }
 
 // -- the runtime boundary ---------------------------------------------------
@@ -717,5 +941,51 @@ mod tests {
         assert_eq!(split_url("http://h:9000/rpc").unwrap(), ("h".into(), 9000, "/rpc".into()));
         assert_eq!(split_url("http://h").unwrap(), ("h".into(), 80, "/".into()));
         assert!(split_url("https://h/p").is_err());
+    }
+}
+
+#[cfg(test)]
+mod key_tests {
+    use super::*;
+
+    #[test]
+    fn rename_key_rewrites_only_the_key_and_reverses_exactly() {
+        let text = "{\n  \"tools\": { \"via\": \"native\", \"library\": \"tools\" }\n}\n";
+        let renamed = rename_key(text, "tools", "kit").expect("key present");
+        assert_eq!(
+            renamed,
+            "{\n  \"kit\": { \"via\": \"native\", \"library\": \"tools\" }\n}\n",
+            "only the key changes: a `library` value that happens to match must be left alone"
+        );
+        // E4: reversing restores the file byte-for-byte.
+        assert_eq!(rename_key(&renamed, "kit", "tools").unwrap(), text);
+    }
+
+    #[test]
+    fn rename_key_ignores_nested_keys_and_absent_names() {
+        // `symbols` maps Ashlar names to exports at depth 2 — never a space.
+        let text = "{ \"geo\": { \"via\": \"native\", \"symbols\": { \"lookup\": \"geo_v2\" } } }";
+        assert!(rename_key(text, "lookup", "find").is_none());
+        assert!(rename_key(text, "nope", "x").is_none());
+        assert_eq!(
+            rename_key(text, "geo", "atlas").unwrap(),
+            "{ \"atlas\": { \"via\": \"native\", \"symbols\": { \"lookup\": \"geo_v2\" } } }"
+        );
+    }
+
+    #[test]
+    fn key_span_points_at_the_key() {
+        let text = "{\n  \"tools\": { \"via\": \"http\", \"url\": \"http://x\" }\n}\n";
+        let span = key_span(text, "tools");
+        assert_eq!((span.start.line, span.start.col), (2, 3));
+        assert_eq!(span.end.line, 2);
+    }
+
+    #[test]
+    fn derived_library_paths_cover_every_probed_extension() {
+        assert_eq!(
+            derived_library_paths("tools"),
+            vec!["foreign/tools.so", "foreign/tools.dylib", "foreign/tools.dll"]
+        );
     }
 }

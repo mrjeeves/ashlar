@@ -53,9 +53,17 @@ pub struct Plan {
     /// property renamed).
     pub state_prop_renames: Vec<(String, String)>,
     /// Foreign host libraries that must move with a space rename:
-    /// `foreign/<old>.so` -> `foreign/<new>.so` (§9.10 binds by space
-    /// name). Reported as radius; the CLI renames the file when present.
+    /// `foreign/<old>.{so,dylib,dll}` -> the same under `<new>` (§9.10 binds
+    /// by space name, and the derivation rule probes all three extensions).
+    /// Reported as radius; the CLI renames whichever files are present.
     pub foreign_renames: Vec<(String, String)>,
+    /// The `foreign.json` key a space rename must carry with it. A binding is
+    /// keyed by space name, so renaming the space and leaving the key behind
+    /// silently unbinds the capability: the program still compiles, and the
+    /// space quietly falls back to the derived native path. That is a stale
+    /// reference to the prior state, which E2 forbids — so it is radius, and
+    /// the CLI rewrites it.
+    pub foreign_key_rename: Option<(String, String)>,
 }
 
 /// A refusal: the reason radius could not be computed (E5).
@@ -187,6 +195,7 @@ pub fn plan_rename_part(
         },
         state_prop_renames: vec![],
         foreign_renames: vec![],
+        foreign_key_rename: None,
     })
 }
 
@@ -559,6 +568,7 @@ pub fn plan_rename_prop(
             vec![]
         },
         foreign_renames: vec![],
+        foreign_key_rename: None,
     })
 }
 
@@ -963,6 +973,7 @@ pub fn plan_rekind(
         state_part_renames: vec![],
         state_prop_renames: vec![],
         foreign_renames: vec![],
+        foreign_key_rename: None,
     })
 }
 
@@ -1100,16 +1111,18 @@ pub fn plan_rename_space(
         }
     }
 
-    // The runtime binds a space's foreign functions to `foreign/<space>.so`
-    // (§9.10) — the library moves with the name, and the radius says so.
+    // A space's capabilities are bound by space name (§9.10) — both by the
+    // derivation rule, which names a library per platform extension, and by a
+    // `foreign.json` key. Both move with the name, and the radius says so.
     let has_foreigns = program.foreigns.values().any(|f| f.space == old);
-    let foreign_renames = if has_foreigns {
-        vec![(
-            format!("foreign/{}.so", old),
-            format!("foreign/{}.so", new),
-        )]
+    let (foreign_renames, foreign_key_rename) = if has_foreigns {
+        let libs = crate::foreign::derived_library_paths(old)
+            .into_iter()
+            .zip(crate::foreign::derived_library_paths(new))
+            .collect();
+        (libs, Some((old.to_string(), new.to_string())))
     } else {
-        vec![]
+        (vec![], None)
     };
 
     verify_plan_text(sources, &changes)?;
@@ -1119,6 +1132,7 @@ pub fn plan_rename_space(
         state_part_renames,
         state_prop_renames: vec![],
         foreign_renames,
+        foreign_key_rename,
     })
 }
 
@@ -1567,6 +1581,7 @@ pub fn plan_move(
         },
         state_prop_renames: vec![],
         foreign_renames: vec![],
+        foreign_key_rename: None,
     })
 }
 

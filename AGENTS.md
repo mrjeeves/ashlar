@@ -43,7 +43,7 @@ requirement" is the only one.
 4. **No stubs** (`t_no_stubs`): no `todo!`, `unimplemented!`, or
    commented-out "coming soon" surface. A command or construct that
    doesn't fully work does not exist.
-5. **Diagnostic ids are stable** (`docs/diagnostics.md`): E001–E028 +
+5. **Diagnostic ids are stable** (`docs/diagnostics.md`): E001–E029 +
    W001. New checks reuse an existing id with a new cause when they
    enforce the same requirement; a genuinely new id is appended, never
    renumbered, and its catalog row lands in the same commit.

@@ -96,7 +96,20 @@ pub fn check_project(root: &Path) -> CheckResult {
             }
         }
     }
-    check_sources(sources)
+    let mut result = check_sources(sources);
+
+    // The binding file keys deployment facts by SPACE NAME (§9.10), which
+    // makes it the one non-`.ash` file carrying a name the compiler reasons
+    // about — so `check` owes it the same B3 treatment as any other name. Only
+    // `check_project` can do this: the file is on disk, and `check_sources`
+    // deliberately knows nothing outside the sources it was handed.
+    let spaces: Vec<String> = result.program.spaces.keys().cloned().collect();
+    let mut binding_diags = foreign::check_bindings(root, &spaces);
+    if !binding_diags.is_empty() {
+        result.diags.append(&mut binding_diags);
+        sort_diags(&mut result.diags);
+    }
+    result
 }
 
 /// Per-file front-end cache for incremental checking (F1): content hash
@@ -185,6 +198,14 @@ pub fn check_sources(sources: Vec<(String, String)>) -> CheckResult {
     finish_check(files, diags)
 }
 
+/// Stable output order: file, then position, then id.
+fn sort_diags(diags: &mut [diag::Diag]) {
+    diags.sort_by(|a, b| {
+        (a.file.as_str(), a.span.start.line, a.span.start.col, a.id)
+            .cmp(&(b.file.as_str(), b.span.start.line, b.span.start.col, b.id))
+    });
+}
+
 /// The global phases shared by full and incremental checking.
 fn finish_check(files: Vec<resolved::FileEntry>, mut diags: Vec<diag::Diag>) -> CheckResult {
     let (program, mut resolve_diags) = resolve::resolve(files);
@@ -202,11 +223,7 @@ fn finish_check(files: Vec<resolved::FileEntry>, mut diags: Vec<diag::Diag>) -> 
         field_sites = sites;
     }
 
-    // Stable output order: file, then position, then id.
-    diags.sort_by(|a, b| {
-        (a.file.as_str(), a.span.start.line, a.span.start.col, a.id)
-            .cmp(&(b.file.as_str(), b.span.start.line, b.span.start.col, b.id))
-    });
+    sort_diags(&mut diags);
 
     CheckResult {
         program,

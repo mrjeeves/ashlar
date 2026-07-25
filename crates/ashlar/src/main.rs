@@ -409,6 +409,11 @@ mod cli {
                 for (old, _) in &plan.foreign_renames {
                     println!("  {}", old);
                 }
+                if let Some((old, _)) = &plan.foreign_key_rename {
+                    if let Some(file) = binding_file_with_key(root, old) {
+                        println!("  {}  key `{}`", file, old);
+                    }
+                }
                 0
             }
             Err(ashlar::refactor::Refusal(reason)) => {
@@ -636,8 +641,9 @@ mod cli {
                 c.file, c.span.start.line, c.span.start.col, c.old, c.new
             );
         }
-        // Stored-state and foreign-library moves are radius too (E3).
-        print_side_effects(&plan);
+        // Stored state, foreign libraries, and the foreign binding key are all
+        // radius too (E3).
+        print_side_effects(root, &plan);
         if plan_only {
             return 0;
         }
@@ -664,18 +670,41 @@ mod cli {
                         eprintln!("sources are consistent; fix the state file by hand.");
                     }
                 }
+                // The derivation rule names one library per platform
+                // extension; at most one of them is really on disk, so report
+                // the moves and say "none" once rather than per extension.
+                let mut moved = 0usize;
                 for (old, new) in &plan.foreign_renames {
                     let (from, to) = (root.join(old), root.join(new));
-                    if from.exists() {
-                        match std::fs::rename(&from, &to) {
-                            Ok(()) => eprintln!("moved: {} -> {}", old, new),
-                            Err(e) => {
-                                eprintln!("warning: could not move {}: {}", old, e);
-                                eprintln!("move it by hand or the runtime will not find it.");
-                            }
+                    if !from.exists() {
+                        continue;
+                    }
+                    match std::fs::rename(&from, &to) {
+                        Ok(()) => {
+                            moved += 1;
+                            eprintln!("moved: {} -> {}", old, new);
                         }
-                    } else {
-                        eprintln!("note: {} not present; nothing to move.", old);
+                        Err(e) => {
+                            eprintln!("warning: could not move {}: {}", old, e);
+                            eprintln!("move it by hand or the runtime will not find it.");
+                        }
+                    }
+                }
+                if moved == 0 && !plan.foreign_renames.is_empty() {
+                    eprintln!("note: no derived foreign library on disk; nothing to move.");
+                }
+                match migrate_binding_key(root, &plan) {
+                    Ok(false) => {}
+                    Ok(true) => {
+                        let (old, new) = plan
+                            .foreign_key_rename
+                            .as_ref()
+                            .expect("rewritten only when set");
+                        eprintln!("rebound: foreign key `{}` -> `{}`", old, new);
+                    }
+                    Err(e) => {
+                        eprintln!("warning: could not rewrite the foreign binding key: {}", e);
+                        eprintln!("rewrite it by hand or the space falls back to the derived library path.");
                     }
                 }
                 0
@@ -688,7 +717,7 @@ mod cli {
     }
 
     /// The non-source effects a plan carries, printed with the radius.
-    fn print_side_effects(plan: &ashlar::refactor::Plan) {
+    fn print_side_effects(root: &Path, plan: &ashlar::refactor::Plan) {
         for (old, new) in &plan.state_part_renames {
             eprintln!("  .ashlar-state.json  `{}.*` -> `{}.*`", old, new);
         }
@@ -698,6 +727,43 @@ mod cli {
         for (old, new) in &plan.foreign_renames {
             eprintln!("  {} -> {}", old, new);
         }
+        if let Some((old, new)) = &plan.foreign_key_rename {
+            if let Some(file) = binding_file_with_key(root, old) {
+                eprintln!("  {}  key `{}` -> `{}`", file, old, new);
+            }
+        }
+    }
+
+    /// The binding file's display name, but only when it actually carries this
+    /// space key — the radius names what is really there, never a phantom.
+    fn binding_file_with_key(root: &Path, key: &str) -> Option<String> {
+        let path = ashlar::foreign::binding_path(root);
+        let text = std::fs::read_to_string(&path).ok()?;
+        ashlar::foreign::rename_key(&text, key, key)?;
+        Some(
+            path.file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "foreign.json".to_string()),
+        )
+    }
+
+    /// Carry a space rename into the binding file. The key is a name the
+    /// program binds by, so leaving it behind would silently unbind the
+    /// capability (E2) — and rewriting only the key keeps the file
+    /// byte-identical when the rename is reversed (E4).
+    fn migrate_binding_key(root: &Path, plan: &ashlar::refactor::Plan) -> Result<bool, String> {
+        let Some((old, new)) = &plan.foreign_key_rename else {
+            return Ok(false);
+        };
+        let path = ashlar::foreign::binding_path(root);
+        let Ok(text) = std::fs::read_to_string(&path) else {
+            return Ok(false);
+        };
+        let Some(rewritten) = ashlar::foreign::rename_key(&text, old, new) else {
+            return Ok(false);
+        };
+        std::fs::write(&path, rewritten).map_err(|e| format!("{}: {}", path.display(), e))?;
+        Ok(true)
     }
 
     /// Two-phase source writes: stage every changed file to a temp sibling,
@@ -935,7 +1001,7 @@ mod cli {
             return 1;
         }
 
-        let text = ashlar::manifest::render(&result.program, &result.composed);
+        let text = ashlar::manifest::render(&result.program, &result.composed, root);
         match std::fs::write(root.join("ashlar.manifest"), text) {
             Ok(()) => {
                 eprintln!("wrote ashlar.manifest");

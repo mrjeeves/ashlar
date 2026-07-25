@@ -17,10 +17,18 @@ use crate::ast;
 use crate::diag::push_json_str;
 use crate::resolved::{ComposedPart, ComposedProp, MergedValue, Program};
 use std::collections::BTreeMap;
+use std::path::Path;
 
 /// Render `ashlar.manifest`: a single JSON document, stable key order,
 /// 2-space indented, trailing newline. See module docs for the shape.
-pub fn render(program: &Program, composed: &BTreeMap<String, ComposedPart>) -> String {
+/// `root` is the project root, needed only to resolve foreign bindings —
+/// the manifest records the transport that actually won, not the derived
+/// guess (§9.10).
+pub fn render(
+    program: &Program,
+    composed: &BTreeMap<String, ComposedPart>,
+    project_root: &Path,
+) -> String {
     let mut root: Vec<(String, J)> = Vec::new();
 
     root.push(("format".to_string(), J::Int(1)));
@@ -30,7 +38,10 @@ pub fn render(program: &Program, composed: &BTreeMap<String, ComposedPart>) -> S
     ));
     root.push(("spaces".to_string(), render_spaces(program)));
     root.push(("parts".to_string(), render_parts(program)));
-    root.push(("foreigns".to_string(), render_foreigns(program)));
+    root.push((
+        "foreigns".to_string(),
+        render_foreigns(program, project_root),
+    ));
     root.push(("assets".to_string(), render_assets(program, composed)));
 
     let mut out = String::new();
@@ -80,16 +91,21 @@ fn render_parts(program: &Program) -> J {
     J::Obj(obj)
 }
 
-fn render_foreigns(program: &Program) -> J {
+/// Foreign bindings as RESOLVED, not as derived. The transport is a
+/// deployment fact the binding file may override (§9.10), and the manifest is
+/// the derived record of what won — so recording the derivation rule's guess
+/// here would make the manifest state a fiction about the running program.
+fn render_foreigns(program: &Program, root: &Path) -> J {
     let mut obj = Vec::new();
     for (full_name, info) in &program.foreigns {
         let file = program.files[info.file_idx].path.clone();
-        let binding = format!("foreign/{}", info.space);
+        let (via, binding) = crate::foreign::describe(root, &info.space);
         obj.push((
             full_name.clone(),
             J::Obj(vec![
                 ("space".to_string(), J::Str(info.space.clone())),
                 ("file".to_string(), J::Str(file)),
+                ("via".to_string(), J::Str(via)),
                 ("binding".to_string(), J::Str(binding)),
             ]),
         ));
@@ -375,7 +391,7 @@ mod tests {
     #[test]
     fn golden_string_on_small_hand_built_program() {
         let (program, composed) = build_program("site.ash");
-        assert_eq!(render(&program, &composed), GOLDEN);
+        assert_eq!(render(&program, &composed, Path::new(".")), GOLDEN);
     }
 
     #[test]
@@ -385,7 +401,7 @@ mod tests {
         // so the test actually exercises determinism, not mere idempotence.
         let (p1, c1) = build_program("site.ash");
         let (p2, c2) = build_program("site.ash");
-        assert_eq!(render(&p1, &c1), render(&p2, &c2));
+        assert_eq!(render(&p1, &c1, Path::new(".")), render(&p2, &c2, Path::new(".")));
     }
 
     #[test]
@@ -395,8 +411,8 @@ mod tests {
         let (p_here, c_here) = build_program("site.ash");
         let (p_moved, c_moved) = build_program("moved/deep/site.ash");
 
-        let rendered_here = render(&p_here, &c_here);
-        let rendered_moved = render(&p_moved, &c_moved);
+        let rendered_here = render(&p_here, &c_here, Path::new("."));
+        let rendered_moved = render(&p_moved, &c_moved, Path::new("."));
 
         assert_ne!(rendered_here, rendered_moved, "the fixture should actually move");
         assert_eq!(rendered_here.replace("site.ash", "moved/deep/site.ash"), rendered_moved);
@@ -413,7 +429,7 @@ mod tests {
             let prop = part.props.get_mut("files").unwrap();
             prop.value = MergedValue::FieldOnly;
         }
-        let rendered = render(&program, &composed);
+        let rendered = render(&program, &composed, Path::new("."));
         assert!(!rendered.contains("\"assets\": {\n"));
         assert!(rendered.ends_with("\"assets\": {}\n}\n"));
     }

@@ -27,8 +27,8 @@ fn t_f2_repeated_check_is_byte_identical() {
     let r1 = ashlar::check_sources(sources.clone());
     let r2 = ashlar::check_sources(sources);
 
-    let m1 = ashlar::manifest::render(&r1.program, &r1.composed);
-    let m2 = ashlar::manifest::render(&r2.program, &r2.composed);
+    let m1 = ashlar::manifest::render(&r1.program, &r1.composed, std::path::Path::new("."));
+    let m2 = ashlar::manifest::render(&r2.program, &r2.composed, std::path::Path::new("."));
     assert_eq!(
         m1, m2,
         "F2: checking identical input twice produced two different manifests"
@@ -81,8 +81,8 @@ fn t_f3_relocation_invariance_and_b1_layer_order() {
     );
 
     // F3: manifests must match once file-path text is normalized away.
-    let m1 = ashlar::manifest::render(&r1.program, &r1.composed);
-    let m2 = ashlar::manifest::render(&r2.program, &r2.composed);
+    let m1 = ashlar::manifest::render(&r1.program, &r1.composed, std::path::Path::new("."));
+    let m2 = ashlar::manifest::render(&r2.program, &r2.composed, std::path::Path::new("."));
 
     let paths1_owned: Vec<String> = paths1.iter().map(|s| s.to_string()).collect();
     let paths2_owned: Vec<String> = paths2.iter().map(|s| s.to_string()).collect();
@@ -93,4 +93,53 @@ fn t_f3_relocation_invariance_and_b1_layer_order() {
         "F3: manifests differ after normalizing recorded file paths to F0/F1/F2 placeholders — \
          relocating files with unchanged contents must not change program meaning"
     );
+}
+
+#[test]
+fn t_f2_manifest_records_the_binding_that_actually_resolved() {
+    // covers: F2 — the manifest is the DERIVED RECORD of the build. The
+    // transport a foreign space is reached by is a deployment fact the binding
+    // file may override (§9.10), so recording the derivation rule's guess made
+    // the manifest state a fiction: a worker-backed space was written down as a
+    // native library path that did not exist.
+    let proj = std::env::temp_dir().join(format!("ashlar_tf_fbind_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&proj);
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::write(
+        proj.join("app.ash"),
+        "space tools\n\nforeign shout: (s: text) -> text\n\npart app {\n  port = 8080\n}\n",
+    )
+    .unwrap();
+
+    // Unbound: the derivation rule, recorded as such.
+    let r = ashlar::check_project(&proj);
+    assert!(r.diags.is_empty(), "{:?}", r.diags);
+    let derived = ashlar::manifest::render(&r.program, &r.composed, &proj);
+    assert!(derived.contains("\"via\": \"native\""), "{}", derived);
+    assert!(derived.contains("\"binding\": \"foreign/tools\""), "{}", derived);
+
+    // Bound to a worker: the manifest must say worker, and name the command.
+    std::fs::write(
+        proj.join("foreign.json"),
+        "{ \"tools\": { \"via\": \"worker\", \"run\": [\"python3\", \"w.py\"] } }\n",
+    )
+    .unwrap();
+    let r2 = ashlar::check_project(&proj);
+    let bound = ashlar::manifest::render(&r2.program, &r2.composed, &proj);
+    assert!(
+        bound.contains("\"via\": \"worker\"") && bound.contains("python3 w.py"),
+        "the manifest must record the transport that won, not the derived guess:\n{}",
+        bound
+    );
+    assert!(
+        !bound.contains("\"binding\": \"foreign/tools\""),
+        "the manifest still records the derived native path for a worker-bound space:\n{}",
+        bound
+    );
+
+    // F2: still fully derived — same inputs, same bytes.
+    let again = ashlar::manifest::render(&r2.program, &r2.composed, &proj);
+    assert_eq!(bound, again);
+
+    let _ = std::fs::remove_dir_all(&proj);
 }

@@ -74,6 +74,33 @@ won — exactly the relationship `--port` has to `port`. Making the file
 mandatory was considered and rejected: it breaks every existing project and
 forces ceremony onto the simplest case.
 
+The file keys bindings by SPACE NAME, and that has a consequence worth stating
+plainly, because the first cut of this ADR missed it: `foreign.json` is the one
+file outside `.ash` carrying a name the compiler reasons about. Every system
+that governs names therefore has to see it, or the language quietly loses a
+guarantee it advertises. Three did not, and each failure was real:
+
+- **`rename` left the key behind.** The sources rewrote, the program still
+  checked clean, and the space fell back to the derived native path — a stale
+  reference to the prior state (E2) that surfaced only when a request reached
+  the boundary. The key and all three probed library extensions are now radius
+  (E3), the CLI carries them, and reversing the rename restores the file
+  byte-for-byte (E4).
+- **`check` ignored the file.** A mistyped key resolved to nothing and said
+  nothing, which B3 forbids for every other name in the language. It is now
+  `E001`, with the nearest space named in the correction; an unparseable file
+  is reported rather than silently becoming the derived default. A key whose
+  space exists but declares no `foreign` stays silent — inert is not wrong, and
+  guessing there would be a false positive.
+- **The manifest recorded the derivation rule instead of the resolution.** A
+  worker-backed space was written down as a native library path that did not
+  exist, which makes the derived state a fiction about the running program.
+  It now records the transport that won and what it names.
+
+The lesson generalizes past this ADR: adding a name-bearing file is not
+finished when the runtime can read it. It is finished when the refactor
+commands, the checker, and the manifest can all see it.
+
 ### 2. Three transports
 
 - **`native`** — `dlopen` a shared library and call the C ABI. Now with

@@ -14,7 +14,7 @@ Rules for every diagnostic (D1):
 
 | id | req | emitted by | condition | fix |
 |---|---|---|---|---|
-| E001 | B3 | resolver | name resolves to nothing (incl. dotted part declaration matching no visible part) | note nearest matches and the `use` that would provide them; `null`/`nil`/`undefined` get edits replacing with `none` |
+| E001 | B3 | resolver | name resolves to nothing (incl. dotted part declaration matching no visible part, and a `foreign.json` key naming no space — or a binding file that will not parse) | note nearest matches and the `use` that would provide them; `null`/`nil`/`undefined` get edits replacing with `none` |
 | E002 | B3 | resolver | name resolves to more than one definition, or a `let`/param declares a name already visible | edits qualifying the reference with its full dotted name; for shadowing, note says rename the local |
 | E003 | B4 | resolver | two names in one scope differ only by case or separator convention | note names both declarations; no edits (renaming is a judgment) |
 | E004 | C5 | composer | layer states a different merge kind than the property's identity | edits restating the declared kind |
