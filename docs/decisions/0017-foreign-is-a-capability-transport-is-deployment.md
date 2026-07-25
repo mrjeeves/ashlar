@@ -1,5 +1,9 @@
 # ADR-0017: `foreign` declares a capability; the transport is a deployment fact
 
+**Amended by [ADR-0019](0019-a3-run3-findings-owned-and-reactive-annotation.md):**
+the reactive annotation referred to below as `reads`/`writes` is now spelled
+`watches`/`updates`. Every claim about transports composing with it still holds.
+
 Date: 2026-07-24
 
 Status: accepted

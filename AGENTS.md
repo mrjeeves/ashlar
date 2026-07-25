@@ -108,12 +108,17 @@ cargo test --release       # F1 latency gate is release-only (<100ms hard)
 cargo build --tests        # zero warnings, always
 ```
 
-Suite map: T-A1/A2/A5 (reference gates), T-A3 (cold-read gate — run via
-the protocol in `suites/t_a3/PROTOCOL.md`, not in CI), T-A4 (38
-loud-failure fixtures), T-B (banned words, name hygiene), T-D/T-D5
-(fix round-trips), T-E (refactor proofs), T-F/T-F1 (manifest + latency),
-T-G (runtime conformance), T-META (docs/coverage/no-deps),
-t_examples (the showcase, both depths). Every new behavior lands with
+Suite map: T-A1/A2/A5 (reference gates — bytes, ```ash blocks, per-section
+budget), T-A3 (cold-read gate — run by hand via the protocol in
+`suites/t_a3/PROTOCOL.md`, never in CI, results per run in
+`suites/t_a3/results/`), T-A4 (31 loud-failure fixtures, numbered to 38
+with gaps), T-B (resolution, banned words, no locations in source),
+T-D/T-D5 (fix round-trips; mean rounds-to-clean), T-E (refactor proofs),
+T-F/T-F1 (manifest determinism + the release-only latency gate),
+T-G (runtime conformance), T-META (docs, coverage honesty, no-deps),
+t_examples (the showcase, both depths). `suites/coverage.md` maps every
+requirement id to the test that proves it, and T-META now checks that map
+is not lying in either direction. Every new behavior lands with
 the test that would catch its regression — no exceptions, that is what
 "done" means here.
 

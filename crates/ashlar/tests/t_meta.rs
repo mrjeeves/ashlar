@@ -227,3 +227,75 @@ fn t_meta_core_docs_exist() {
         "CLAUDE.md must be exactly the @AGENTS.md import — one contract, no drift"
     );
 }
+
+#[test]
+fn t_meta_planned_rows_are_actually_open() {
+    // covers: G1 (the documentation half — a coverage map that lies is worse
+    // than none). The old T-META checked only that a row's PATH existed, so
+    // `E4 -> docs/roadmap.md [planned]` passed while E4 had 21 tests behind it.
+    // Fourteen requirements were recorded as debt while fully delivered.
+    //
+    // Two teeth, one per direction of the lie:
+    //   * `[planned]` must be genuinely open — docs/roadmap.md's open section
+    //     has to name that requirement id, so a delivered requirement cannot
+    //     keep hiding behind a stale row.
+    //   * `[runs]` must actually run — the named file has to contain `#[test]`,
+    //     so a row cannot claim coverage by pointing at prose.
+    let root = support::repo_root();
+
+    let coverage_text = std::fs::read_to_string(root.join("suites/coverage.md"))
+        .expect("suites/coverage.md");
+    let rows = parse_coverage_rows(&coverage_text);
+    assert!(!rows.is_empty(), "coverage table has no rows");
+
+    let roadmap = std::fs::read_to_string(root.join("docs/roadmap.md")).expect("docs/roadmap.md");
+    // The open section runs from the first `## Open` heading to the next
+    // heading at the same level.
+    let open_section: String = match roadmap.find("## Open") {
+        Some(start) => {
+            let rest = &roadmap[start + 2..];
+            let end = rest.find("\n## ").map(|e| start + 2 + e).unwrap_or(roadmap.len());
+            roadmap[start..end].to_string()
+        }
+        None => String::new(),
+    };
+
+    let mut unjustified_planned = Vec::new();
+    let mut hollow_runs = Vec::new();
+
+    for row in &rows {
+        match row.status.as_str() {
+            "planned" => {
+                if !open_section.contains(&row.id) {
+                    unjustified_planned.push(format!(
+                        "{} -> {} [planned], but docs/roadmap.md's open section does not name {}",
+                        row.id, row.path, row.id
+                    ));
+                }
+            }
+            "runs" => {
+                let path = root.join(&row.path);
+                let text = std::fs::read_to_string(&path).unwrap_or_default();
+                if !text.contains("#[test]") {
+                    hollow_runs.push(format!(
+                        "{} -> {} [runs], but that file contains no `#[test]`",
+                        row.id, row.path
+                    ));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    assert!(
+        unjustified_planned.is_empty(),
+        "coverage rows claiming `planned` for requirements the roadmap does not list as open \
+         (either the work is done and the row is stale, or the roadmap is hiding debt):\n{}",
+        unjustified_planned.join("\n")
+    );
+    assert!(
+        hollow_runs.is_empty(),
+        "coverage rows claiming `runs` with no test behind them:\n{}",
+        hollow_runs.join("\n")
+    );
+}

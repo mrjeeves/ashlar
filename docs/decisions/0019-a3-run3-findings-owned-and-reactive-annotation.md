@@ -78,9 +78,13 @@ per something — and the wrong *something*. That is a better failure than
    `append`, `deep`). `invalidates` is cache vocabulary and the longest token
    either pair would add to the reference. `watches`/`updates` also stays
    symmetric: two present-tense verbs about the same collection.
-3. **Re-run A3 fixtures 11 and 25**, and record run 4. A candidate cold read
-   is evidence for a choice; it is not a corpus score, so the findings stay
-   open until the corpus is re-scored.
+3. **Re-run A3 fixtures 11 and 25**, and record run 4 — a candidate cold read
+   is evidence for a choice, not a corpus score. *Done the same day*
+   (`results/2026-07-25-sonnet-run4.md`): `11-peruser` PASS unanimously 4/4,
+   `25-foreign-reactive` PASS on a 2–1 panel. Corpus 25/25. The dissent
+   localizes to `updates` rather than `watches` and is recorded there rather
+   than acted on — respelling again off one reader would repeat ADR-0015's
+   mistake in the opposite direction.
 
 ## Applied
 
@@ -101,11 +105,9 @@ Two consequences worth stating:
 - **The A3 fixtures were edited, and that is not corpus tampering.** The
   protocol forbids editing a snippet to make a failing reader pass. These
   edits keep the snippets *valid Ashlar* after a keyword changed; the fixture
-  still asks the same question about the same construct. Re-scoring them is
-  run 4's job, and until that runs the finding stays on the roadmap: this ADR
-  changes the spelling, it does not claim the new spelling passes the gate.
-  The candidate evidence above says it should; a candidate read is not a
-  corpus score.
+  still asks the same question about the same construct. Re-scoring them was
+  run 4's job, and run 4 confirmed both: this ADR changed the spelling, and the
+  gate — not this ADR — is what says the new spelling reads correctly.
 
 ## The lesson worth keeping either way
 
