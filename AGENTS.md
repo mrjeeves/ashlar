@@ -111,6 +111,15 @@ cargo test --release       # F1 latency gate is release-only (<100ms hard)
 cargo build --tests        # zero warnings, always
 ```
 
+The floor is **Rust 1.65** (`rust-version` in the crate manifest), set by
+`let ... else` and verified by building and testing on it — not guessed.
+`Cargo.lock` stays at lockfile **version 3**: with zero dependencies a
+newer lock format adds nothing and refuses to parse on older cargo, which
+is a fresh clone failing before anything compiles. Both are pinned by
+`t_meta_toolchain_floor_is_declared_and_reachable`. "Zero warnings" means
+on the floor too — an older rustc lints things 1.94 has stopped
+mentioning, and it is usually right.
+
 Suite map: T-A1/A2/A5 (reference gates — bytes, ```ash blocks, per-section
 budget), T-A3 (cold-read gate — run by hand via the protocol in
 `suites/t_a3/PROTOCOL.md`, never in CI, results per run in

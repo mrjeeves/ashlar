@@ -1024,7 +1024,7 @@ pub fn serve(
             }
         }
 
-        let mut last_mtime = source_mtime(&root);
+        let last_mtime = source_mtime(&root);
         let mut last_scan = std::time::Instant::now();
         let mut ws_conns: Vec<WsConn> = Vec::new();
         let mut pending: Vec<PendingConn> = Vec::new();
@@ -1307,7 +1307,8 @@ pub fn serve(
                 last_scan = now;
                 let m = source_mtime(&root);
                 if m != last_mtime {
-                    last_mtime = m;
+                    // No need to store `m`: reloading restarts the outer loop,
+                    // which re-reads the mtime from scratch.
                     break 'inner Exit::Reload;
                 }
             }

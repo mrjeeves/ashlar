@@ -70,7 +70,8 @@ attached.
 ## Quickstart
 
 **See the whole language running, in one command.** From a fresh clone — it
-builds the release binary itself if you don't have one:
+builds the release binary itself if you don't have one. Needs **Rust 1.65 or
+newer** and nothing else; there are no dependencies to fetch:
 
 ```
 ./showcase/serve.sh          # macOS / Linux

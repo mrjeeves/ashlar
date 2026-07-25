@@ -31,6 +31,36 @@ never the word** (ADR-0015 scored `personal` 3/3 on the bare word; in its slot i
 reads as `private`), and **the next A3 run should be a full 25, not another
 targeted re-score**, so the whole corpus is scored against one model at one time.
 
+Delivered 2026-07-25 — **a fresh clone builds on an old toolchain.**
+`./showcase/serve.sh` on a real machine failed before compiling anything:
+`failed to parse lock file ... version 4 requires -Znext-lockfile-bump`.
+Lockfile v4 needs Cargo 1.78+, and this workspace has **zero dependencies**, so
+that lock format bought nothing and locked people out. Nothing declared a
+minimum version either, so there was no way to tell whether a toolchain was even
+supposed to work.
+
+`Cargo.lock` is back to version 3 (verified that cargo 1.94 does not rewrite it),
+and the crate declares `rust-version = "1.65"` so cargo prints a sentence instead
+of a mystery. The floor was **measured, not guessed**: old toolchains were
+installed and the suite run on each. 1.60 fails on `let ... else` (used ~95
+times); 1.65 builds and passes all 299 tests with zero warnings; 1.70 and 1.74
+likewise. One test of mine had quietly raised the floor to 1.70 by using
+`is_some_and` — rewritten, since a convenience in an assertion is not worth five
+minor versions of reach.
+
+Building on the floor also caught a real defect the current compiler no longer
+mentions: rustc 1.74 flagged a dead assignment in `http.rs`'s reload check
+(`last_mtime = m` immediately before `break`, where reload restarts the outer
+loop and re-reads the mtime anyway). It was right, and 1.94 says nothing — so
+"zero warnings" now means on the floor too, where an older rustc is often the
+stricter reader.
+
+Pinned by `t_meta_toolchain_floor_is_declared_and_reachable`: the lockfile must
+stay at version 3 with no dependency entries, `rust-version` must be declared,
+and it must be ≥1.65 (because `let ... else`) and not silently drift upward —
+raising the floor strands users, so it has to be a deliberate act that updates
+the test and the README together.
+
 Delivered 2026-07-25 — **the runtime builds and the showcase starts on
 Windows.** Asked how to start the showcase, the honest answer turned out to be
 "you can't" — `serve.sh` is bash, and underneath it `dlopen`/`dlsym` were
