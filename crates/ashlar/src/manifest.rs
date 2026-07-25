@@ -239,7 +239,7 @@ mod tests {
                 Prop {
                     name: "route".to_string(),
                     name_span: Span::point(4, 3),
-                    owned: false,
+                    peruser: false,
                     storage: None,
                     kind: None,
                     shape: None,
@@ -251,7 +251,7 @@ mod tests {
                 Prop {
                     name: "files".to_string(),
                     name_span: Span::point(5, 3),
-                    owned: false,
+                    peruser: false,
                     storage: None,
                     kind: None,
                     shape: None,
@@ -310,7 +310,7 @@ mod tests {
             ComposedProp {
                 name: "route".to_string(),
                 storage: None,
-                owned: false,
+                peruser: false,
                 kind: None,
                 shape: None,
                 defs: vec![PropRef {
@@ -332,7 +332,7 @@ mod tests {
             ComposedProp {
                 name: "files".to_string(),
                 storage: None,
-                owned: false,
+                peruser: false,
                 kind: None,
                 shape: None,
                 defs: vec![PropRef {

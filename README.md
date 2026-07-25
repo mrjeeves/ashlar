@@ -106,8 +106,10 @@ mechanical, and each has teeth:
 - **Guessable.** The whole surface fits in one ≤40,000-byte reference
   (`reference/ashlar.md`), and guessability is *gate-tested*: fresh models
   cold-read program snippets and their misreads are design bugs
-  (`suites/t_a3/`, last run 23/25 — the two failures are open items on the
-  roadmap, exactly as that gate is meant to produce).
+  (`suites/t_a3/`, last run 23/25). Its two failures were real design bugs and
+  are fixed: `owned` and `reads`/`writes` cold-read to the wrong mental model,
+  so they are now `peruser` and `watches`/`updates`
+  ([ADR-0019](docs/decisions/0019-a3-run3-findings-owned-and-reactive-annotation.md)).
 - **Derivable.** Ashlar minimizes semantic freedom so the toolchain can
   compute and explain what names mean, which implementations run, and what
   a change affects ([ADR-0012](docs/decisions/0012-semantic-freedom-and-derivability.md)).
@@ -130,7 +132,7 @@ mechanical, and each has teeth:
 | `reference/` | The complete language reference — the source of truth for every language decision. |
 | `docs/` | Vision, requirements, roadmap, diagnostics catalog, and the ADRs (see `docs/README.md`). |
 | `AGENTS.md` | The agent-facing working contract — hierarchy, hard rules, sync duties. Load-bearing (T-META enforces it). |
-| `examples/` | Fifteen complete runnable projects — including `commons` (a full team chat), `ledger` (a real SQLite datastore over the `foreign` boundary), `locker` (per-user `owned` storage that isolates each user by construction), and `abacus` (a Python worker, no compiler in sight) — compiled, format-checked, AND runtime-driven by the suite. All wear one dark house style (ADR-0016). |
+| `examples/` | Fifteen complete runnable projects — including `commons` (a full team chat), `ledger` (a real SQLite datastore over the `foreign` boundary), `locker` (per-user `peruser` storage that isolates each user by construction), and `abacus` (a Python worker, no compiler in sight) — compiled, format-checked, AND runtime-driven by the suite. All wear one dark house style (ADR-0016). |
 | `showcase/` | A live gallery of all fifteen: `serve.sh` runs each on its own port, `index.html` swaps between them in a frame. |
 | `suites/` | Test corpora: the cold-read gate protocol and the loud-failure fixture corpus. |
 | `crates/` | The Rust implementation and its 17 test binaries. |
@@ -157,8 +159,8 @@ code and a test behind it, and the increments were adversarially
 re-reviewed. The suite is 17 green test binaries in debug and release with
 zero warnings.
 
-Two items are open on the ledger (`docs/roadmap.md`), both raised by A3 gate
-run 3 rather than by a failing test: `owned` and the `reads`/`writes` foreign
-annotation each cold-read to the wrong mental model. The gate found them by
-doing its job, and they stay listed until they get a design decision — an
-honest open ledger beats an empty one.
+One item is open on the ledger (`docs/roadmap.md`): A3 gate run 3 found two
+constructs that cold-read to the wrong mental model, both now respelled
+(ADR-0019), and the corpus has not been re-scored since. A candidate cold read
+is evidence for a spelling, not a gate result — so the claim stays 23/25 until
+run 4 says otherwise. An honest open ledger beats an empty one.

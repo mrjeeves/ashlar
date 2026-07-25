@@ -924,17 +924,17 @@ fn t_examples_abacus_computes_through_a_python_worker() {
 
 #[test]
 fn t_examples_locker_scopes_storage_per_user() {
-    // `owned stored` gives each signed-in user their own isolated, persisted
+    // `peruser stored` gives each signed-in user their own isolated, persisted
     // data (ADR-0015). Proven here: anonymous access is refused, two users
     // never see each other's notes, and the data survives a restart keyed by
     // the persisted account id.
     let dir = staged("locker");
     let (port, stop, join) = start(dir.clone());
 
-    // Anonymous cannot reach owned storage — the `allow` guard rejects it
+    // Anonymous cannot reach peruser storage — the `allow` guard rejects it
     // before the read would even fault.
     let (anon, _, _) = req(port, "GET", "/api/notes", None, None);
-    assert_eq!(anon, 403, "anonymous is refused the owned read");
+    assert_eq!(anon, 403, "anonymous is refused the peruser read");
 
     // Two users sign up; each gets a session.
     let (_, ha, _) = req(port, "POST", "/api/signup",
@@ -948,7 +948,7 @@ fn t_examples_locker_scopes_storage_per_user() {
     req(port, "POST", "/api/keep", Some("{\"note\":\"ada-secret\"}"), Some(&ada));
     req(port, "POST", "/api/keep", Some("{\"note\":\"bob-secret\"}"), Some(&bob));
 
-    // Each sees ONLY their own — the owned isolation, by construction.
+    // Each sees ONLY their own — the peruser isolation, by construction.
     let (_, _, an) = req(port, "GET", "/api/notes", None, Some(&ada));
     assert!(an.contains("ada-secret") && !an.contains("bob-secret"),
         "ada sees only her own notes: {}", an);
@@ -957,15 +957,15 @@ fn t_examples_locker_scopes_storage_per_user() {
         "bob sees only his own notes: {}", bn);
 
     // The `/` view: a gate for anonymous, the live board for a member —
-    // whose owned notes render right in the page, isolated (§9.3).
+    // whose peruser notes render right in the page, isolated (§9.3).
     let (anon_home, _, gate) = req(port, "GET", "/", None, None);
     assert_eq!(anon_home, 200);
     assert!(gate.contains("class=\"stack\""), "anonymous sees the gate: {}", gate);
     let (_, _, board) = req(port, "GET", "/", None, Some(&ada));
     assert!(board.contains("ada-secret") && !board.contains("bob-secret"),
-        "the board renders only this user's owned notes: {}", board);
+        "the board renders only this user's peruser notes: {}", board);
 
-    // owned stored survives a restart. Sessions do not persist, so log in
+    // peruser stored survives a restart. Sessions do not persist, so log in
     // again — the account (and its stable id) does, and the notes keyed by
     // that id come back, still isolated.
     stop.store(true, Ordering::Relaxed);
@@ -976,7 +976,7 @@ fn t_examples_locker_scopes_storage_per_user() {
     let ada2 = cookie_of(&h);
     let (_, _, a2) = req(port2, "GET", "/api/notes", None, Some(&ada2));
     assert!(a2.contains("ada-secret") && !a2.contains("bob-secret"),
-        "restart kept ada's owned notes, still isolated: {}", a2);
+        "restart kept ada's peruser notes, still isolated: {}", a2);
 
     stop2.store(true, Ordering::Relaxed);
     join2.join().unwrap();

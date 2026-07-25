@@ -82,7 +82,7 @@ pub struct StateStore {
     pub values: BTreeMap<String, V>,
     /// Full names of `stored` properties (the persisted subset).
     pub stored_keys: Vec<String>,
-    /// Full names of `owned` properties (scoped per user, §9.3): their
+    /// Full names of `peruser` properties (scoped per user, §9.3): their
     /// per-user values live under `name@userid` keys, and the bare full
     /// name holds the initial template every user's copy seeds from.
     pub owned_keys: std::collections::BTreeSet<String>,
@@ -98,7 +98,7 @@ pub struct Instance {
     pub fields: BTreeMap<String, V>,
     pub state: BTreeMap<String, V>,
     /// The user this instance belongs to, captured when it mounted: the
-    /// scope for its `owned` reads. Stable across re-renders even when the
+    /// scope for its `peruser` reads. Stable across re-renders even when the
     /// re-render is driven by a scheduled task or another user (ADR-0015).
     pub user: Option<String>,
     /// The page render this instance belongs to; when that page's socket
@@ -435,7 +435,7 @@ impl<'a> Evaluator<'a> {
                     (
                         n.clone(),
                         matches!(p.storage, Some(crate::ast::Storage::Stored)),
-                        p.owned,
+                        p.peruser,
                     )
                 })
                 .collect();
@@ -566,7 +566,7 @@ impl<'a> Evaluator<'a> {
     }
 
     pub fn assign_state(&mut self, key: &str, v: V) {
-        // An `owned` value's key is `base@userid`; persistence is keyed by
+        // An `peruser` value's key is `base@userid`; persistence is keyed by
         // the base full name, so strip the user before the stored check.
         let base = key.split('@').next().unwrap_or(key);
         if self.state.stored_keys.iter().any(|k| k == base) {
@@ -576,10 +576,10 @@ impl<'a> Evaluator<'a> {
         self.dirty_readers(key);
     }
 
-    /// The user whose `owned` state applies right now: the instance being
+    /// The user whose `peruser` state applies right now: the instance being
     /// rendered (its captured owner), otherwise the request's session. It
-    /// is `None` when neither is present — an `owned` access then faults
-    /// (there is no such thing as a shared `owned` value, §9.3).
+    /// is `None` when neither is present — an `peruser` access then faults
+    /// (there is no such thing as a shared `peruser` value, §9.3).
     fn owned_user(&self) -> Option<String> {
         if let Some(id) = &self.current_render {
             if let Some(u) = self.instances.get(id).and_then(|i| i.user.clone()) {
@@ -1070,7 +1070,7 @@ impl<'a> Evaluator<'a> {
                 if self.state.owned_keys.contains(&key) {
                     let Some(uid) = self.owned_user() else {
                         return Err(Fault::new(format!(
-                            "`{}.{}` is `owned`, so it needs a signed-in user; this request has none.",
+                            "`{}.{}` is `peruser`, so it needs a signed-in user; this request has none.",
                             full, name
                         )));
                     };
@@ -1196,7 +1196,7 @@ impl<'a> Evaluator<'a> {
                 if self.state.owned_keys.contains(&key) {
                     let Some(uid) = self.owned_user() else {
                         return Err(Fault::new(format!(
-                            "`{}.{}` is `owned`, so writing it needs a signed-in user; this request has none.",
+                            "`{}.{}` is `peruser`, so writing it needs a signed-in user; this request has none.",
                             env.part, name
                         )));
                     };
@@ -1629,7 +1629,7 @@ impl<'a> Evaluator<'a> {
         // (ADR-0014). The store lives in SQL; reactivity is the runtime's.
         if let Some(r) = &react {
             let key = format!("collection:{}", self.resolve_collection(&space, &r.collection));
-            if r.writes {
+            if r.updates {
                 self.dirty_readers(&key);
             } else {
                 self.record_read(&key);

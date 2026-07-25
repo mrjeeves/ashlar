@@ -18,7 +18,7 @@
 //!
 //! Hot reload (G3): source mtimes are polled; on change the project is
 //! rebuilt and the state store carries over by full dotted name, so
-//! `state`/`stored` values (and per-user `owned` values) survive an edit.
+//! `state`/`stored` values (and per-user `peruser` values) survive an edit.
 //!
 //! Persistence (§9.3): `stored` values flush to `.ashlar-state.json` in
 //! the project root whenever dirty, and load (with shape-agnostic JSON
@@ -960,7 +960,7 @@ pub fn serve(
                             .any(|s| s.as_str() == k.split('@').next().unwrap_or(&k))
                         {
                             // Accepts both `base` (shared stored) and
-                            // `base@userid` (owned stored) keys.
+                            // `base@userid` (peruser stored) keys.
                             ev.state.values.insert(k, v);
                         }
                     }
@@ -1358,8 +1358,8 @@ fn source_mtime(root: &std::path::Path) -> u128 {
 fn flush_state(path: &std::path::Path, ev: &Evaluator) {
     let mut m = BTreeMap::new();
     for (k, v) in &ev.state.values {
-        // `owned stored` values live under `base@userid` keys; persistence
-        // is keyed by the base full name. The bare template of an owned
+        // `peruser stored` values live under `base@userid` keys; persistence
+        // is keyed by the base full name. The bare template of a peruser
         // property carries no user's data, so skip it.
         let base = k.split('@').next().unwrap_or(k);
         if ev.state.stored_keys.iter().any(|s| s == base) {

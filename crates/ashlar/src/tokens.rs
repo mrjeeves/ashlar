@@ -40,7 +40,7 @@ pub enum Tok {
     KwForeign,
     KwState,
     KwStored,
-    KwOwned,
+    KwPeruser,
     KwAppend,
     KwDeep,
     KwStack,

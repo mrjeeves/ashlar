@@ -9,49 +9,40 @@ with no passing test is not a satisfied requirement (T-META). An empty open
 section is a claim, so it is kept honest: an item leaves it only when its
 test runs for real.
 
-## Open — 2 items, both from A3 gate run 3
+## Open — 1 item
 
-The cold-read gate ran on 2026-07-25 against a 25-snippet corpus:
-**23/25 PASS**, clearing the 80% bar, recorded in
-`suites/t_a3/results/2026-07-25-sonnet-run3.md`. A3 is therefore satisfied as
-a requirement. But the two constructs added since run 2 — `owned` (ADR-0015)
-and the `reads`/`writes` foreign annotation (ADR-0014's reactive stage) — are
-the only two snippets that failed, both unanimously across a three-judge
-panel. Requirements §9: "Every failure is a design bug in the syntax, not a
-documentation gap." So each is an open item until it gets a design decision.
+**A3 fixtures 11 and 25 have not been re-scored since their keywords changed.**
+Gate run 3 (2026-07-25, `suites/t_a3/results/2026-07-25-sonnet-run3.md`) scored
+**23/25**, clearing the 80% bar, and its two failures were the two constructs
+added since run 2. Both have now been respelled per **ADR-0019** — `owned` is
+`peruser`, and `reads`/`writes` are `watches`/`updates` — on the strength of a
+construct-level candidate cold read in which `peruser` conveyed per-user scope
+2/2 (against 0/2 for `owned`, `personal`, `mine`, and `each`) and
+`watches`/`updates` conveyed the reactive edge 2/2 (against 0/2 for
+`reads`/`writes`).
 
-**A3-F5 — `owned` reads as encapsulation, not per-user scope.** A cold reader
-took `owned stored items` to mean "state this part holds itself, as opposed to
-a prop passed in" and described the result as one shared persisted list. The
-per-user meaning — the entire purpose of the modifier — never appeared. This
-misreads in the direction of a security bug, since `owned` exists precisely so
-that per-user isolation is the naive reading. The meta-finding matters as much:
-ADR-0015 chose the word by cold-reading the WORD, where `owned` scored 3/3,
-and rejected `private` for landing in the OOP access-control frame — which is
-the frame `owned` lands in once it is read inside the construct. A word-level
-cold read does not substitute for a construct-level one.
-
-**A3-F6 — `reads`/`writes` read as an effect annotation, not a reactive edge.**
-The worst score in the corpus (2/4). The reader described "only reads Row state
-(no mutation)" and praised the effect being "declared right in the signature";
-views, re-rendering, and propagation were entirely absent. This is the A4
-failure mode by name — the annotations resemble an effect system, so the reader
-stops at effects, and nothing about that guess fails loudly.
-
-Both are keyword-choice questions, and the corpus is fixed (a snippet is never
-edited to make a reader pass). **The candidate cold read is done** and recorded
-in the run-3 results file and **ADR-0019** (proposed): `peruser` conveys
-per-user scope 2/2 where `owned`, `personal`, `mine`, and `each` all score 0/2,
-and `watches`/`updates` conveys the reactive edge 2/2 where `reads`/`writes`
-scores 0/2. What remains is the decision to apply them — a keyword rename
-touching the reference, the diagnostics catalog, the examples, and the corpus
-at once — plus a run 4 to re-score fixtures 11 and 25 afterwards.
+That candidate read is evidence for a choice, **not a corpus score.** Until run
+4 re-scores fixtures `11-peruser` and `25-foreign-reactive` under the full
+protocol, the honest claim is 23/25 with two known-bad spellings replaced by
+two well-evidenced ones — not 25/25. Requires a fresh reader per
+`suites/t_a3/PROTOCOL.md`; deliberately not a CI job.
 
 The methodological finding needs no decision and is already binding:
 **cold-read the construct, never the word.** ADR-0015 scored `personal` 3/3 by
 testing the bare word; in its actual slot it reads as `private`, the very frame
-`private` was rejected for. Any future naming decision tests the syntax a
-reader will meet, with its neighbors.
+`private` was rejected for. Any future naming decision tests the syntax a reader
+will meet, with its neighbors.
+
+Delivered 2026-07-25 — **the two A3 run-3 findings are fixed in the language**
+(ADR-0019). `owned` → `peruser` and `reads`/`writes` → `watches`/`updates`,
+across the reserved-word list, tokens, parser, AST and resolved models, the
+composer's storage identity, the formatter, the evaluator's per-user scoping and
+its two runtime faults, `E029`'s cause and machine fix, reference
+§1/§4/§9.3/§9.10, the diagnostics catalog, G4, the `locker` and `ledger`
+examples, and the A3 fixtures. `owned`, `reads`, and `writes` are ordinary
+identifiers again — `commons` already declares a property called `reads`, which
+is now a live proof of it. E029's machine fix still converges in one round
+(D2), and all 15 examples check clean and canonically formatted.
 
 Delivered 2026-07-25 — **the binding file is a name-bearing fact, and the
 name-governing systems now see it.** An audit of ADR-0017 against the vision
@@ -126,8 +117,9 @@ Every item this page has carried is delivered, tested, and moved off:
   printed on every run; §9.10 is the largest construct as the boundary
   grew (ADR-0017), still far under the 20% per-construct cap.
 - **T-A3 surface findings** — the run-1/2 findings resolved by ADR-0008,
-  validated by gate run 2 (23/24). Run 3 (2026-07-25, 23/25) clears the bar
-  again and raises two new findings, open at the top of this page.
+  validated by gate run 2 (23/24). Run 3 (2026-07-25, 23/25) cleared the bar
+  again and raised two findings, both now fixed by ADR-0019; only the
+  re-score is open, at the top of this page.
 - **Showcase corpus** — fifteen complete projects, crowned by
   `commons`: a full team chat (auth, rooms, DMs, live messaging,
   presence-by-lifecycle, unread counts, plus moderation and mentions as
@@ -178,8 +170,9 @@ universal. `owned` is added, a per-user scope modifier on `state`/`stored`
 manual `[req.user.id]` keying that invites IDOR disappears. It fails loud
 where there is no user (an anonymous request, a scheduled task, `spawn`, or
 `start` stack): a runtime fault, never a silently shared value. The word
-was chosen by a T-A3 cold read (`owned`/`personal`/`user` all read per-user
-3/3; `private` misread as OOP access-control). Shipped with the runtime
+was chosen by a T-A3 cold read of the WORD (`owned`/`personal`/`user` all read
+per-user 3/3; `private` misread as OOP access-control) — a method ADR-0019 later
+showed to be the wrong unit of measurement, respelling the keyword `peruser`. Shipped with the runtime
 scoping, per-user persistence keyed by the stable account id, `E029`
 (`owned` needs a storage word), the `ticker` rename, the `locker` example
 (two users, isolated and persisted, driven by the suite), a T-G fault

@@ -4,5 +4,5 @@ part Row {
   key: text
 }
 
-foreign save: (key: text) -> bool writes Row
-foreign all: () -> [Row] reads Row
+foreign save: (key: text) -> bool updates Row
+foreign all: () -> [Row] watches Row

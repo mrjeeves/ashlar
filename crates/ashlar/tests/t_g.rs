@@ -599,13 +599,13 @@ fn ws_read_frame(s: &mut TcpStream) -> String {
 
 #[test]
 fn t_g_owned_read_without_a_user_faults_loud() {
-    // covers: G4 (per-user `owned` state), reference §9.3. An `owned` value
+    // covers: G4 (per-user `peruser` state), reference §9.3. An `peruser` value
     // has no shared fallback — reading it with no signed-in user is a
     // runtime fault (500), never a silently shared value.
     let app = r#"space own
 
 part Store {
-  owned stored secret: text = "hidden"
+  peruser stored secret: text = "hidden"
 }
 
 part peek {
@@ -620,8 +620,8 @@ part app {
     let root = fixture("ownedfault", &[("app.ash", app)]);
     let (port, stop, join) = start(root);
     let (status, _, body) = http_req_full(port, "GET", "/peek", None, None);
-    assert_eq!(status, 500, "an owned read with no user must fault, not leak");
-    assert!(!body.contains("hidden"), "the owned value must not leak in the fault: {}", body);
+    assert_eq!(status, 500, "a peruser read with no user must fault, not leak");
+    assert!(!body.contains("hidden"), "the peruser value must not leak in the fault: {}", body);
     stop.store(true, Ordering::Relaxed);
     join.join().unwrap();
 }

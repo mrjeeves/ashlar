@@ -1,11 +1,10 @@
 # ADR-0019 — A3 run-3 findings: `owned` and the reactive foreign annotation
 
-**Status:** proposed, 2026-07-25 — the evidence is in and the recommendation is
-made; the keyword changes are not applied.
+**Status:** accepted and applied, 2026-07-25.
 **Evidence:** `suites/t_a3/results/2026-07-25-sonnet-run3.md`, plus the
 candidate run recorded below.
-**Amends:** ADR-0015 (`owned`) and ADR-0014's reactive stage
-(`reads`/`writes`) — if accepted.
+**Amends:** ADR-0015 (`owned` -> `peruser`) and ADR-0014's reactive stage
+(`reads`/`writes` -> `watches`/`updates`).
 
 ## What the gate found
 
@@ -65,7 +64,7 @@ qualifier, because that is what that slot means in every language they know.
 per something — and the wrong *something*. That is a better failure than
 `owned`'s, and still a failure.
 
-## Recommendation
+## The decision
 
 1. **`owned` → `peruser`.** The only candidate that conveys the meaning, and
    the finding it fixes is the security-adjacent one. Cost: the reserved-word
@@ -79,22 +78,34 @@ per something — and the wrong *something*. That is a better failure than
    `append`, `deep`). `invalidates` is cache vocabulary and the longest token
    either pair would add to the reference. `watches`/`updates` also stays
    symmetric: two present-tense verbs about the same collection.
-3. **Re-run A3 fixtures 11 and 25 after either change**, and record run 4. A
-   candidate cold read is evidence for a choice; it is not a corpus score.
+3. **Re-run A3 fixtures 11 and 25**, and record run 4. A candidate cold read
+   is evidence for a choice; it is not a corpus score, so the findings stay
+   open until the corpus is re-scored.
 
-## Why this is proposed rather than applied
+## Applied
 
-Two reasons, and neither is doubt about the evidence.
+Both renames are in. `owned` -> `peruser`, `reads`/`writes` ->
+`watches`/`updates`, across the lexer's reserved words, the token set, the
+parser, the AST and resolved models, the composer's storage identity, the
+formatter, the evaluator's per-user scoping and its two runtime faults, `E029`'s
+cause and machine fix, reference §1/§4/§9.3/§9.10, the diagnostics catalog, G4,
+the `locker` and `ledger` examples, and the A3 fixtures (`11-owned` is now
+`11-peruser`).
 
-The gate does not compel it: 23/25 clears the bar, so nothing is out of
-compliance, and these are judgment calls about vocabulary that reverse two
-recorded decisions. And a keyword rename is exactly the change that is
-expensive to undo — it touches the reference, the examples, the diagnostics
-catalog, and the corpus at once, and every downstream reader of this repo
-learns the word we ship.
+Two consequences worth stating:
 
-What is *not* deferred: the findings themselves are recorded, the roadmap lists
-them as open, and the methodological lesson stands regardless of the decision.
+- **`owned`, `reads`, and `writes` are ordinary identifiers again.** Nothing
+  reserves them, so a part may declare a property called `reads` — and
+  `commons` already does (`reads = put(reads, uid, ...)`), which is now a live
+  proof that the retired spellings carry no special meaning.
+- **The A3 fixtures were edited, and that is not corpus tampering.** The
+  protocol forbids editing a snippet to make a failing reader pass. These
+  edits keep the snippets *valid Ashlar* after a keyword changed; the fixture
+  still asks the same question about the same construct. Re-scoring them is
+  run 4's job, and until that runs the finding stays on the roadmap: this ADR
+  changes the spelling, it does not claim the new spelling passes the gate.
+  The candidate evidence above says it should; a candidate read is not a
+  corpus score.
 
 ## The lesson worth keeping either way
 

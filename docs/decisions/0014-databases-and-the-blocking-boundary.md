@@ -1,5 +1,10 @@
 # ADR-0014: Databases — named in source, bound in deployment; kept off the loop's blocking path
 
+**Amended by [ADR-0019](0019-a3-run3-findings-owned-and-reactive-annotation.md):**
+the reactive annotation this ADR's delivered stage introduced is now spelled
+`watches`/`updates`, not `reads`/`writes` — the old spellings cold-read as a
+static effect annotation with no reactivity at all. The mechanism is unchanged.
+
 Date: 2026-07-23
 
 Status: proposed — a reactive-foreign bridge is delivered (see "Delivered"

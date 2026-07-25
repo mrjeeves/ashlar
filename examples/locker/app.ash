@@ -5,13 +5,13 @@ part app {
   style = "locker"
 }
 
-// A personal locker. `owned stored notes` gives every signed-in user their
+// A personal locker. `peruser stored notes` gives every signed-in user their
 // OWN list, saved to disk and isolated from everyone else's — no keying by
-// user id, and no way to reach another user's (ADR-0015). `owned` has no
+// user id, and no way to reach another user's (ADR-0015). `peruser` has no
 // meaning without a user, so every reader below runs behind a signed-in
 // session; reaching it anonymously would fault (§9.3).
 part Store {
-  owned stored notes: [text] = []
+  peruser stored notes: [text] = []
   keep = (note: text) => {
     notes = [...notes, note]
   }
@@ -19,7 +19,7 @@ part Store {
 
 // The front page renders a view, never a redirect: a signed-in user gets
 // their board, everyone else meets the gate. The board is only built when
-// a user is present, so its `owned` reads always resolve (§9.3).
+// a user is present, so its `peruser` reads always resolve (§9.3).
 part home {
   route = "/"
   handle pipe = (req: std.Request) => {
@@ -36,7 +36,7 @@ part board {
     el("div", { class: "card" }, [
       el("p", { class: "kicker" }, ["per-user storage · ADR-0015"]),
       el("h1", {}, ["locker"]),
-      el("p", { class: "lede" }, ["Every signed-in person gets their own notes — owned storage, isolated by construction and saved to disk."]),
+      el("p", { class: "lede" }, ["Every signed-in person gets their own notes — per-user storage, isolated by construction and saved to disk."]),
       el("form", { class: "row", onsubmit: keep }, [
         el("input", { class: "field", oninput: typed, value: draft, placeholder: "keep a note" }, []),
         el("button", { class: "primary" }, ["keep"]),
@@ -105,7 +105,7 @@ part leave {
 
 // The API surface (§9.2) a programmatic client uses: accounts, this user's
 // notes, and a keep. Each read guards with `allow`, rejecting anonymous
-// callers before the owned read runs.
+// callers before the peruser read runs.
 part register {
   route = "/api/signup"
   handle pipe = (req: std.Request) => signup(text(req.data.email), text(req.data.password))
