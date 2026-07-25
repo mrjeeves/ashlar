@@ -34,14 +34,52 @@ EXAMPLES=(
   "hello:8094"
 )
 
-# ledger reads a real SQLite database across the foreign boundary; its shim
-# must be built before the server can load it (mirrors the driving test).
-if command -v rustc >/dev/null 2>&1; then
+# `ledger` reaches a real SQLite database across the foreign boundary, so its
+# shim must be built before the server can load it (mirrors the driving test).
+# When this cannot be done, say WHY and what to run — a shrug here just moves
+# the confusion to `foreign space 'ledger.store' has no library` later.
+build_ledger_shim() {
+  if ! command -v rustc >/dev/null 2>&1; then
+    echo "  ledger needs a Rust toolchain to build its SQLite shim; skipping it."
+    return 1
+  fi
   echo "building ledger's SQLite shim…"
-  rustc --edition 2021 --crate-name ledger_store --crate-type cdylib \
+  local err
+  err="$(rustc --edition 2021 --crate-name ledger_store --crate-type cdylib \
     -l sqlite3 -o examples/ledger/foreign/ledger.store.so \
-    examples/ledger/foreign/ledger.store.rs 2>/dev/null \
-    || echo "  (skipped: needs a Rust toolchain + libsqlite3 — ledger's frame will be empty)"
+    examples/ledger/foreign/ledger.store.rs 2>&1)" && return 0
+
+  # Always show what actually went wrong. Hiding this is what turned a build
+  # problem into a mystery `foreign space has no library` later.
+  echo "  ledger's shim failed to build:"
+  printf '%s\n' "$err" | sed 's/^/    /'
+  # One cause is common enough to name, since the fix is a package install:
+  # linking `-l sqlite3` needs the development package, not just the runtime
+  # library most systems already ship.
+  if printf '%s' "$err" | grep -qi "sqlite3"; then
+    echo
+    echo "  If that names libsqlite3, install the development package and re-run:"
+    echo "    Debian/Ubuntu   sudo apt install libsqlite3-dev"
+    echo "    Fedora/RHEL     sudo dnf install sqlite-devel"
+    echo "    Arch            sudo pacman -S sqlite"
+    echo "    macOS           ships with the Xcode command line tools"
+  fi
+  return 1
+}
+
+if build_ledger_shim; then
+  # Prove it, rather than assuming the build implies reachability — this is
+  # exactly what `foreign check` is for.
+  if ! "$BIN" foreign check examples/ledger >/dev/null 2>&1; then
+    echo "  built, but the capability is still not reachable:"
+    "$BIN" foreign check examples/ledger 2>&1 | sed 's/^/    /'
+  fi
+else
+  echo
+  echo "  The other fourteen examples are unaffected. ledger's page will serve"
+  echo "  but its store will fault at the boundary, with that same correction."
+  echo "  \`abacus\` is the foreign example that needs no compiler at all."
+  echo
 fi
 
 PIDS=()

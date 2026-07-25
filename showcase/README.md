@@ -24,6 +24,13 @@ the `native` transport, which needs a POSIX dynamic loader, so its page serves
 but its store faults with that correction; `abacus` is the cross-platform
 foreign example, a Python worker co-process.
 
+`ledger` is the one example with a build step: it reaches a real SQLite database
+over the `native` transport, so its shim must compile first. If that fails the
+launcher prints **rustc's actual error** and, when the error names libsqlite3,
+the package to install — then says plainly that the other fourteen are
+unaffected. When it succeeds, the launcher runs `ashlar foreign check` to prove
+the capability is reachable rather than assuming the build implies it.
+
 Each launcher builds the release binary if needed, builds `ledger`'s SQLite shim
 where it can,
 and runs each example with `ashlar run examples/<name> --port <n>` — the source

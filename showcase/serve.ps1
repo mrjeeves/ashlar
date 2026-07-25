@@ -46,14 +46,37 @@ $examples = @(
 # the shim first (mirrors the driving test).
 if ($onWindows) {
   Write-Host 'note: ledger needs the POSIX-only `native` transport; its store will not load here.'
-  Write-Host '      (`abacus` is the cross-platform foreign example — a worker co-process.)'
-} elseif (Get-Command rustc -ErrorAction SilentlyContinue) {
+  Write-Host '      (`abacus` is the cross-platform foreign example - a worker co-process.)'
+} elseif (-not (Get-Command rustc -ErrorAction SilentlyContinue)) {
+  Write-Host '  ledger needs a Rust toolchain to build its SQLite shim; skipping it.'
+} else {
   Write-Host "building ledger's SQLite shim..."
-  rustc --edition 2021 --crate-name ledger_store --crate-type cdylib `
+  # Capture the error rather than discarding it: hiding this is what turns a
+  # build problem into a mystery `foreign space has no library` later.
+  $err = rustc --edition 2021 --crate-name ledger_store --crate-type cdylib `
     -l sqlite3 -o examples/ledger/foreign/ledger.store.so `
-    examples/ledger/foreign/ledger.store.rs 2>$null
+    examples/ledger/foreign/ledger.store.rs 2>&1
   if ($LASTEXITCODE -ne 0) {
-    Write-Host '  (skipped: needs a Rust toolchain + libsqlite3 - ledger''s frame will be empty)'
+    Write-Host "  ledger's shim failed to build:"
+    $err | ForEach-Object { Write-Host "    $_" }
+    if ("$err" -match 'sqlite3') {
+      Write-Host ''
+      Write-Host '  If that names libsqlite3, install the development package and re-run:'
+      Write-Host '    Debian/Ubuntu   sudo apt install libsqlite3-dev'
+      Write-Host '    Fedora/RHEL     sudo dnf install sqlite-devel'
+      Write-Host '    Arch            sudo pacman -S sqlite'
+      Write-Host '    macOS           ships with the Xcode command line tools'
+    }
+    Write-Host ''
+    Write-Host '  The other fourteen examples are unaffected. ledger''s page will serve'
+    Write-Host '  but its store will fault at the boundary, with that same correction.'
+  } else {
+    # Prove reachability rather than assuming the build implies it.
+    & $bin foreign check examples/ledger *> $null
+    if ($LASTEXITCODE -ne 0) {
+      Write-Host '  built, but the capability is still not reachable:'
+      & $bin foreign check examples/ledger 2>&1 | ForEach-Object { Write-Host "    $_" }
+    }
   }
 }
 
