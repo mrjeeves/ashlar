@@ -303,6 +303,74 @@ fn t_meta_agents_md_does_not_teach_the_language() {
         offenders.join("\n")
     );
 
+    // The operative property is narrower and sharper than "no language facts":
+    // AGENTS.md must not hand a reader a fact that a corpus rubric asks that
+    // reader to produce. So intersect its inline-code spans with every one in
+    // every `## Must state` rubric. Run 5's isolation probes found the residual
+    // is a single coincidental collision; anything new is a real leak and fails.
+    //
+    // EXEMPT is deliberately tiny and deliberately annotated. Adding to it means
+    // editing this test on purpose, which is the friction that keeps a genuine
+    // leak from being waved through.
+    const EXEMPT: &[(&str, &str)] = &[(
+        "http",
+        "fixture 05-limits-deep uses `http` as a MAP KEY; AGENTS.md hard rule 3 \
+         means the transport. Different referents, no fact transferred.",
+    )];
+    let mut rubric_tokens: BTreeSet<String> = BTreeSet::new();
+    let a3 = root.join("suites/t_a3");
+    for entry in std::fs::read_dir(&a3).expect("suites/t_a3").flatten() {
+        let path = entry.path();
+        if !path.to_string_lossy().ends_with(".expect.md") {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path).unwrap();
+        let Some(at) = text.find("## Must state") else {
+            continue;
+        };
+        for (i, span) in text[at..].split('`').enumerate() {
+            if i % 2 == 1 && !span.trim().is_empty() {
+                rubric_tokens.insert(span.trim().to_string());
+            }
+        }
+    }
+    assert!(
+        rubric_tokens.len() > 50,
+        "expected to recover the rubric vocabulary from suites/t_a3/*.expect.md, \
+         found only {} tokens",
+        rubric_tokens.len()
+    );
+    let mut handed_over: Vec<String> = Vec::new();
+    let mut in_fence = false;
+    for line in agents.lines() {
+        if line.trim_start().starts_with("```") {
+            in_fence = !in_fence;
+            continue;
+        }
+        if in_fence {
+            continue;
+        }
+        for (i, span) in line.split('`').enumerate() {
+            let span = span.trim();
+            if i % 2 == 1
+                && rubric_tokens.contains(span)
+                && !EXEMPT.iter().any(|(t, _)| *t == span)
+            {
+                handed_over.push(span.to_string());
+            }
+        }
+    }
+    handed_over.sort();
+    handed_over.dedup();
+    assert!(
+        handed_over.is_empty(),
+        "AGENTS.md hands a cold reader vocabulary the A3 rubrics ask them to \
+         produce: {:?}. That is how `08-handle-pipe` flipped to PASS in run 3 and \
+         back to FAIL in run 5. Move it to docs/writing-ashlar.md, or — if the \
+         collision is coincidental — add it to EXEMPT with the reason.",
+        handed_over
+    );
+
     // And the link must be real, or the facts are simply lost.
     assert!(
         agents.contains("docs/writing-ashlar.md"),

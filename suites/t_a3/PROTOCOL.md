@@ -140,3 +140,16 @@ unchanged; only the isolation requirement and how it is evidenced changed.
 Runs 3 and 4 keep their files, annotated as void; their FAILs remain valid
 findings, because a leak can only raise a score. A3's standing evidence is
 run 2 (23/24, clean, against that day's 24-snippet corpus).
+
+2026-07-25 (later) — **Run 5** exercised the revised step 1 and it worked. The
+probes found that `AGENTS.md` still states language facts despite saying it does
+not (refactor command names, transport names, two banned words), so the honest
+rule is narrower than "states no language fact": **the reader must not be handed
+a fact a rubric asks that reader to produce.** That is now the property
+`t_meta_agents_md_does_not_teach_the_language` asserts, by intersecting
+AGENTS.md's inline-code spans with every one in every `## Must state` list. Run 5
+also produced the direct evidence for ADR-0021's directional argument:
+`08-handle-pipe`, the one fixture whose fact the removed section stated, is the
+one fixture that flipped to PASS in run 3 and back to FAIL here. A3's standing
+result is now **run 5: 24/25, reduced-contamination**, and `11-peruser` /
+`25-foreign-reactive` scored 4/4 clean, closing A3-F5 on measurement.
