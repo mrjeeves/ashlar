@@ -106,10 +106,12 @@ mechanical, and each has teeth:
 - **Guessable.** The whole surface fits in one ≤40,000-byte reference
   (`reference/ashlar.md`), and guessability is *gate-tested*: fresh models
   cold-read program snippets and their misreads are design bugs
-  (`suites/t_a3/`, last run 23/25). Its two failures were real design bugs and
-  are fixed: `owned` and `reads`/`writes` cold-read to the wrong mental model,
-  so they are now `peruser` and `watches`/`updates`
-  ([ADR-0019](docs/decisions/0019-a3-run3-findings-owned-and-reactive-annotation.md)).
+  (`suites/t_a3/`, currently **25/25**). It earns that: run 3 scored 23/25 and
+  its two failures were real design bugs — `owned` and `reads`/`writes` both
+  cold-read to the wrong mental model — so they became `peruser` and
+  `watches`/`updates`
+  ([ADR-0019](docs/decisions/0019-a3-run3-findings-owned-and-reactive-annotation.md)),
+  and run 4 re-scored both as passing.
 - **Derivable.** Ashlar minimizes semantic freedom so the toolchain can
   compute and explain what names mean, which implementations run, and what
   a change affects ([ADR-0012](docs/decisions/0012-semantic-freedom-and-derivability.md)).
@@ -159,8 +161,8 @@ code and a test behind it, and the increments were adversarially
 re-reviewed. The suite is 17 green test binaries in debug and release with
 zero warnings.
 
-One item is open on the ledger (`docs/roadmap.md`): A3 gate run 3 found two
-constructs that cold-read to the wrong mental model, both now respelled
-(ADR-0019), and the corpus has not been re-scored since. A candidate cold read
-is evidence for a spelling, not a gate result — so the claim stays 23/25 until
-run 4 says otherwise. An honest open ledger beats an empty one.
+The ledger (`docs/roadmap.md`) is currently empty, and one note is carried there
+anyway: `25-foreign-reactive` passed run 4 on a 2–1 panel, with the dissent
+localizing to `updates` rather than `watches`. It is recorded instead of acted
+on, because respelling a keyword off one reader would repeat ADR-0015's mistake
+in the opposite direction.

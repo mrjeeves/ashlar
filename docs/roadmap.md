@@ -9,29 +9,27 @@ with no passing test is not a satisfied requirement (T-META). An empty open
 section is a claim, so it is kept honest: an item leaves it only when its
 test runs for real.
 
-## Open — 1 item
+## Open — nothing
 
-**A3 fixtures 11 and 25 have not been re-scored since their keywords changed.**
-Gate run 3 (2026-07-25, `suites/t_a3/results/2026-07-25-sonnet-run3.md`) scored
-**23/25**, clearing the 80% bar, and its two failures were the two constructs
-added since run 2. Both have now been respelled per **ADR-0019** — `owned` is
-`peruser`, and `reads`/`writes` are `watches`/`updates` — on the strength of a
-construct-level candidate cold read in which `peruser` conveyed per-user scope
-2/2 (against 0/2 for `owned`, `personal`, `mine`, and `each`) and
-`watches`/`updates` conveyed the reactive edge 2/2 (against 0/2 for
-`reads`/`writes`).
+The one item this page carried — re-scoring the two A3 fixtures whose keywords
+changed — is done. **Run 4** (`suites/t_a3/results/2026-07-25-sonnet-run4.md`)
+re-read `11-peruser` and `25-foreign-reactive` under the full protocol: both
+PASS, so the corpus stands at **25/25** (23 unchanged run-3 passes plus these
+two). `peruser` passed unanimously with all four bullets, closing A3-F5.
 
-That candidate read is evidence for a choice, **not a corpus score.** Until run
-4 re-scores fixtures `11-peruser` and `25-foreign-reactive` under the full
-protocol, the honest claim is 23/25 with two known-bad spellings replaced by
-two well-evidenced ones — not 25/25. Requires a fresh reader per
-`suites/t_a3/PROTOCOL.md`; deliberately not a CI job.
+One observation is recorded rather than acted on, because acting on it would be
+over-fitting a single reader: `25-foreign-reactive` passed on a 2–1 panel, and
+the strict judge's dissent localizes to the write half — `watches` conveys the
+dependency outright, while `updates` conveyed invalidation only by inference
+from its partner ("presumably including when `save` runs"). Still a large
+improvement on `reads`/`writes`, which conveyed no reactivity at all. If a
+future run fails there, `updates` is the word to look at first, and
+`invalidates` already scored 2/2 as a candidate.
 
-The methodological finding needs no decision and is already binding:
-**cold-read the construct, never the word.** ADR-0015 scored `personal` 3/3 by
-testing the bare word; in its actual slot it reads as `private`, the very frame
-`private` was rejected for. Any future naming decision tests the syntax a reader
-will meet, with its neighbors.
+Two things stay true regardless and need no decision: **cold-read the construct,
+never the word** (ADR-0015 scored `personal` 3/3 on the bare word; in its slot it
+reads as `private`), and **the next A3 run should be a full 25, not another
+targeted re-score**, so the whole corpus is scored against one model at one time.
 
 Delivered 2026-07-25 — **the two A3 run-3 findings are fixed in the language**
 (ADR-0019). `owned` → `peruser` and `reads`/`writes` → `watches`/`updates`,
@@ -118,8 +116,8 @@ Every item this page has carried is delivered, tested, and moved off:
   grew (ADR-0017), still far under the 20% per-construct cap.
 - **T-A3 surface findings** — the run-1/2 findings resolved by ADR-0008,
   validated by gate run 2 (23/24). Run 3 (2026-07-25, 23/25) cleared the bar
-  again and raised two findings, both now fixed by ADR-0019; only the
-  re-score is open, at the top of this page.
+  again and raised two findings, both fixed by ADR-0019 and re-scored as
+  passing by run 4 — the corpus stands at 25/25.
 - **Showcase corpus** — fifteen complete projects, crowned by
   `commons`: a full team chat (auth, rooms, DMs, live messaging,
   presence-by-lifecycle, unread counts, plus moderation and mentions as
@@ -158,9 +156,11 @@ Delivered so far: Stage 1 (the SQLite-over-`foreign` example) and, on
 `recent`/`total` `reads Entry`, `record` `writes Entry`, so a write from any
 client patches every open `ledger` board live — no new threads, no `stored`
 backend, a typo'd collection caught as E001, and a T-Examples test that drives
-the cross-client patch. The `stored` database backend, the Postgres client,
-and horizontal scale remain proposed, awaiting a design decision before any
-further runtime code.
+the cross-client patch. The `stored` database backend, the Postgres client, and
+horizontal scale remain unbuilt — not blocked on a decision, since the design is
+this page's to make, but un-started: no requirement compels them and nothing in
+the suite is failing for want of them. They are speculative scope, and scope is
+the one thing the hierarchy does not hand you.
 
 Delivered 2026-07-24 — **ADR-0015** re-cut the storage taxonomy along its
 two real axes. `synced` is retired: the runtime never gave it any behavior

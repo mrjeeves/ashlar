@@ -16,6 +16,7 @@ CODE            Whatever makes the tests pass.
 ```
 This hierarchy exists to answer the only question that matters during implementation: *when something conflicts, which thing yields?* Code yields to tests. Tests yield to requirements. Requirements yield to the vision. Nothing overrides the vision.
 Tests are not sacred. A test that passes while the requirement goes unmet is a broken test. A test that fails while the requirement is met is a broken test. Both get fixed against the requirement, not defended.
+**Nor is this document sacred.** The hierarchy is a grant of authority as much as a tie-breaker: exactly one layer — the vision — is fixed and outside the implementer's reach. Every layer below it, this document included, is revisable by whoever is doing the work, on one condition: the revision serves the layer above it and arrives with the evidence and tests that show it does. Waiting for permission to revise a requirement that demonstrably fails the vision is the same failure as quietly weakening a test to spare the code — both replace the argument from above with someone's comfort. Where the deciding evidence cannot be obtained, say what is missing; do not guess and call it a decision.
 ---
 ## 2. The method
 For every unit of work, at every scale:

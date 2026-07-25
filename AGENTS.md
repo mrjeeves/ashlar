@@ -18,6 +18,34 @@ Lower layers yield to higher ones — always. "The test is inconvenient"
 is never a reason to change a test; "the test mis-encodes the
 requirement" is the only one.
 
+**The hierarchy is a grant of authority, not only a tie-breaker.** Exactly
+one layer is user-controlled: the vision. Everything below it — the
+requirements, the reference, the tests, the corpora, the ADRs, the code —
+is yours to change without asking, *provided the change serves the layer
+above it and lands with the evidence and tests that show it does.* That is
+the point of writing the hierarchy down: an agent that stops to request
+permission for a requirements revision has failed the same way an agent
+that quietly weakens a test has failed. Both substitute someone's comfort
+for the argument from the layer above.
+
+So: if a gate you can run says a construct is wrong, fix the construct.
+If a requirement fails the vision, revise the requirement and record why.
+Do not mark a decision "proposed" and wait, when the evidence to decide it
+is already in hand — write the ADR as accepted and apply it.
+
+Stop and say so in exactly two cases:
+
+1. **The vision itself looks wrong.** That is the user's to change; you
+   may argue for it, never edit it.
+2. **You cannot get the evidence.** A cold-read gate needs a fresh reader,
+   a benchmark needs a machine — if the deciding evidence is out of reach,
+   say what you would need rather than guessing and calling it a decision.
+
+Neither case covers "this change is large" or "this reverses an earlier
+ADR." Large and reversing are normal. An earlier ADR is a record of a
+decision made on the evidence then available; new evidence outranks it,
+and superseding one is ordinary work.
+
 ## What outranks what, concretely
 
 - **`reference/ashlar.md` is the language contract.** Every sentence in
