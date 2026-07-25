@@ -64,6 +64,9 @@ for entry in "${EXAMPLES[@]}"; do
 done
 
 echo
-echo "All examples are up. Open showcase/index.html in a browser."
+echo "All fifteen are up. Open the gallery:"
+echo
+echo "  file://$(pwd)/showcase/index.html"
+echo
 echo "Press Ctrl-C to stop them all."
 wait

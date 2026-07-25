@@ -69,9 +69,24 @@ attached.
 
 ## Quickstart
 
+**See the whole language running, in one command.** From a fresh clone — it
+builds the release binary itself if you don't have one:
+
+```
+./showcase/serve.sh
+```
+
+It starts all fifteen examples, each on its own port, and prints the path to
+open: `showcase/index.html` is a sidebar of all fifteen with **live frames** you
+swap by click or arrow key (`file://` is fine — no server needed for the page
+itself). Ctrl-C stops every example at once.
+
+The frames are the real servers, not screenshots, so what you see is what the
+code does. Then run one on its own, or use the toolchain directly:
+
 ```
 cargo build --release
-target/release/ashlar run examples/chat     # http://127.0.0.1:8080
+target/release/ashlar run examples/chat     # one example → http://127.0.0.1:8080
 target/release/ashlar check <dir>           # diagnostics as JSON Lines (--human for prose)
 ```
 

@@ -6,9 +6,12 @@ between the running apps.
 ## Run it
 
 ```
-./showcase/serve.sh          # start all fifteen, each on its own port
-open showcase/index.html     # then open the page (file:// is fine)
+./showcase/serve.sh
 ```
+
+One command, no arguments. It starts all fifteen — each on its own port — and
+prints a `file://` path to open; that page is the gallery. `file://` is fine,
+the page needs no server of its own. Ctrl-C stops every example at once.
 
 `serve.sh` builds the release binary if needed, builds `ledger`'s SQLite shim,
 and runs each example with `ashlar run examples/<name> --port <n>` — the source
