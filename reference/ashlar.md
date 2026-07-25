@@ -454,6 +454,9 @@ part Store {
   every other by construction. Reading or writing an `owned` property with
   no user in scope — an anonymous request, or a scheduled task, `spawn`, or
   `start` stack — is a runtime fault (§9.9), never a silently shared value.
+  Whether a user is in scope is a fact about the call, not the declaration:
+  one function property may be reached from both a request and a task, so
+  this is not decidable at build time.
 
 Every state property is reactive, and because views render on the server
 with no client code (§9.4) that reach is universal: any view that read a
@@ -614,9 +617,9 @@ boundary at runtime; a mismatch is a fault at the call site.
 
 **How a capability is reached is a deployment fact, never source.** By
 default the build binds space `s` to the host library `foreign/s`
-(`.so`/`.dylib`/`.dll`), and the manifest records what it resolved. An
-optional `foreign.json` at the project root (or at `ASHLAR_FOREIGN`)
-overrides that, per space:
+(`.so`/`.dylib`/`.dll`). An optional `foreign.json` at the project root (or
+at `ASHLAR_FOREIGN`) overrides that, per space; the manifest records
+whichever won, and a key naming no space is `E001`:
 
 | `via` | reached by | fields |
 |---|---|---|
@@ -646,9 +649,10 @@ for line in sys.stdin:
     print(json.dumps(out), flush=True)
 ```
 
-`ashlar foreign check` proves every declared name is reachable before a
-request finds out. Foreign calls may block; the runtime schedules around
-them.
+Reachability is not a build-time fact — the machine that compiles is not the
+machine that deploys — so `ashlar foreign check` proves it on demand, against
+the bindings in force, before a request finds out. Foreign calls may block;
+the runtime schedules around them.
 
 A foreign call may name a reactive collection, so a store behind the boundary
 is live without leaving the language:

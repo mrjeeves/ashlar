@@ -1,14 +1,56 @@
 # Roadmap
 
-An honest "not yet" ledger. Each item names the requirements it will
+An honest "not yet" ledger. Each open item names the requirements it will
 satisfy and the test that will prove it. A "planned" row anywhere in the
 suite tree — including `suites/coverage.md` if and when one exists — is a
-debt-ledger entry, not coverage. Nothing on this page is done; when an item
-is done, it moves off this page and its test starts running for real,
-because a requirement with no passing test is not a satisfied requirement
-(T-META).
+debt-ledger entry, not coverage. Open items come first; below them is the
+dated record of what was delivered and what proves it, because a requirement
+with no passing test is not a satisfied requirement (T-META). An empty open
+section is a claim, so it is kept honest: an item leaves it only when its
+test runs for real.
 
-## The ledger is empty — 2026-07-22
+## Open — 1 item
+
+**T-A3 has not been re-run since the language grew.** Requirements §9 calls
+the cold-read gate "the primary gate on syntax decisions," and its last
+scoring run is `suites/t_a3/results/2026-07-22-sonnet-run2.md` (23/24). Since
+then the surface gained `owned` (ADR-0015) and the `reads`/`writes` foreign
+annotation (ADR-0014's reactive stage). `11-owned.ash` was added to the corpus
+but has never been scored, and `reads`/`writes` has no fixture at all — it is
+also the riskiest of the three to cold-read, being a contextual keyword that a
+reader could take for a property name. The transport vocabulary
+(`via`/`worker`/`native`/`http`) lives in `foreign.json`, not the language, so
+it is out of A3's scope by construction.
+
+Proving this needs a fresh reader with no reference in context, per
+`suites/t_a3/PROTOCOL.md` — it is deliberately not a CI job, and it is the one
+requirement in this document that code cannot satisfy. Until it runs, A3 is
+claimed for 22 of 24 fixtures, not 24.
+
+Delivered 2026-07-25 — **the binding file is a name-bearing fact, and the
+name-governing systems now see it.** An audit of ADR-0017 against the vision
+found one root cause with three symptoms: `foreign.json` keys bindings by SPACE
+NAME, and none of the three systems that govern names knew the file existed.
+`rename` rewrote the sources, left the key behind, and the program still checked
+clean while the capability silently fell back to the derived native path — a
+stale reference E2 forbids, found only when a request reached the boundary.
+`check` ignored a key that named no space, which B3 makes an error for every
+other name in the language. And the manifest recorded the derivation rule
+instead of the resolution, so a worker-backed space was written down as a native
+library that did not exist — a fiction in the file whose whole job is being the
+derived truth ("the build is state"). Fixed together: the key and all three
+probed library extensions are radius and are carried atomically and reversibly
+(E2/E3/E4); an unbound key is `E001` naming the nearest space, and an
+unparseable binding file is reported rather than silently becoming the default,
+while an inert binding stays silent (no false positives); the manifest records
+the transport that won and what it names. Pinned by a T-E end-to-end rename
+proof, a T-B resolution test covering all four cases, a T-F manifest test, and
+unit tests for the depth-aware key scanner. Two reference sentences and one ADR
+paragraph that were false are now true, and D3's silent third category closed:
+foreign reachability and `owned`-with-no-user each now state in the reference
+WHY they are runtime facts rather than build-time ones.
+
+## Everything else is delivered — 2026-07-22
 
 Every item this page has carried is delivered, tested, and moved off:
 
@@ -54,11 +96,12 @@ Every item this page has carried is delivered, tested, and moved off:
   files; currently 40ms incremental.
 - **D5 round-trip metric** — one check → apply-machine-edits cycle;
   mean rounds-to-clean 1.00 over every machine-fixable fixture.
-- **A5 reference budget** — 26,352 of 40,000 bytes, largest construct
-  7.5%, distribution printed on every run.
+- **A5 reference budget** — under 40,000 bytes with the distribution
+  printed on every run; §9.10 is the largest construct as the boundary
+  grew (ADR-0017), still far under the 20% per-construct cap.
 - **T-A3 surface findings** — resolved by ADR-0008, validated by gate
   run 2 (23/24 cold-read PASS).
-- **Showcase corpus** — thirteen complete projects, crowned by
+- **Showcase corpus** — fifteen complete projects, crowned by
   `commons`: a full team chat (auth, rooms, DMs, live messaging,
   presence-by-lifecycle, unread counts, plus moderation and mentions as
   independently owned layers) that exercises the whole language as one
@@ -146,7 +189,7 @@ each, bound by `class` name); the four former API-only demos — `diary`,
 `press`, `guardrails`, `locker` — grew a small `/` view that shows their idea
 in the browser (a live pipe preview, a live policy verdict, a login gate, a
 per-user board), each driven by `t_examples`. A top-level `showcase/` runs all
-fourteen at once and flips between live frames — a launcher, not a baked
+fifteen at once and flips between live frames — a launcher, not a baked
 gallery, so the running app stays the only source of truth. Making that work
 without editing any example's `port` added `ashlar run --port N` — a
 deployment fact bound at run time (B5, reference §9.1/§11), pinned by

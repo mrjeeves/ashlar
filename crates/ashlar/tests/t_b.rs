@@ -133,3 +133,76 @@ fn t_b5_no_locations_in_fixtures_or_reference() {
         "B5 checked nothing: expected at least the reference's ```ash blocks to exist"
     );
 }
+
+#[test]
+fn t_b_foreign_binding_key_naming_no_space_is_e001() {
+    // covers: B3 — `foreign.json` keys deployment facts by SPACE NAME, which
+    // makes it the one non-`.ash` file carrying a name the compiler reasons
+    // about. A key that names no space is a name resolving to nothing, and B3
+    // says that is an error. It used to pass `check` in silence and quietly
+    // fall back to the derived native library path.
+    let proj = std::env::temp_dir().join(format!("ashlar_tb_fbind_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&proj);
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::write(
+        proj.join("app.ash"),
+        "space tools\n\nforeign shout: (s: text) -> text\n\npart app {\n  port = 8080\n}\n",
+    )
+    .unwrap();
+
+    // The correct key checks clean — no false positive on a real binding.
+    std::fs::write(
+        proj.join("foreign.json"),
+        "{ \"tools\": { \"via\": \"worker\", \"run\": [\"python3\", \"w.py\"] } }\n",
+    )
+    .unwrap();
+    let ok = ashlar::check_project(&proj);
+    assert!(ok.diags.is_empty(), "a correct binding must check clean: {:?}", ok.diags);
+
+    // A near-miss key is E001, and the correction names the space it meant.
+    std::fs::write(
+        proj.join("foreign.json"),
+        "{ \"tool\": { \"via\": \"worker\", \"run\": [\"python3\", \"w.py\"] } }\n",
+    )
+    .unwrap();
+    let bad = ashlar::check_project(&proj);
+    let d = bad
+        .diags
+        .iter()
+        .find(|d| d.id == "E001")
+        .unwrap_or_else(|| panic!("expected E001 for an unbound key, got {:?}", bad.diags));
+    assert_eq!(d.req, "B3");
+    assert!(d.file.ends_with("foreign.json"), "loc must name the binding file: {}", d.file);
+    assert!(d.cause.contains("`tool`"), "cause must name the key: {}", d.cause);
+    assert!(
+        d.fix.as_ref().is_some_and(|f| f.note.contains("tools")),
+        "D1: the correction must name the space it meant: {:?}",
+        d.fix
+    );
+
+    // A binding whose space exists but declares no `foreign` is inert, not
+    // wrong — staying silent there is the no-false-positives rule.
+    std::fs::write(proj.join("other.ash"), "space spare\n\npart Thing {\n  x = 1\n}\n").unwrap();
+    std::fs::write(
+        proj.join("foreign.json"),
+        "{ \"spare\": { \"via\": \"worker\", \"run\": [\"python3\", \"w.py\"] } }\n",
+    )
+    .unwrap();
+    let inert = ashlar::check_project(&proj);
+    assert!(
+        inert.diags.is_empty(),
+        "an inert binding must not be a diagnostic: {:?}",
+        inert.diags
+    );
+
+    // An unparseable binding file is loud rather than a silent derived default.
+    std::fs::write(proj.join("foreign.json"), "{ \"spare\": { } }\n").unwrap();
+    let broken = ashlar::check_project(&proj);
+    assert!(
+        broken.diags.iter().any(|d| d.id == "E001" && d.cause.contains("unreadable")),
+        "a malformed binding file must be reported: {:?}",
+        broken.diags
+    );
+
+    let _ = std::fs::remove_dir_all(&proj);
+}

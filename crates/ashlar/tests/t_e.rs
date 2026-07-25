@@ -586,9 +586,21 @@ fn t_e_space_rename_carries_foreign_lib_and_only_stored_migrations() {
         "space old\n\nforeign fetch: (text) -> data\n\npart Api {\n  go = () => fetch(\"http://x\")\n}\n",
     )]);
     let plan = refactor::plan_rename_space(&srcs, "old", "fresh").unwrap();
+    // The derivation rule names a library per probed extension (ADR-0017), so
+    // all three are radius — a `.dylib` shim is no less bound by space name
+    // than a `.so` one.
     assert_eq!(
         plan.foreign_renames,
-        vec![("foreign/old.so".to_string(), "foreign/fresh.so".to_string())]
+        vec![
+            ("foreign/old.so".to_string(), "foreign/fresh.so".to_string()),
+            ("foreign/old.dylib".to_string(), "foreign/fresh.dylib".to_string()),
+            ("foreign/old.dll".to_string(), "foreign/fresh.dll".to_string()),
+        ]
+    );
+    // The binding file keys by space name too, so the key moves with it (E2).
+    assert_eq!(
+        plan.foreign_key_rename,
+        Some(("old".to_string(), "fresh".to_string()))
     );
     // No stored props anywhere: no state migrations to report.
     assert!(plan.state_part_renames.is_empty(), "{:?}", plan.state_part_renames);
@@ -653,6 +665,93 @@ fn t_e_vendor_copies_checks_and_refuses_collisions() {
     for d in [&proj, &ext, &ext2] {
         let _ = std::fs::remove_dir_all(d);
     }
+}
+
+#[test]
+fn t_e_space_rename_carries_the_foreign_binding_key() {
+    // covers: E2, E3, E4 — a `foreign.json` key is a name the program binds
+    // by (§9.10), so a space rename must report it in the radius and carry it.
+    // The bug this pins: the rename rewrote the sources, the program still
+    // checked CLEAN, and the capability silently fell back to the derived
+    // native path — a stale reference to the prior state that E2 forbids and
+    // that nothing surfaced until a request reached the boundary.
+    let proj = std::env::temp_dir().join(format!("ashlar_te_fkey_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&proj);
+    std::fs::create_dir_all(&proj).unwrap();
+    std::fs::write(
+        proj.join("app.ash"),
+        "space tools\n\nforeign shout: (s: text) -> text\n\npart app {\n  port = 8080\n}\n",
+    )
+    .unwrap();
+    let binding = "{\n  \"tools\": { \"via\": \"worker\", \"run\": [\"python3\", \"w.py\"] }\n}\n";
+    std::fs::write(proj.join("foreign.json"), binding).unwrap();
+
+    // E3: the radius names the binding file before anything is applied.
+    let radius = std::process::Command::new(env!("CARGO_BIN_EXE_ashlar"))
+        .args(["radius", "tools"])
+        .current_dir(&proj)
+        .output()
+        .unwrap();
+    let radius_out = String::from_utf8_lossy(&radius.stdout).to_string();
+    assert!(
+        radius_out.contains("foreign.json"),
+        "E3: the radius of a space rename must name the binding file that keys it: {}",
+        radius_out
+    );
+    // The derivation rule probes three extensions; all three are radius.
+    for ext in [".so", ".dylib", ".dll"] {
+        assert!(
+            radius_out.contains(&format!("foreign/tools{}", ext)),
+            "E3: radius omitted foreign/tools{}: {}",
+            ext,
+            radius_out
+        );
+    }
+
+    let out = std::process::Command::new(env!("CARGO_BIN_EXE_ashlar"))
+        .args(["rename", "tools", "kit"])
+        .current_dir(&proj)
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // E2: no stale reference anywhere — the key moved with the space.
+    let after = std::fs::read_to_string(proj.join("foreign.json")).unwrap();
+    assert!(
+        after.contains("\"kit\"") && !after.contains("\"tools\""),
+        "E2: the binding key did not follow the rename: {}",
+        after
+    );
+
+    // The capability still resolves through the transport it was bound to —
+    // proven where the build records it, not by guessing (§10).
+    let r = ashlar::check_project(&proj);
+    assert!(r.diags.is_empty(), "{:?}", r.diags);
+    let m = ashlar::manifest::render(&r.program, &r.composed, &proj);
+    assert!(
+        m.contains("\"via\": \"worker\""),
+        "the renamed space must still reach its worker, not fall back to the derived native path:\n{}",
+        m
+    );
+
+    // E4: forward then back is byte-identical, binding file included.
+    let back = std::process::Command::new(env!("CARGO_BIN_EXE_ashlar"))
+        .args(["rename", "kit", "tools"])
+        .current_dir(&proj)
+        .output()
+        .unwrap();
+    assert!(back.status.success());
+    assert_eq!(
+        std::fs::read_to_string(proj.join("foreign.json")).unwrap(),
+        binding,
+        "E4: reversing the rename must restore the binding file byte-for-byte"
+    );
+
+    let _ = std::fs::remove_dir_all(&proj);
 }
 
 #[test]
