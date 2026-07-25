@@ -11,43 +11,60 @@ test runs for real.
 
 ## Open — one item
 
-**A3 needs a full 25-fixture re-run under the revised protocol.** This page said
-"nothing" yesterday on the strength of runs 3 and 4. Both were void: their
-readers were in-repo subagents, so each received `CLAUDE.md` → `AGENTS.md` as
-project instructions, and AGENTS.md then carried a section stating `let`, block
--vs-map arrow bodies, no-shadowing, chain-kind restating, the event shape, map
-shapes, and the view rules — rubric answers, in the prompt, before the snippet.
-`23/25` and `25/25` are **withdrawn** ([ADR-0021](decisions/0021-the-a3-readers-were-not-cold.md)).
+**A provably cold A3 read needs a reader outside this repository.** Run 5
+(2026-07-25, `suites/t_a3/results/2026-07-25-sonnet-run5.md`) scored **24/25**
+against a bar of 20/25, so **A3 is satisfied** — but it is honestly labelled
+*reduced-contamination*, not cold, because an in-repo reader still receives
+`AGENTS.md` and so still learns the project's name and that it composes. That
+residual cannot be closed from inside: the file is injected before any prompt.
+Closing it needs a reader whose working directory is not this repo — a fresh
+chat, or a session started elsewhere with the snippet pasted in. Per §1 of the
+requirements, that is a case where an agent says what evidence it would need
+rather than manufacturing it, so the item stays here.
 
-What that leaves is precise, not vague:
+What run 5 did close:
 
-- **A3's standing evidence is run 2: 23/24, clean, 2026-07-22.** Neither
-  `CLAUDE.md` nor `AGENTS.md` existed in the tree that day (checked:
-  `git show 2a663b4^:CLAUDE.md` reports no such path), so that run had nothing
-  injected. It clears the 80% bar. It predates `25-foreign-reactive` and
-  ADR-0019's respellings, so it does not cover the current corpus.
-- **Run 3's two FAILs stand**, and ADR-0019 with them: a leak can only raise a
-  score, so a reader that misread `owned` and `reads`/`writes` while holding a
-  cheat sheet is stronger evidence, not weaker.
-- **Unproven: that `peruser` and `watches`/`updates` read correctly.** Run 4's
-  passes were that claim's only evidence. None of the three words appears in
-  AGENTS.md, which bounds the doubt — it does not discharge it.
+- **A3 is met by measurement, on the current corpus.** 20 of 25 snippets scored
+  4/4 clean; the one failure was unanimous across three lenses.
+- **A3-F5 is closed.** `peruser` and `watches`/`updates` — the constructs
+  ADR-0019 respelled, whose validation ADR-0021 withdrew — both scored 4/4
+  clean, on a run whose isolation was measured and recorded.
+- **ADR-0021's argument became evidence.** `08-handle-pipe` is the one fixture
+  whose fact the removed AGENTS.md section stated, and it is the one fixture
+  that flipped to PASS in run 3 and back to FAIL in run 5. See
+  [ADR-0023](decisions/0023-a3-run5-and-the-word-order-behind-f1.md).
+- **The isolation rule got sharper because the probes contradicted it.** All
+  three found AGENTS.md still stating language facts (refactor command names,
+  transports, two banned words). None touches a rubric, so no score moved — but
+  the honest rule is narrower than "no language facts": AGENTS.md must not hand
+  a reader a fact an A3 rubric asks that reader to produce. That is now what
+  `t_meta_agents_md_does_not_teach_the_language` asserts, by intersecting
+  AGENTS.md's inline-code spans with the rubrics' vocabulary.
 
-The leak itself is fixed and cannot recur silently: the syntax moved to
-`docs/writing-ashlar.md`, and `t_meta_agents_md_does_not_teach_the_language`
-fails the suite on one backticked keyword in AGENTS.md. So a run under the
-revised `PROTOCOL.md` is now worth performing — 25 fresh readers, one snippet
-each, isolation reported and recorded. It will be a **reduced-contamination**
-run, not a cold one: an in-repo reader still learns the project's name and that
-it composes. A provably cold read needs a reader whose working directory is not
-this repository, which is the honest reason this item is open rather than done.
+**A3-F1 remains open as a design finding**, now failed in every run whose readers
+were not handed the answer (1, 2, 5) — and its cause is finally identified,
+because the candidate read **refuted the hypothesis ADR-0023 proposed.** A 2×2
+over the merge-kind word and its position, three readers per cell, produced
+**0 of 11 readers stating that both functions run** — every cell, both word
+orders. So it is not the word and not its position: *cross-file layering itself
+does not cold-read*, which is also why `24-composed-program` fails the same way
+with no kind word at all. No grammar change follows; the pre-commitment in
+ADR-0023 was made before the data arrived and it holds.
 
-Two things stay true regardless and need no decision: **cold-read the construct,
-never the word** (ADR-0015 scored `personal` 3/3 on the bare word; in its slot it
-reads as `private`), and **the next run is a full 25**, so the whole corpus is
-scored against one model at one time. If `25-foreign-reactive` fails there,
-`updates` is the word to look at first — run 4's strict dissent localized to the
-write half, and `invalidates` already scored 2/2 as a candidate.
+One lead is recorded rather than acted on: `handle chain =` produced 0/3 wrong
+claims and 3/3 explicit abstention where the control produced 3/3 wrong claims.
+Better failure mode, not comprehension, on three readers — respelling a core
+keyword on that is the over-fit ADR-0015 committed with `owned`. A future attempt
+should test **the layering construct**, not the kind word.
+
+Also recorded, not acted on: **A3-F7**, `{text: number}` read as a one-field
+record rather than a map (`17-optional-index`, 3/4, still passing) — a different
+misread of the construct ADR-0008 fixed, worth having in hand if a future run
+fails there.
+
+One thing stays true regardless and needs no decision: **cold-read the
+construct, never the word** (ADR-0015 scored `personal` 3/3 on the bare word; in
+its slot it reads as `private`).
 
 Delivered 2026-07-25 — **the showcase is an Ashlar program.** `examples/gallery`
 replaces `showcase/index.html`: a sidebar of the other fifteen examples with a

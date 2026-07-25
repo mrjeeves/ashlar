@@ -135,17 +135,21 @@ mechanical, and each has teeth:
 - **Guessable.** The whole surface fits in one ≤40,000-byte reference
   (`reference/ashlar.md`), and guessability is *gate-tested*: fresh models
   cold-read program snippets and their misreads are design bugs
-  (`suites/t_a3/`). The standing result is **23/24, clean, from run 2** —
-  above the 80% bar. Runs 3 and 4 were later found to have read with the
-  repo's own project instructions in their prompts and are void as cold reads,
-  so their scores are withdrawn
-  ([ADR-0021](docs/decisions/0021-the-a3-readers-were-not-cold.md)); a full
-  re-run against the current corpus is the one item open on the roadmap.
-  The gate earns its keep even so: run 3's *failures* survive contamination
-  (a leak can only inflate a score), and they were real design bugs — `owned`
-  and `reads`/`writes` both cold-read to the wrong mental model, so they became
-  `peruser` and `watches`/`updates`
-  ([ADR-0019](docs/decisions/0019-a3-run3-findings-owned-and-reactive-annotation.md)).
+  (`suites/t_a3/`). The standing result is **24/25 from run 5**, against a bar
+  of 20/25. The gate earns its keep: its failures have been real design bugs
+  every time — `owned` and `reads`/`writes` both cold-read to the wrong mental
+  model and became `peruser` and `watches`/`updates`
+  ([ADR-0019](docs/decisions/0019-a3-run3-findings-owned-and-reactive-annotation.md)),
+  which run 5 then scored 4/4 clean.
+
+  It also caught itself. Runs 3 and 4 read with the repo's own project
+  instructions in their prompts — which at the time stated the syntax facts the
+  rubrics ask for — so their scores are void and withdrawn
+  ([ADR-0021](docs/decisions/0021-the-a3-readers-were-not-cold.md)). Run 5
+  measured its isolation instead of asserting it, and turned up the proof: the
+  single fixture whose fact had leaked is the single fixture that flipped to
+  PASS while the leak was open and back to FAIL once it closed
+  ([ADR-0023](docs/decisions/0023-a3-run5-and-the-word-order-behind-f1.md)).
 - **Derivable.** Ashlar minimizes semantic freedom so the toolchain can
   compute and explain what names mean, which implementations run, and what
   a change affects ([ADR-0012](docs/decisions/0012-semantic-freedom-and-derivability.md)).

@@ -141,13 +141,22 @@ Read `reference/ashlar.md` first — it is short on purpose. Then read
 **docs/writing-ashlar.md**, which collects the traps that catch agents
 who guess instead.
 
-That page is a link, not an import, and this file must never teach the
-language itself. Everything in AGENTS.md is injected into every in-repo
-agent's context automatically — including the readers of the A3 cold-read
-gate, whose whole job is to read Ashlar having never seen it. Syntax in
-this file is answers in the reader's system prompt, and it invalidated
-gate runs 3 and 4 (ADR-0021). Keep language facts behind the path;
-`t_meta_agents_md_does_not_teach_the_language` enforces it.
+That page is a link, not an import, and it is where language facts belong.
+Everything in AGENTS.md is injected into every in-repo agent's context
+automatically — including the readers of the A3 cold-read gate, whose whole
+job is to read Ashlar having never seen it. Syntax here is answers in the
+reader's system prompt: it invalidated gate runs 3 and 4 (ADR-0021), and
+run 5 caught the one fixture it flipped (ADR-0023).
+
+Be precise about the rule, because this file cannot honestly claim to
+mention nothing about the language — it names refactor commands,
+transports, and two banned words, and run 5's isolation probes found all of
+them. The rule with teeth is narrower: **AGENTS.md must not hand a reader
+any fact an A3 rubric asks that reader to produce.**
+`t_meta_agents_md_does_not_teach_the_language` checks both halves — no
+reserved word, no ```ash block, no builtin-space reference, no `@`-import,
+and no overlap with the corpus rubrics' vocabulary beyond one annotated
+exemption. It caught this very paragraph on the first run.
 
 ## Sync duties — what must move together
 
