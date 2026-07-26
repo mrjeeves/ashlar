@@ -1013,270 +1013,6 @@ fn t_examples_locker_scopes_storage_per_user() {
 }
 
 #[test]
-fn t_examples_quarry_is_a_public_board_with_no_login() {
-    // The layered flagship, and the one that never asks who you are: eight
-    // spaces, five of them layering one store through `pipe`, `stack`,
-    // `append` and `deep` seams; a fleet graph walked by recursion; a
-    // schedule feeding the same ingest path an HTTP client posts to; and
-    // `allow` guarding a route on program state rather than on identity.
-    // Nothing here calls signup, login, or peruser — every assertion below
-    // is made by an anonymous client with no cookie.
-    let dir = staged("quarry");
-    let (port, stop, join) = start(dir.clone());
-
-    // The board is public. No session, no cookie, no gate.
-    let (status, _, page) = req(port, "GET", "/", None, None);
-    assert_eq!(status, 200);
-    assert!(page.contains("no account, no session"), "{}", page);
-    assert!(page.contains("class=\"card"), "the fleet renders as cards: {}", page);
-    assert!(!page.contains("password"), "a public board has nothing to sign into: {}", page);
-
-    // The composed policy list is assembled by the use graph: base, then
-    // each layering space in `use` order (§4).
-    let (_, _, lines) = req(port, "GET", "/api/lines", None, None);
-    assert!(
-        lines.contains("[\"core\",\"thresholds\",\"streaks\",\"alerts\"]"),
-        "the append property must compose base-first in use order: {}",
-        lines
-    );
-
-    // The recursive walk over the fleet graph. `yard` feeds the saw, which
-    // feeds two finishing lines, which meet again at crating and the dock:
-    // a diamond, so the walk must visit `crate` once, not twice.
-    let (_, _, impact) = req(port, "GET", "/api/impact/yard", None, None);
-    assert!(
-        impact.contains("[\"saw\",\"polish\",\"edge\",\"crate\",\"dock\"]"),
-        "downstream is computed from the graph, breadth-first, each line once: {}",
-        impact
-    );
-    let (four_o_four, _, _) = req(port, "GET", "/api/impact/nosuch", None, None);
-    assert_eq!(four_o_four, 404, "fail(404) for a line the fleet does not have");
-
-    // Two policy layers, in the order their `use` edge declares. `crate`
-    // has no sensor on it, so the rig never touches it and these readings
-    // are the only ones it gets: the first two are strained by the
-    // THRESHOLDS layer, and the third trips by the STREAKS layer — which
-    // only escalates something already strained.
-    let (_, _, first) =
-        req(port, "POST", "/api/observe", Some("{\"line\":\"crate\",\"load\":65}"), None);
-    assert!(first.contains("\"level\":\"strained\""), "{}", first);
-    let (_, _, second) =
-        req(port, "POST", "/api/observe", Some("{\"line\":\"crate\",\"load\":65}"), None);
-    assert!(second.contains("\"level\":\"strained\""), "{}", second);
-    let (_, _, third) =
-        req(port, "POST", "/api/observe", Some("{\"line\":\"crate\",\"load\":65}"), None);
-    assert!(
-        third.contains("\"level\":\"tripped\""),
-        "the streaks layer must escalate the third straight strained reading: {}",
-        third
-    );
-    // And the fault travels: everything the tripped line supplies is at
-    // risk, from the same walk.
-    assert!(third.contains("\"at_risk\":[\"dock\"]"), "{}", third);
-    let (_, _, one) = req(port, "GET", "/api/line/crate", None, None);
-    assert!(one.contains("\"level\":\"tripped\""), "{}", one);
-
-    // A steady reading closes the incident again, so a flapping line does
-    // not open a hundred of them.
-    let (_, _, calm) =
-        req(port, "POST", "/api/observe", Some("{\"line\":\"crate\",\"load\":10}"), None);
-    assert!(calm.contains("\"level\":\"steady\""), "{}", calm);
-
-    // The boundary, which is what this example is actually about. Nothing
-    // outside a program is obliged to send what it expects, and the short
-    // idiom (`number(text(req.data.load)) ?? 0`) type-checks while turning
-    // "banana" into a reading of zero that nothing downstream can tell
-    // from a real one. Each of these is refused, and refusing is counted
-    // where the board shows it.
-    let refusals: &[(&str, u16, &str)] = &[
-        ("{\"line\":\"crate\",\"load\":\"banana\"}", 400, "a load that is not a number"),
-        ("{\"line\":\"crate\"}", 400, "no load at all"),
-        ("{\"line\":\"crate\",\"load\":999999999}", 400, "a load past full capacity"),
-        ("{\"line\":\"crate\",\"load\":-5}", 400, "a negative load"),
-        ("{\"line\":\"nosuch\",\"load\":50}", 404, "a line the fleet does not have"),
-        ("{}", 404, "an empty object"),
-        ("not json at all", 400, "a body that is not JSON"),
-    ];
-    for (body, want, what) in refusals {
-        let (got, _, _) = req(port, "POST", "/api/observe", Some(body), None);
-        assert_eq!(got, *want, "{} must be refused, not laundered: {}", what, body);
-    }
-    let (_, _, counted) = req(port, "GET", "/api/lines", None, None);
-    assert!(
-        counted.contains("\"refused\":7"),
-        "every refusal is counted where the board can show it: {}",
-        counted
-    );
-    // The reading that IS well formed still lands, so the guards refuse
-    // input rather than refusing work.
-    let (ok_reading, _, _) =
-        req(port, "POST", "/api/observe", Some("{\"line\":\"crate\",\"load\":12}"), None);
-    assert_eq!(ok_reading, 200);
-    let (_, _, unpolluted) = req(port, "GET", "/api/line/crate", None, None);
-    assert!(
-        !unpolluted.contains("999999999") && !unpolluted.contains("-5"),
-        "nothing refused reached the history: {}",
-        unpolluted
-    );
-
-    // An empty report used to answer 302, the same as a successful one,
-    // because the store dropped empties. A caller is told instead.
-    let (empty, _, _) =
-        req(port, "POST", "/api/report", Some("{\"line\":\"dock\",\"body\":\"\"}"), None);
-    assert_eq!(empty, 400, "an empty report is not a report");
-    let (no_body, _, _) = req(port, "POST", "/api/report", Some("{\"line\":\"dock\"}"), None);
-    assert_eq!(no_body, 400);
-
-    // The one hostile shape the language cannot express a guard for: a body
-    // that is valid JSON but not an object. `data` is a union (§5) with no
-    // discriminator — `number(t)` and `json(t)` answer "not that shape" with
-    // `none`, and there is no such conversion for a map — so the first index
-    // faults and the caller's malformed input is reported as the server's
-    // fault. Asserted as it IS, with the ADR that says what it should be:
-    // an example that quietly avoided this would be hiding the finding.
-    for body in ["[1,2,3]", "42", "\"just a string\""] {
-        let (status, _, seen) = req(port, "POST", "/api/observe", Some(body), None);
-        assert_eq!(
-            status, 500,
-            "ADR-0026: a non-object JSON body still ends as a 500 — if this is \
-             now a 400, the fix landed and this assertion is the one to update"
-        );
-        assert!(seen.contains("internal:"), "and it is still labelled internal: {}", seen);
-    }
-
-    // Anyone may file a report — no account, and the same handler serves
-    // the browser's form post and this JSON one (§9.2).
-    let (filed, _, _) = req(
-        port,
-        "POST",
-        "/api/report",
-        Some("{\"line\":\"dock\",\"body\":\"dust on the ramp\"}"),
-        None,
-    );
-    assert_eq!(filed, 302, "the report desk redirects back to the board");
-    let (_, _, wall) = req(port, "GET", "/", None, None);
-    assert!(wall.contains("dust on the ramp"), "the note renders on the public wall: {}", wall);
-
-    // `allow` without identity: closing the desk refuses the next report
-    // with 403 before `handle` runs. The guard reads program state — there
-    // is no user to ask about (§9.6).
-    let (_, _, shut) = req(port, "POST", "/api/intake", None, None);
-    assert!(shut.contains("\"intake\":false"), "{}", shut);
-    let (refused, _, _) = req(
-        port,
-        "POST",
-        "/api/report",
-        Some("{\"line\":\"dock\",\"body\":\"this must never land\"}"),
-        None,
-    );
-    assert_eq!(refused, 403, "a closed desk refuses at the door, not in the handler");
-    let (_, _, page_shut) = req(port, "GET", "/", None, None);
-    assert!(page_shut.contains("refused at the door"), "{}", page_shut);
-    assert!(
-        !page_shut.contains("this must never land"),
-        "a report refused by `allow` was never recorded: {}",
-        page_shut
-    );
-    let (_, _, open_again) = req(port, "POST", "/api/intake", None, None);
-    assert!(open_again.contains("\"intake\":true"), "{}", open_again);
-
-    // The recursive view part: one `node` instantiates itself for each
-    // line it feeds, so the tree in the page is as deep as the graph.
-    let (_, _, tree) = req(port, "GET", "/", None, None);
-    let twigs = tree.matches("class=\"twig").count();
-    assert!(
-        twigs >= 9,
-        "the recursive tree must render every reachable line, including the \
-         diamond's two paths to crating (found {} twigs): {}",
-        twigs,
-        tree
-    );
-
-    // Static assets (§9.8): the fleet layout, published as a file.
-    let (asset, head, body) = req(port, "GET", "/manual/fleet.json", None, None);
-    assert_eq!(asset, 200);
-    assert!(head.to_ascii_lowercase().contains("application/json"), "{}", head);
-    assert!(body.contains("loading dock"), "{}", body);
-    let (nope, _, _) = req(port, "GET", "/manual/../settings.json", None, None);
-    assert_eq!(nope, 404, "the traversal guard holds for this example too");
-
-    // The stylesheet the root declares is linked and served.
-    let (css, css_head, css_body) = req(port, "GET", "/quarry.css", None, None);
-    assert_eq!(css, 200);
-    assert!(css_head.to_ascii_lowercase().contains("text/css"), "{}", css_head);
-    assert!(css_body.contains(".b9"), "the named sparkline buckets live in the sheet");
-
-    // The detail page: the route's capture crosses into the view as a
-    // field, and the same `node` and `spark` parts render there.
-    let (detail, _, detail_body) = req(port, "GET", "/line/saw", None, None);
-    assert_eq!(detail, 200);
-    assert!(detail_body.contains("primary saw"), "{}", detail_body);
-    assert!(detail_body.contains("class=\"back\""), "{}", detail_body);
-
-    // Reactivity and the channel, in one exchange. A page holding only a
-    // socket is patched by ANOTHER client's HTTP report (§9.3) — and the
-    // ticker beside it fills only from the alert channel its `start` stack
-    // subscribed to (§9.5), which nothing in that page's own request
-    // assigns.
-    let (_, _, live) = req(port, "GET", "/", None, None);
-    let page_id = attr_of(&live, "data-ash-page").unwrap();
-    let mut ws = ws_open(port);
-    ws_send(&mut ws, &format!("{{\"page\":\"{}\"}}", page_id));
-    std::thread::sleep(std::time::Duration::from_millis(80));
-    req(
-        port,
-        "POST",
-        "/api/report",
-        Some("{\"line\":\"dock\",\"body\":\"loose chock\"}"),
-        None,
-    );
-    ws_expect(&mut ws, "loose chock", 40);
-
-    drop(ws);
-
-    // Trip an uninstrumented line from a second client; a watching page
-    // hears it on the channel, named and explained.
-    //
-    // The socket is fresh and the line is settled first, deliberately.
-    // The instrumented lines patch every open page twice a second, so a
-    // socket that has been attached for the length of this test carries a
-    // backlog of frames that have nothing to do with what is being
-    // proven — and reading THROUGH that backlog with a bigger number is
-    // measuring the schedule, not the channel.
-    req(port, "POST", "/api/observe", Some("{\"line\":\"crate\",\"load\":5}"), None);
-    let (_, _, live2) = req(port, "GET", "/", None, None);
-    let page2 = attr_of(&live2, "data-ash-page").unwrap();
-    let mut ws = ws_open(port);
-    ws_send(&mut ws, &format!("{{\"page\":\"{}\"}}", page2));
-    std::thread::sleep(std::time::Duration::from_millis(120));
-    for _ in 0..3 {
-        req(port, "POST", "/api/observe", Some("{\"line\":\"crate\",\"load\":70}"), None);
-    }
-    // The budget is large because the rig is loud: every 500ms it patches
-    // every card, twig, and figure of every page this test has opened, and
-    // those frames arrive in milliseconds. A number that fits the quiet
-    // case would be measuring the schedule, not the channel.
-    let heard = ws_expect(&mut ws, "crating tripped", 400);
-    assert!(
-        heard.contains("strained on 3 straight readings"),
-        "the alert carries the layer's reason: {}",
-        heard
-    );
-    drop(ws);
-
-    // `stored` survives a restart; `state` telemetry does not, and that is
-    // the declaration's doing, not an accident.
-    stop.store(true, Ordering::Relaxed);
-    join.join().unwrap();
-    let (port2, stop2, join2) = start(dir.clone());
-    let (_, _, after) = req(port2, "GET", "/", None, None);
-    assert!(after.contains("dust on the ramp"), "stored notes survive a restart: {}", after);
-    stop2.store(true, Ordering::Relaxed);
-    join2.join().unwrap();
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
-#[test]
 fn t_examples_slate_merges_two_people_typing_at_once() {
     // A shared pad, and the one problem that makes a pad real software:
     // two people typing at the same time. The client sends the whole
@@ -1411,6 +1147,31 @@ fn t_examples_slate_merges_two_people_typing_at_once() {
     );
     assert_eq!(refused, 409, "the size policy refuses: {}", why);
     assert!(why.contains("20000 characters"), "and says what the limit is: {}", why);
+
+    // What the outside world sends when it is not a browser. Everything
+    // arriving from outside is `data` (§5), and the shortest idiom that
+    // type-checks — `text(req.data["body"] ?? "")` — happily accepts a
+    // number and writes it to the pad, so the route guards instead.
+    let bad: &[(&str, u16)] = &[
+        ("not json at all", 400),
+        ("{\"base\":\"\"}", 400),
+    ];
+    for (body, want) in bad {
+        let (got, _, _) = req(port, "POST", "/api/edit/welcome", Some(body), None);
+        assert_eq!(got, *want, "malformed edit `{}` must be refused, not written", body);
+    }
+    // The one hostile shape no guard in this language can express: a body
+    // that is valid JSON but not an object. `data` is a union with no
+    // discriminator — `number(t)` and `json(t)` answer "not that shape"
+    // with `none`, and nothing answers "is this a map" — so the first
+    // index faults and the caller's malformed input is reported as the
+    // server's fault. Asserted as it IS, with the ADR that says what it
+    // should be; when that lands, this assertion is the one to update.
+    for body in ["[1,2,3]", "42"] {
+        let (status, _, seen) = req(port, "POST", "/api/edit/welcome", Some(body), None);
+        assert_eq!(status, 500, "ADR-0026: a non-object JSON body still ends as a 500");
+        assert!(seen.contains("internal:"), "and is still labelled internal: {}", seen);
+    }
 
     // Presence departs with the socket, like any other unmount (§9.5).
     drop(b);
@@ -1607,7 +1368,7 @@ fn t_examples_gallery_frames_a_chosen_example() {
     // Every example the settings name is in the sidebar, under its heading.
     for name in [
         "counter", "todo", "chat", "poll", "ticker", "pong", "foundry", "press", "guardrails",
-        "diary", "locker", "ledger", "abacus", "commons", "quarry", "slate", "hello",
+        "diary", "locker", "ledger", "abacus", "commons", "slate", "hello",
     ] {
         assert!(
             html.contains(&format!(">{}<", name)),

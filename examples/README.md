@@ -11,12 +11,12 @@ Every example wears the same restrained dark skin — one house palette,
 declared per project as `assets/<name>.css` and bound by `class` name
 (§9.4, ADR-0016). To flip through them all at once, run `./showcase/serve.sh`
 (it starts each example on its own port) and open <http://127.0.0.1:8080> —
-`gallery`, below, which frames the other seventeen.
+`gallery`, below, which frames the other sixteen.
 
 ## gallery
 
 The showcase itself, and the reason `setting` exists. It renders a sidebar
-of every other example with a live frame — seventeen addresses — and its
+of every other example with a live frame — sixteen addresses — and its
 source contains not one of them. `Catalog` declares
 `setting groups: [Group]`, deployment fills it in from `settings.json`,
 and starting without it refuses by name rather than serving dead frames
@@ -141,76 +141,6 @@ seam and pings mentioned people over a per-user channel the notice tray
 subscribes to by name. Appearance is bound by name: the root declares
 `style = "commons"`, and the views carry `class` names that meet the
 served `assets/commons.css` by name — no style string anywhere (§9.4).
-
-## quarry
-
-The layered flagship, and the one that never asks who you are. A public
-status board for a stone works: **no signup, no login, no session, no
-`peruser` anything** — every visitor sees the same page, and anyone can
-file a report. What makes it the most complex example here is composition,
-not identity.
-
-Eight spaces in a single `use` chain, five of them layering one store
-without editing it:
-
-- `quarry.data` owns the shapes and `Store`, and opens the seams: two
-  `pipe` properties (`classify` for a reading's verdict, `announce` for an
-  incident just opened), a paired `boot` / `wind` **stack** and **stack
-  reverse**, an `append` list of policy tags, and a `deep` map of limits —
-  all five merge kinds in one part.
-- `quarry.thresholds` layers `classify` with warn/trip marks that arrive
-  as **settings**, so the numbers are deployment's (§9.12).
-- `quarry.streaks` layers `classify` again and escalates a line that has
-  leaned on the warn mark three readings running. It `use`s
-  `quarry.thresholds`, and that edge is the whole ordering story: a streak
-  only means something after a level exists (§3).
-- `quarry.alerts` layers `announce` onto a named channel, and joins the
-  boot sequence — base-first up, derived-first down.
-- `quarry.sensors` is a `500ms` schedule feeding the same `observe` an
-  HTTP client posts to, plus a `spawn`ed sweep. Two lines have no sensor
-  on them; their numbers arrive when someone posts them.
-
-The fleet is a **graph**, and nothing about it is written twice: `feeds`
-is the only edge list, and the roots, the tree depth, and a fault's blast
-radius are all computed from it by recursion among named functions —
-locals are single-assignment, so the frontier and the answer are
-parameters, and the walk carries fuel because a graph that arrives as
-data can cycle where a `use` graph cannot. The page draws that graph with
-a view part that **instantiates itself**.
-
-Two more things it demonstrates that nothing else here does:
-
-- **`allow` without identity.** The report desk guards on program state —
-  a shutter the board can close — so a closed desk ends the request with
-  403 before `handle` runs. Authorization is not authentication (§9.6).
-- **Static assets** (§9.8): `files = "manual"` publishes the fleet layout
-  at `/manual/fleet.json` for whoever would rather not parse HTML.
-
-It is also the example that takes the outside world seriously, because a
-public board has no other kind of visitor. Everything arriving from
-outside is `data` (§5), and the idiom that type-checks fastest —
-`number(text(req.data.load)) ?? 0` — accepts `"banana"` and records a
-reading of zero that nothing downstream can tell from a real one. So the
-ingest route refuses instead: not JSON, not a number, out of range, or a
-line the fleet does not have, each with the status that belongs to it,
-and every refusal counted where the board shows it. The one hostile shape
-it cannot guard — a body that is valid JSON but not an object — is left
-as the 500 it is, with a comment and a test assertion naming
-[ADR-0026](../docs/decisions/0026-data-is-a-union-with-no-discriminator.md),
-because an example that quietly avoided the input it cannot handle would
-be hiding the finding.
-
-Writing it that way is what turned up
-[ADR-0027](../docs/decisions/0027-a-subscribers-fault-is-that-subscribers.md):
-several open pages is the normal state of a status board, and one page's
-faulting channel handler used to silence every other page and charge the
-fault to whoever published.
-
-The sparkline is the appearance lesson. A bar's height is a number, and
-the tempting answer is a style string — so instead the view quantizes each
-reading into a **named bucket** (`bar b7`) and `assets/quarry.css` decides
-what a bucket looks like. Appearance still binds by name (§9.4). Compare
-`pong`, whose ball genuinely is at pixel 195 and says so inline.
 
 ## slate
 

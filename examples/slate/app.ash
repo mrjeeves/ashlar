@@ -109,6 +109,13 @@ part editApi {
     if slate.data.Store.pads[key] == none {
       return fail(404, "no such pad")
     }
+    // An absent `body` is not an empty pad, and treating it as one would
+    // answer a malformed request with a cheerful 200 for work that never
+    // happened. `data` keeps the difference between "" and missing;
+    // asking is the whole cost of not lying to the caller.
+    if req.data["body"] == none {
+      return fail(400, "`body` is the pad's new text; an edit without one is not an edit")
+    }
     let why = slate.data.Store.commit(key, text(req.data["base"] ?? ""), text(req.data["body"] ?? ""), text(req.data["who"] ?? "a script"))
     if why != "" {
       return fail(409, why)

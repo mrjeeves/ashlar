@@ -114,6 +114,26 @@ One thing stays true regardless and needs no decision: **cold-read the
 construct, never the word** (ADR-0015 scored `personal` 3/3 on the bare word; in
 its slot it reads as `private`).
 
+Removed 2026-07-26 — **`examples/quarry`.** It was a public status board over a
+fleet fixed at boot, fed by a simulated sensor this repo wrote: composition
+demonstrated honestly, over a domain that does not exist and a structure nothing
+outside the program could change. The recursion it advertised — roots, blast
+radius, the drawn tree — recomputed the same answer forever, and its cycle guard
+was unreachable code written for a condition the example could not produce. An
+example that cannot be run for its own sake is a fixture wearing a product's
+clothes, and `examples/` claims every entry earns its place, so it came out
+rather than being made editable.
+
+What it found stays, because those were real and are fixed with tests:
+[ADR-0024](decisions/0024-a-formatter-that-loses-code-is-not-a-formatter.md)
+(the formatter changing meaning and then deleting a branch),
+[ADR-0027](decisions/0027-a-subscribers-fault-is-that-subscribers.md) (one
+subscriber's fault silencing a channel and blaming the publisher), and the
+64KiB frame the examples' socket reader could not parse. The open finding it
+recorded, [ADR-0026](decisions/0026-data-is-a-union-with-no-discriminator.md),
+keeps its reproduction: the hostile-body assertions moved to `slate`'s driving
+test, which is a route the outside world writes to.
+
 Delivered 2026-07-26 (third pass) — **`slate`: a shared pad, and the one
 problem that makes a pad real software.** The eighteenth example, and the answer
 to a fair criticism of the seventeenth: `quarry` demonstrates composition, but
