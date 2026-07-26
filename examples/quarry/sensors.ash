@@ -34,21 +34,41 @@ part Rig {
     }
   }
 
-  // One step of the generator per line, mixed with a per-line offset so
-  // the lines do not all breathe together.
+  // A reading is a WALK from the last one, not a fresh draw. The first
+  // version of this rig sampled a uniform range each tick, which reads as
+  // plausible on a screenshot and is wrong in the way that matters: a
+  // machine that was at 70 a half-second ago is not equally likely to be
+  // at 12 now. Independent draws also make every threshold decision a
+  // coin flip, so the board flickers and the alert channel fills with a
+  // simulation's noise rather than a fleet's news.
+  //
+  // So: small step, mean-reverting toward a per-stage resting load. The
+  // saw rests near the warn mark and wanders over it; everything else
+  // rests low. Runs of high readings now actually happen, which is what
+  // the streaks layer is for, and recovery takes a while, which is what
+  // the recovery mark is for.
   next = (key: text) => {
     seed = (seed * 75 + 74) % 65537
-    let base = seed % 40
-    return base + lean(key)
+    let step = seed % 11 - 5
+    let here = quarry.data.Store.loadOf(key)
+    let pull = if here < resting(key) { 2 } else { -2 }
+    return held(here + step + pull)
   }
 
-  // The saw runs hot. It rarely crosses the trip mark on one reading —
-  // what takes it down is leaning on the warn mark three readings
-  // running, which is the streaks layer's decision, not the thresholds
-  // layer's. Watch the board long enough and you will see it happen.
-  lean = (key: text) => {
+  resting = (key: text) => {
     let here = quarry.data.Store.lines[key]
-    return if here != none and here!.stage == "cut" { 40 } else { 4 }
+    return if here != none and here!.stage == "cut" { 58 } else { 24 }
+  }
+
+  // A load is a percentage of capacity, and the ingest path refuses
+  // anything outside 0..100 — including from this rig, which gets no
+  // special door (§9.2). Keeping the walk inside the range is the rig's
+  // job, not the boundary's.
+  held = (n: number) => {
+    if n < 2 {
+      return 2
+    }
+    return if n > 98 { 98 } else { n }
   }
 
   // Housekeeping between requests (§9.7). It is `spawn`ed rather than run

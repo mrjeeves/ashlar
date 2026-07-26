@@ -542,6 +542,11 @@ unsubscribes it automatically when the instance unmounts; anywhere else the
 subscription lives for the process. Cross-client reactivity (§9.3) rides
 the same broadcast internally and needs no explicit channel.
 
+Handlers run in subscription order, and a fault in one is logged and does
+not stop the others or fail the caller that published — the same rule
+`spawn` follows (§9.9), for the same reason: a subscriber is someone
+else's code, running because an event happened.
+
 ### 9.6 Auth
 
 The runtime provides accounts, sessions, and the request identity.

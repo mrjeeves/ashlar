@@ -228,13 +228,26 @@ fn ws_send(s: &mut TcpStream, text: &str) {
 fn ws_read(s: &mut TcpStream) -> String {
     let mut head = [0u8; 2];
     s.read_exact(&mut head).unwrap();
-    let mut len = (head[1] & 0x7f) as usize;
+    let mut len = (head[1] & 0x7f) as u64;
     if len == 126 {
         let mut ext = [0u8; 2];
         s.read_exact(&mut ext).unwrap();
-        len = u16::from_be_bytes(ext) as usize;
+        len = u16::from_be_bytes(ext) as u64;
+    } else if len == 127 {
+        // RFC 6455's 8-byte length. This arm was missing, and its absence
+        // was invisible until an example rendered enough HTML to cross
+        // 64KiB in one frame: the reader then took 127 as the length,
+        // desynchronised, and every later frame was garbage — so a test
+        // looking for a patch simply never found it, with no error. The
+        // runtime broadcasts a patch set to every socket, so frame size
+        // grows with the number of pages a test has opened, which is why
+        // the boards with the most pages hit it first. t_g's copy of this
+        // helper has always handled it.
+        let mut ext = [0u8; 8];
+        s.read_exact(&mut ext).unwrap();
+        len = u64::from_be_bytes(ext);
     }
-    let mut payload = vec![0u8; len];
+    let mut payload = vec![0u8; len as usize];
     s.read_exact(&mut payload).unwrap();
     String::from_utf8_lossy(&payload).to_string()
 }
@@ -1069,6 +1082,68 @@ fn t_examples_quarry_is_a_public_board_with_no_login() {
         req(port, "POST", "/api/observe", Some("{\"line\":\"crate\",\"load\":10}"), None);
     assert!(calm.contains("\"level\":\"steady\""), "{}", calm);
 
+    // The boundary, which is what this example is actually about. Nothing
+    // outside a program is obliged to send what it expects, and the short
+    // idiom (`number(text(req.data.load)) ?? 0`) type-checks while turning
+    // "banana" into a reading of zero that nothing downstream can tell
+    // from a real one. Each of these is refused, and refusing is counted
+    // where the board shows it.
+    let refusals: &[(&str, u16, &str)] = &[
+        ("{\"line\":\"crate\",\"load\":\"banana\"}", 400, "a load that is not a number"),
+        ("{\"line\":\"crate\"}", 400, "no load at all"),
+        ("{\"line\":\"crate\",\"load\":999999999}", 400, "a load past full capacity"),
+        ("{\"line\":\"crate\",\"load\":-5}", 400, "a negative load"),
+        ("{\"line\":\"nosuch\",\"load\":50}", 404, "a line the fleet does not have"),
+        ("{}", 404, "an empty object"),
+        ("not json at all", 400, "a body that is not JSON"),
+    ];
+    for (body, want, what) in refusals {
+        let (got, _, _) = req(port, "POST", "/api/observe", Some(body), None);
+        assert_eq!(got, *want, "{} must be refused, not laundered: {}", what, body);
+    }
+    let (_, _, counted) = req(port, "GET", "/api/lines", None, None);
+    assert!(
+        counted.contains("\"refused\":7"),
+        "every refusal is counted where the board can show it: {}",
+        counted
+    );
+    // The reading that IS well formed still lands, so the guards refuse
+    // input rather than refusing work.
+    let (ok_reading, _, _) =
+        req(port, "POST", "/api/observe", Some("{\"line\":\"crate\",\"load\":12}"), None);
+    assert_eq!(ok_reading, 200);
+    let (_, _, unpolluted) = req(port, "GET", "/api/line/crate", None, None);
+    assert!(
+        !unpolluted.contains("999999999") && !unpolluted.contains("-5"),
+        "nothing refused reached the history: {}",
+        unpolluted
+    );
+
+    // An empty report used to answer 302, the same as a successful one,
+    // because the store dropped empties. A caller is told instead.
+    let (empty, _, _) =
+        req(port, "POST", "/api/report", Some("{\"line\":\"dock\",\"body\":\"\"}"), None);
+    assert_eq!(empty, 400, "an empty report is not a report");
+    let (no_body, _, _) = req(port, "POST", "/api/report", Some("{\"line\":\"dock\"}"), None);
+    assert_eq!(no_body, 400);
+
+    // The one hostile shape the language cannot express a guard for: a body
+    // that is valid JSON but not an object. `data` is a union (§5) with no
+    // discriminator — `number(t)` and `json(t)` answer "not that shape" with
+    // `none`, and there is no such conversion for a map — so the first index
+    // faults and the caller's malformed input is reported as the server's
+    // fault. Asserted as it IS, with the ADR that says what it should be:
+    // an example that quietly avoided this would be hiding the finding.
+    for body in ["[1,2,3]", "42", "\"just a string\""] {
+        let (status, _, seen) = req(port, "POST", "/api/observe", Some(body), None);
+        assert_eq!(
+            status, 500,
+            "ADR-0026: a non-object JSON body still ends as a 500 — if this is \
+             now a 400, the fix landed and this assertion is the one to update"
+        );
+        assert!(seen.contains("internal:"), "and it is still labelled internal: {}", seen);
+    }
+
     // Anyone may file a report — no account, and the same handler serves
     // the browser's form post and this JSON one (§9.2).
     let (filed, _, _) = req(
@@ -1091,13 +1166,17 @@ fn t_examples_quarry_is_a_public_board_with_no_login() {
         port,
         "POST",
         "/api/report",
-        Some("{\"line\":\"dock\",\"body\":\"refused\"}"),
+        Some("{\"line\":\"dock\",\"body\":\"this must never land\"}"),
         None,
     );
     assert_eq!(refused, 403, "a closed desk refuses at the door, not in the handler");
     let (_, _, page_shut) = req(port, "GET", "/", None, None);
     assert!(page_shut.contains("refused at the door"), "{}", page_shut);
-    assert!(!page_shut.contains(">refused<"), "the refused note was never recorded");
+    assert!(
+        !page_shut.contains("this must never land"),
+        "a report refused by `allow` was never recorded: {}",
+        page_shut
+    );
     let (_, _, open_again) = req(port, "POST", "/api/intake", None, None);
     assert!(open_again.contains("\"intake\":true"), "{}", open_again);
 
@@ -1153,12 +1232,31 @@ fn t_examples_quarry_is_a_public_board_with_no_login() {
     );
     ws_expect(&mut ws, "loose chock", 40);
 
-    // Trip an uninstrumented line from a second client; the watching page
+    drop(ws);
+
+    // Trip an uninstrumented line from a second client; a watching page
     // hears it on the channel, named and explained.
+    //
+    // The socket is fresh and the line is settled first, deliberately.
+    // The instrumented lines patch every open page twice a second, so a
+    // socket that has been attached for the length of this test carries a
+    // backlog of frames that have nothing to do with what is being
+    // proven — and reading THROUGH that backlog with a bigger number is
+    // measuring the schedule, not the channel.
+    req(port, "POST", "/api/observe", Some("{\"line\":\"crate\",\"load\":5}"), None);
+    let (_, _, live2) = req(port, "GET", "/", None, None);
+    let page2 = attr_of(&live2, "data-ash-page").unwrap();
+    let mut ws = ws_open(port);
+    ws_send(&mut ws, &format!("{{\"page\":\"{}\"}}", page2));
+    std::thread::sleep(std::time::Duration::from_millis(120));
     for _ in 0..3 {
         req(port, "POST", "/api/observe", Some("{\"line\":\"crate\",\"load\":70}"), None);
     }
-    let heard = ws_expect(&mut ws, "crating tripped", 60);
+    // The budget is large because the rig is loud: every 500ms it patches
+    // every card, twig, and figure of every page this test has opened, and
+    // those frames arrive in milliseconds. A number that fits the quiet
+    // case would be measuring the schedule, not the channel.
+    let heard = ws_expect(&mut ws, "crating tripped", 400);
     assert!(
         heard.contains("strained on 3 straight readings"),
         "the alert carries the layer's reason: {}",

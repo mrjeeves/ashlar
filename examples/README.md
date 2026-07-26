@@ -186,6 +186,26 @@ Two more things it demonstrates that nothing else here does:
 - **Static assets** (§9.8): `files = "manual"` publishes the fleet layout
   at `/manual/fleet.json` for whoever would rather not parse HTML.
 
+It is also the example that takes the outside world seriously, because a
+public board has no other kind of visitor. Everything arriving from
+outside is `data` (§5), and the idiom that type-checks fastest —
+`number(text(req.data.load)) ?? 0` — accepts `"banana"` and records a
+reading of zero that nothing downstream can tell from a real one. So the
+ingest route refuses instead: not JSON, not a number, out of range, or a
+line the fleet does not have, each with the status that belongs to it,
+and every refusal counted where the board shows it. The one hostile shape
+it cannot guard — a body that is valid JSON but not an object — is left
+as the 500 it is, with a comment and a test assertion naming
+[ADR-0026](../docs/decisions/0026-data-is-a-union-with-no-discriminator.md),
+because an example that quietly avoided the input it cannot handle would
+be hiding the finding.
+
+Writing it that way is what turned up
+[ADR-0027](../docs/decisions/0027-a-subscribers-fault-is-that-subscribers.md):
+several open pages is the normal state of a status board, and one page's
+faulting channel handler used to silence every other page and charge the
+fault to whoever published.
+
 The sparkline is the appearance lesson. A bar's height is a number, and
 the tempting answer is a style string — so instead the view quantizes each
 reading into a **named bucket** (`bar b7`) and `assets/quarry.css` decides

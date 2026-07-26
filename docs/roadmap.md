@@ -9,7 +9,7 @@ with no passing test is not a satisfied requirement (T-META). An empty open
 section is a claim, so it is kept honest: an item leaves it only when its
 test runs for real.
 
-## Open — three items
+## Open — four items
 
 **A `return` is not yet a shape position** ([ADR-0025](decisions/0025-a-return-is-a-shape-position.md)).
 Two halves of one gap, both found by writing `examples/quarry`. A `pipe`
@@ -30,6 +30,21 @@ because both available shortcuts damage something worth more than the fix —
 re-checking after inference double-reports, and diagnosing disagreement
 without first propagating the expected shape would reject the correct
 program, which A4 ranks as the worse failure.
+
+**`data` has no discriminator, so a boundary cannot ask what arrived**
+([ADR-0026](decisions/0026-data-is-a-union-with-no-discriminator.md)). Every
+value from outside a program is `data`, a union of six members, and nothing in
+the language distinguishes them. `number(t)` and `json(t)` already answer "not
+that shape" with `none`; there is no such answer for "is this a map", so a body
+that is valid JSON but not an object faults on the first index and ends as a
+**500 whose message begins `internal:`** — the runtime taking the blame for a
+condition the caller chose. Two halves: the missing conversions, and the status
+belonging to the caller. Serves **A4, D3, G4**. Proven by: `examples/quarry`'s
+driving test, which today asserts the 500 and names the ADR, plus a T-A4 fixture
+once the guard exists. Related and cheaper to state than to fix: the idiom the
+checker pushes hardest toward at a boundary — `number(text(x)) ?? 0` — launders
+bad input into a plausible value, and rejecting costs three times the
+characters of inventing.
 
 **A comment between the parts of a one-line expression still has nowhere to
 go.** [ADR-0024](decisions/0024-a-formatter-that-loses-code-is-not-a-formatter.md)
@@ -98,6 +113,41 @@ fails there.
 One thing stays true regardless and needs no decision: **cold-read the
 construct, never the word** (ADR-0015 scored `personal` 3/3 on the bare word; in
 its slot it reads as `private`).
+
+Delivered 2026-07-26 (second pass) — **the open world, which the first pass of
+`quarry` assumed away.** The example was built as a clean room: a fixed fleet,
+deterministic fake telemetry, and every input well formed — a shape chosen partly
+so its own test would not flake, which is the failure the vision names when it
+says the unread portion is only safe when changes are provably contained. Driving
+it with hostile input found three things, two of them defects in the runtime and
+its suite:
+
+- **A subscriber's fault was everyone's**
+  ([ADR-0027](decisions/0027-a-subscribers-fault-is-that-subscribers.md)).
+  `publish` propagated the first failing handler's fault, so delivery stopped
+  silently for every subscriber after it AND the publisher's unrelated request
+  ended with that fault's status — a visitor posting a reading got
+  `500 division by zero.` from a different visitor's open page. `spawn` already
+  had the right rule (§9.9); channels now follow it. Reference §9.5 says so, and
+  T-G proves both halves.
+- **The examples' socket reader could not read a large frame.** `t_examples`'s
+  `ws_read` handled RFC 6455's 2-byte extended length but not the 8-byte one,
+  so any frame ≥64KiB desynchronised it permanently and a test simply never
+  found what it was waiting for. Measured: with 2 pages open the frames are
+  ~44KB, with 8 they are ~134KB, because the runtime broadcasts a patch set to
+  every socket. `t_g`'s copy of the helper had always been correct.
+- **The boundary launders bad input**
+  ([ADR-0026](decisions/0026-data-is-a-union-with-no-discriminator.md)), which
+  is open work. `quarry` now refuses instead of defaulting, counts every
+  refusal where the board shows it, and asserts the one hostile shape the
+  language cannot guard.
+
+The rig was rewritten too: independent uniform draws became a mean-reverting
+walk, because a machine that was at 70 a half-second ago is not equally likely
+to be at 12 now. Measured over ~600 readings, the old rig produced 8 incidents
+and hysteresis changed nothing; the walk produces 1 with hysteresis and 3
+without — so both the streaks layer and the recovery mark now do visible work
+instead of decorating a coin flip.
 
 Delivered 2026-07-26 — **`quarry`: a layered program with nobody signed in,
 and the two formatter defects it found.** `examples/quarry` is the seventeenth

@@ -87,6 +87,8 @@ h3 {
 .figures { display: flex; gap: 22px; margin: 0; margin-left: auto; }
 .figure dt { font-size: 11px; text-transform: uppercase; letter-spacing: 0.7px; color: var(--muted); }
 .figure dd { margin: 0; font-size: 20px; font-variant-numeric: tabular-nums; }
+.figure.loud dt { color: var(--warn); }
+.figure.loud dd { color: var(--warn); }
 
 .desk { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
 

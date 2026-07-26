@@ -57,7 +57,9 @@ part banner {
     el("div", { class: "figure" }, [el("dt", {}, ["at risk"]), el("dd", {}, [text(len(quarry.data.Store.atRisk()))])]),
     el("div", { class: "figure" }, [el("dt", {}, ["open"]), el("dd", {}, [text(len(quarry.data.Store.openIncidents()))])]),
     el("div", { class: "figure" }, [el("dt", {}, ["readings"]), el("dd", {}, [text(quarry.data.Store.pulse)])]),
+    el("div", { class: refusedClass() }, [el("dt", {}, ["refused"]), el("dd", { title: quarry.data.Store.lastRefusal }, [text(quarry.data.Store.refused)])]),
   ]
+  refusedClass = () => (if quarry.data.Store.refused > 0 { "figure loud" } else { "figure" })
   shutterWord = () => (if quarry.data.Store.intake { "reports: open" } else { "reports: closed" })
   shutterClass = () => (if quarry.data.Store.intake { "shutter open" } else { "shutter closed" })
   toggle = () => {

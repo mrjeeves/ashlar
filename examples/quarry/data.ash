@@ -73,6 +73,13 @@ part Store {
   state levels: {text: text} = {}
   state pulse: number = 0
 
+  // What the world sent that this program would not accept. It is state,
+  // not a log line, because the board shows it: the count of refusals and
+  // the last one are the honest half of a status page, and a program that
+  // only counts what it liked is not reporting on its inputs.
+  state refused: number = 0
+  state lastRefusal: text = ""
+
   tags append: [text] = ["core"]
   limits deep: {text: {text: number}} = { samples: { keep: 12 }, walk: { fuel: 64 } }
 
@@ -134,8 +141,12 @@ part Store {
     return if len(all) > cap { slice(all, len(all) - cap, len(all)) } else { all }
   }
 
-  // An incident opens when a line trips and stays open until it is steady
-  // again, so a line that flaps does not open a hundred of them.
+  // An incident opens when a line trips and closes when the composed
+  // policy calls the line steady again. What "steady again" means is the
+  // policy's business, not this file's — and it is deliberately NOT the
+  // trip mark read backwards (see quarry.thresholds). This store cannot
+  // see that space anyway: the use graph runs the other way, which is the
+  // composition model refusing to let the base depend on a layer.
   mark = (v: quarry.data.Verdict) => {
     let open = openOn(v.line)
     if v.level == "tripped" and open == none {
@@ -165,6 +176,12 @@ part Store {
 
   flip = () => {
     intake = not intake
+  }
+
+  refuse = (why: text) => {
+    refused = refused + 1
+    lastRefusal = why
+    log.warn("quarry: refused a reading", { why: why })
   }
 
   // -- derived reads --------------------------------------------------
