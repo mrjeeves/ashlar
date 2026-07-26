@@ -140,16 +140,9 @@ mechanical, and each has teeth:
   every time — `owned` and `reads`/`writes` both cold-read to the wrong mental
   model and became `peruser` and `watches`/`updates`
   ([ADR-0019](docs/decisions/0019-a3-run3-findings-owned-and-reactive-annotation.md)),
-  which run 5 then scored 4/4 clean.
-
-  It also caught itself. Runs 3 and 4 read with the repo's own project
-  instructions in their prompts — which at the time stated the syntax facts the
-  rubrics ask for — so their scores are void and withdrawn
-  ([ADR-0021](docs/decisions/0021-the-a3-readers-were-not-cold.md)). Run 5
-  measured its isolation instead of asserting it, and turned up the proof: the
-  single fixture whose fact had leaked is the single fixture that flipped to
-  PASS while the leak was open and back to FAIL once it closed
-  ([ADR-0023](docs/decisions/0023-a3-run5-and-the-word-order-behind-f1.md)).
+  which run 5 then scored 4/4 clean. How the gate is run, and what counts as a
+  cold reader, is `suites/t_a3/PROTOCOL.md`; the per-run results and the
+  decisions they produced live beside it and in `docs/decisions/`.
 - **Derivable.** Ashlar minimizes semantic freedom so the toolchain can
   compute and explain what names mean, which implementations run, and what
   a change affects ([ADR-0012](docs/decisions/0012-semantic-freedom-and-derivability.md)).
