@@ -11,12 +11,12 @@ Every example wears the same restrained dark skin — one house palette,
 declared per project as `assets/<name>.css` and bound by `class` name
 (§9.4, ADR-0016). To flip through them all at once, run `./showcase/serve.sh`
 (it starts each example on its own port) and open <http://127.0.0.1:8080> —
-`gallery`, below, which frames the other fifteen.
+`gallery`, below, which frames the other sixteen.
 
 ## gallery
 
 The showcase itself, and the reason `setting` exists. It renders a sidebar
-of every other example with a live frame — fifteen addresses — and its
+of every other example with a live frame — sixteen addresses — and its
 source contains not one of them. `Catalog` declares
 `setting groups: [Group]`, deployment fills it in from `settings.json`,
 and starting without it refuses by name rather than serving dead frames
@@ -141,6 +141,43 @@ seam and pings mentioned people over a per-user channel the notice tray
 subscribes to by name. Appearance is bound by name: the root declares
 `style = "commons"`, and the views carry `class` names that meet the
 served `assets/commons.css` by name — no style string anywhere (§9.4).
+
+## slate
+
+A shared pad. Open a URL, type, and whoever else has it open sees the text
+as you write it. No account, no session, no invite — **the URL is the
+permission**, which is what makes a pad a pad rather than a document with
+a sharing dialog.
+
+It is here for one problem, and everything else in it is ordinary: **two
+people typing at once.** The browser shim sends an event carrying the
+field's whole value, so the server never sees "insert `x` at offset 40" —
+it sees "this page says the pad now reads THIS". Take that at face value
+and the slower typist's snapshot lands on top of the faster one's, and a
+paragraph is gone with no error anywhere. That is the failure this example
+refuses.
+
+So each page keeps `base` — the text it had in front of it — as
+per-instance state, an edit is `(base, incoming)` against the pad's
+`current`, and the merge is three-way, line by line. Two people editing
+different lines both keep their work; two people editing the SAME line is
+a real conflict, where the copy already on the pad wins and the writer who
+lost is **told** — a shared editor may drop an edit, but never in silence.
+When any edit lands the pad publishes its new text on a channel every open
+editor subscribes to (§9.5), so a page's `base` moves with its screen; and
+a line matching what the pad held one version ago is read as a page that
+has not caught up rather than as an opinion, so a fast typist cannot
+silently undo a colleague. The trade that bound implies is stated in
+[ADR-0028](../docs/decisions/0028-what-a-snapshot-transport-can-merge.md).
+
+The browser runs no editor code: no CRDT library, no operational transform
+shipped to the client, no diffing in JavaScript. The merge is about forty
+lines of Ashlar on the server. Around it: presence off the socket lifecycle
+(arrive on mount, depart when the socket closes), revisions snapshotted on
+a rhythm and restorable — where restoring is an edit like any other, so it
+merges and nobody mid-sentence loses their line — and two spaces layering
+the edit seam, `slate.limits` for size and `slate.history` for snapshots,
+ordered by the `use` between them.
 
 ## ledger
 

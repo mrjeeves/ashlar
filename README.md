@@ -71,22 +71,22 @@ attached.
 
 **See the whole language running, in one command.** From a fresh clone — it
 builds the release binary itself if you don't have one. Needs **Rust 1.65 or
-newer** — there are no crates to fetch. Fifteen of the sixteen examples need
+newer** — there are no crates to fetch. Sixteen of the seventeen examples need
 nothing more; `ledger` also needs SQLite's development package, because it links
 the real library (`sudo apt install libsqlite3-dev`, or `sqlite-devel` on
-Fedora). Without it the other fifteen still run and the launcher says so:
+Fedora). Without it the other sixteen still run and the launcher says so:
 
 ```
 ./showcase/serve.sh          # macOS / Linux
 ./showcase/serve.ps1         # Windows (or pwsh anywhere)
 ```
 
-Either one starts all sixteen examples, each on its own port, then tells you to
-open **<http://127.0.0.1:8080>** — the gallery: a sidebar of the other fifteen
+Either one starts all seventeen examples, each on its own port, then tells you to
+open **<http://127.0.0.1:8080>** — the gallery: a sidebar of the other sixteen
 with **live frames** you swap by click. Ctrl-C stops every example at once.
 
 The gallery is itself an Ashlar program (`examples/gallery`), and it is the
-sharpest demonstration of what a `setting` is for: it renders fifteen addresses
+sharpest demonstration of what a `setting` is for: it renders sixteen addresses
 and its source contains none of them. They arrive from
 `examples/gallery/settings.json`, which is deployment's file, so a test can
 assert the launchers and the gallery agree about every port. Before settings
@@ -140,16 +140,9 @@ mechanical, and each has teeth:
   every time — `owned` and `reads`/`writes` both cold-read to the wrong mental
   model and became `peruser` and `watches`/`updates`
   ([ADR-0019](docs/decisions/0019-a3-run3-findings-owned-and-reactive-annotation.md)),
-  which run 5 then scored 4/4 clean.
-
-  It also caught itself. Runs 3 and 4 read with the repo's own project
-  instructions in their prompts — which at the time stated the syntax facts the
-  rubrics ask for — so their scores are void and withdrawn
-  ([ADR-0021](docs/decisions/0021-the-a3-readers-were-not-cold.md)). Run 5
-  measured its isolation instead of asserting it, and turned up the proof: the
-  single fixture whose fact had leaked is the single fixture that flipped to
-  PASS while the leak was open and back to FAIL once it closed
-  ([ADR-0023](docs/decisions/0023-a3-run5-and-the-word-order-behind-f1.md)).
+  which run 5 then scored 4/4 clean. How the gate is run, and what counts as a
+  cold reader, is `suites/t_a3/PROTOCOL.md`; the per-run results and the
+  decisions they produced live beside it and in `docs/decisions/`.
 - **Derivable.** Ashlar minimizes semantic freedom so the toolchain can
   compute and explain what names mean, which implementations run, and what
   a change affects ([ADR-0012](docs/decisions/0012-semantic-freedom-and-derivability.md)).
@@ -172,7 +165,7 @@ mechanical, and each has teeth:
 | `reference/` | The complete language reference — the source of truth for every language decision. |
 | `docs/` | Vision, requirements, roadmap, diagnostics catalog, and the ADRs (see `docs/README.md`). |
 | `AGENTS.md` | The agent-facing working contract — hierarchy, hard rules, sync duties. Load-bearing (T-META enforces it). |
-| `examples/` | Sixteen complete runnable projects — including `commons` (a full team chat), `ledger` (a real SQLite datastore over the `foreign` boundary), `locker` (per-user `peruser` storage that isolates each user by construction), `abacus` (a Python worker, no compiler in sight), and `gallery` (the showcase itself, which renders fifteen addresses it learns from a `setting`) — compiled, format-checked, AND runtime-driven by the suite. All wear one dark house style (ADR-0016). |
+| `examples/` | Seventeen complete runnable projects — including `commons` (a full team chat), `slate` (a shared pad where two people typing at once are merged line by line, no account and no client-side editor code), `ledger` (a real SQLite datastore over the `foreign` boundary), `locker` (per-user `peruser` storage that isolates each user by construction), `abacus` (a Python worker, no compiler in sight), and `gallery` (the showcase itself, which renders sixteen addresses it learns from a `setting`) — compiled, format-checked, AND runtime-driven by the suite. All wear one dark house style (ADR-0016). |
 | `showcase/` | The launchers: `serve.sh` (POSIX) or `serve.ps1` (PowerShell) runs every example on its own port, with the `gallery` on 8080 framing the rest. A test asserts both launchers and the gallery's settings agree on every port. |
 | `suites/` | Test corpora and the coverage map: the cold-read gate (protocol, 25 fixtures, per-run results), the 31 loud-failure fixtures, and `coverage.md` — every requirement id to the test that proves it, kept honest by T-META. |
 | `crates/` | The Rust implementation and its 17 test binaries. |
@@ -199,7 +192,27 @@ code and a test behind it, and the increments were adversarially
 re-reviewed. The suite is 17 green test binaries in debug and release with
 zero warnings.
 
-The ledger (`docs/roadmap.md`) is currently empty, and one note is carried there
+One sentence of the reference is currently stricter than the binary, and it is
+left that way on purpose. §5 says a literal is checked against the shape its
+position expects; a `return` is not yet such a position, so a `pipe` layer that
+returns a correct data-shape literal is rejected for returning a map — and, the
+other way round, an incomplete literal returned beside a typed one degrades to
+`Unknown` and reaches the wire as `null`. Both were found by writing a large
+example against hostile input; `examples/slate`'s driving test carries the
+reproduction of the second.
+The requirement stands and the gap is recorded rather than papered over
+([ADR-0025](docs/decisions/0025-a-return-is-a-shape-position.md),
+`docs/roadmap.md`).
+
+That same example found two silent defects in `ashlar fmt` — an `else if` in
+expression position printed as a block, changing what the program returned and
+then deleting the branch; a comment inside a literal migrating onto the next
+declaration. Both are fixed with regression tests, and the formatter's
+property corpus now covers the examples too
+([ADR-0024](docs/decisions/0024-a-formatter-that-loses-code-is-not-a-formatter.md)).
+
+The ledger (`docs/roadmap.md`) carries those two items and one more: a provably
+cold A3 read needs a reader outside this repository. A note is carried there
 anyway: `25-foreign-reactive` passed run 4 on a 2–1 panel, with the dissent
 localizing to `updates` rather than `watches`. It is recorded instead of acted
 on, because respelling a keyword off one reader would repeat ADR-0015's mistake

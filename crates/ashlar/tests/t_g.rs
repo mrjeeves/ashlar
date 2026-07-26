@@ -1045,6 +1045,99 @@ void ashlar_free(char* p) { freed++; free(p); }
 }
 
 #[test]
+fn t_g_a_faulting_subscriber_does_not_take_the_channel_with_it() {
+    // covers: G4 (channels), reference 9.5/9.9 — a fault in a subscriber
+    // is that subscriber's.
+    //
+    // It used to be everyone's. `publish` propagated the first handler's
+    // fault, so a channel with one bad subscriber delivered to nobody
+    // after it — silently — and ended the PUBLISHER's request with that
+    // fault's status. In a program with several open pages that means one
+    // visitor's broken handler 500s an unrelated visitor's write and
+    // silences every other page, which is exactly the failure mode
+    // channels exist to avoid. `spawn` already had the right rule (§9.9,
+    // "a fault in it is logged, not fatal"); this is the same rule for
+    // the same reason.
+    let app = r#"space bus
+
+part Server {
+  port = 0
+}
+
+part Tally {
+  state heard: number = 0
+  state fired: number = 0
+  ring = () => {
+    fired = fired + 1
+    publish("wire", "ping")
+  }
+  note = () => {
+    heard = heard + 1
+  }
+}
+
+part rotten {
+  view = () => el("span", { class: "r" }, [])
+  start stack = () => {
+    subscribe("wire", boom)
+    return none
+  }
+  boom = (m: data) => {
+    let bad = 1 / 0
+    log.info("unreachable", { bad: bad })
+  }
+}
+
+part healthy {
+  view = () => el("span", { class: "h" }, [])
+  start stack = () => {
+    subscribe("wire", heard)
+    return none
+  }
+  heard = (m: data) => {
+    bus.Tally.note()
+  }
+}
+
+part page {
+  route = "/"
+  view = () => el("div", {}, [el(bus.rotten, {}), el(bus.healthy, {})])
+}
+
+part ring {
+  route = "/ring"
+  handle pipe = (req: std.Request) => {
+    bus.Tally.ring()
+    return bus.Tally.heard
+  }
+}
+"#;
+    let root = fixture("badsub", &[("app.ash", app)]);
+    let (port, stop, join) = start(root);
+
+    // Render the page so both instances subscribe, the faulting one first.
+    let (status, _) = http_get(port, "/");
+    assert_eq!(status, 200);
+
+    // The publisher's own request must survive someone else's fault...
+    let (status, body) = http_get(port, "/ring");
+    assert_eq!(
+        status, 200,
+        "a subscriber's fault must not be charged to the caller that published"
+    );
+    // ...and the subscriber AFTER the faulting one must still be reached.
+    assert_eq!(body.trim(), "1", "delivery continues past a faulting handler");
+
+    // Still true on the second message: the bad subscriber is not removed,
+    // not retried differently, and not able to poison the channel.
+    let (_, body2) = http_get(port, "/ring");
+    assert_eq!(body2.trim(), "2");
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}
+
+#[test]
 fn t_g_instance_start_subscribes_and_unmount_unsubscribes() {
     // covers: reference 9.5 — "`subscribe` in a view part's `start stack`
     // subscribes that instance and unsubscribes it automatically when the

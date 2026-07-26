@@ -186,6 +186,39 @@ impl Printer {
         }
     }
 
+    /// Comments due before an item of a multi-line list or map literal.
+    ///
+    /// Without this the comment stays queued until the next STATEMENT
+    /// opens, and is then printed there — so a note written above one key
+    /// of a map silently ends up documenting whatever declaration follows
+    /// the literal. The count is preserved either way, which is why the
+    /// comment-count property never saw it; a comment attached to the
+    /// wrong thing is worse than one that is missing, because it is
+    /// confidently wrong.
+    fn item_comments(&mut self, line: u32) {
+        while self.next_comment < self.comments.len() {
+            let c = &self.comments[self.next_comment];
+            if c.line >= line || !c.own_line {
+                break;
+            }
+            let (at, text) = (c.line, c.text.clone());
+            self.pad();
+            self.out.push_str(&text);
+            self.out.push('\n');
+            self.last_emitted_line = self.last_emitted_line.max(at);
+            self.next_comment += 1;
+        }
+    }
+
+    /// A comment sitting after an item on the item's own line.
+    fn item_trailing(&mut self, line: u32) {
+        if let Some(t) = self.trailing(line) {
+            self.out.push_str("  ");
+            self.out.push_str(&t);
+        }
+        self.last_emitted_line = self.last_emitted_line.max(line);
+    }
+
     /// Start a construct that begins at source `line`: flush comments due
     /// before it, honor the blank gap, then indent.
     fn open_line(&mut self, line: u32) {
@@ -519,9 +552,11 @@ impl Printer {
                     self.indent += 1;
                     for it in items {
                         self.out.push('\n');
+                        self.item_comments(list_item_line(it));
                         self.pad();
                         self.list_item(it);
                         self.out.push(',');
+                        self.item_trailing(list_item_line(it));
                     }
                     self.indent -= 1;
                     self.out.push('\n');
@@ -547,9 +582,11 @@ impl Printer {
                     self.indent += 1;
                     for it in items {
                         self.out.push('\n');
+                        self.item_comments(map_item_line(it));
                         self.pad();
                         self.map_item(it);
                         self.out.push(',');
+                        self.item_trailing(map_item_line(it));
                     }
                     self.indent -= 1;
                     self.out.push('\n');
@@ -567,13 +604,8 @@ impl Printer {
                 }
             }
             Expr::IfExpr(cond, then, els) => {
-                self.out.push_str("if ");
-                self.expr(cond, 1);
-                self.out.push_str(" { ");
-                self.branch_inline(then);
-                self.out.push_str(" } else { ");
-                self.branch_inline(els);
-                self.out.push_str(" }");
+                let inline = chain_inlineable(then, els);
+                self.if_expr(cond, then, els, inline);
             }
             Expr::FnLit(params, body) => {
                 self.out.push('(');
@@ -594,22 +626,53 @@ impl Printer {
         }
     }
 
-    /// If-expression branches hold statements but are canonically inline;
-    /// a branch that is a single expression prints bare.
-    fn branch_inline(&mut self, stmts: &[Stmt]) {
-        if stmts.len() == 1 {
-            if let Stmt::Expr(x) = &stmts[0] {
-                self.expr(x, 0);
-                return;
-            }
+    /// `if c { a } else if c2 { b } else { c }` in EXPRESSION position.
+    ///
+    /// Two shapes have to survive the round trip, and both were once
+    /// printed as `else { ... }`, which is a different program:
+    ///
+    /// * An `else` branch that is itself an if-expression chains as
+    ///   `else if`. Wrapping it in braces makes the branch a statement
+    ///   block, and a block whose statement is an `if` STATEMENT has the
+    ///   value `none` (§6) — so `else { if ... }` quietly returns none for
+    ///   every input the first branch missed.
+    /// * A branch carrying statements (a `let`, a loop) cannot be a
+    ///   one-liner at all, so the whole chain prints in block form.
+    fn if_expr(&mut self, cond: &SExpr, then: &[Stmt], els: &[Stmt], inline: bool) {
+        self.out.push_str("if ");
+        self.expr(cond, 1);
+        if inline {
+            self.out.push_str(" { ");
+            self.branch_inline(then);
+            self.out.push_str(" }");
+        } else {
+            self.out.push(' ');
+            self.stmt_block(then, cond.span.start.line);
         }
-        // Rare: statement-bearing branches fall back to block form.
-        for (i, s) in stmts.iter().enumerate() {
-            if i > 0 {
-                self.out.push_str("; ");
-            }
-            if let Stmt::Expr(x) = s {
-                self.expr(x, 0);
+        self.out.push_str(" else ");
+        if let Some((c2, t2, e2)) = as_chain(els) {
+            self.if_expr(c2, t2, e2, inline);
+            return;
+        }
+        if inline {
+            self.out.push_str("{ ");
+            self.branch_inline(els);
+            self.out.push_str(" }");
+        } else {
+            self.stmt_block(els, cond.span.start.line);
+        }
+    }
+
+    /// One inline if-expression branch: a lone expression prints bare.
+    /// `chain_inlineable` decides before every call that this is the case,
+    /// and the block form is the total fallback — a branch printer that
+    /// can emit NOTHING is how a whole `else` once disappeared.
+    fn branch_inline(&mut self, stmts: &[Stmt]) {
+        match stmts {
+            [Stmt::Expr(x)] => self.expr(x, 0),
+            other => {
+                let line = other.first().map(stmt_line).unwrap_or(0);
+                self.stmt_block(other, line);
             }
         }
     }
@@ -666,6 +729,57 @@ fn prec(e: &Expr) -> u8 {
         Expr::Unary(UnOp::Neg, _) => 9,
         Expr::Field(..) | Expr::Index(..) | Expr::Call(..) | Expr::Assert(..) => 10,
         _ => 11,
+    }
+}
+
+/// An `else` branch that is itself one if-expression, which prints as an
+/// `else if` chain rather than as a braced block (see `if_expr`).
+fn as_chain(els: &[Stmt]) -> Option<(&SExpr, &[Stmt], &[Stmt])> {
+    match els {
+        [Stmt::Expr(x)] => match &x.expr {
+            Expr::IfExpr(c, t, e) => Some((c, t, e)),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// Whether a whole if-expression chain fits the canonical one-line form:
+/// every branch in it is a single expression. One statement-bearing branch
+/// anywhere puts the entire chain in block form, so a `let` inside it has
+/// somewhere to live.
+fn chain_inlineable(then: &[Stmt], els: &[Stmt]) -> bool {
+    if !matches!(then, [Stmt::Expr(_)]) {
+        return false;
+    }
+    match as_chain(els) {
+        Some((_, t2, e2)) => chain_inlineable(t2, e2),
+        None => matches!(els, [Stmt::Expr(_)]),
+    }
+}
+
+fn list_item_line(it: &ListItem) -> u32 {
+    match it {
+        ListItem::Item(x) | ListItem::Spread(x) => x.span.start.line,
+    }
+}
+
+fn map_item_line(it: &MapItem) -> u32 {
+    match it {
+        MapItem::Entry(_, sp, _) => sp.start.line,
+        MapItem::Spread(x) => x.span.start.line,
+    }
+}
+
+fn stmt_line(s: &Stmt) -> u32 {
+    match s {
+        Stmt::Let(_, sp, _) | Stmt::Assign(_, sp, _) | Stmt::Return(_, sp) => sp.start.line,
+        Stmt::If(c, _, _) => c.span.start.line,
+        Stmt::For(vars, iter, _) => vars
+            .first()
+            .map(|(_, sp)| sp.start.line)
+            .unwrap_or(iter.span.start.line),
+        Stmt::Expr(x) => x.span.start.line,
     }
 }
 
@@ -789,6 +903,73 @@ mod tests {
         assert_eq!(before, after, "{}: comment count changed", name);
     }
 
+    /// The shapes that once did not survive formatting, both of them
+    /// silent. `else if` in EXPRESSION position was printed as
+    /// `else { if ... }` — a statement block, whose value is `none` (§6) —
+    /// so the first pass changed what the program returned and the second
+    /// erased the branch entirely (`else {  }`), all while `ashlar check`
+    /// stayed clean. A branch carrying a `let` fared worse: it printed as
+    /// `{ ; doubled }`, dropping the binding and emitting a semicolon the
+    /// language does not have.
+    ///
+    /// Both are caught by the three properties above — the AST fingerprint
+    /// for the meaning change, idempotence for the erasure — so the fix is
+    /// pinned by adding the inputs, not by asserting on bytes.
+    #[test]
+    fn if_expression_chains_and_statement_branches_survive_formatting() {
+        assert_fmt_faithful(
+            "elseif.ash",
+            "space a\n\npart W {\n  pick = (n: number) => {\n    return if n > 9 {\n      \"high\"\n    } else if n < 0 {\n      \"low\"\n    } else {\n      \"mid\"\n    }\n  }\n}\n",
+        );
+        assert_fmt_faithful(
+            "elseif-inline.ash",
+            "space a\n\npart W {\n  pick = (n: number) => (if n > 9 { \"high\" } else if n < 0 { \"low\" } else { \"mid\" })\n}\n",
+        );
+        assert_fmt_faithful(
+            "letbranch.ash",
+            "space a\n\npart W {\n  pick = (n: number) => {\n    let out = if n > 9 {\n      let doubled = n * 2\n      doubled\n    } else {\n      0\n    }\n    return out\n  }\n}\n",
+        );
+        // The chain still prints on one line when every branch is one
+        // expression: the fix must not blow every `if` into a block.
+        let out = format_source(
+            "t.ash",
+            "space a\n\npart W {\n  pick = (n: number) => {\n    return if n > 9 {\n      \"high\"\n    } else if n < 0 {\n      \"low\"\n    } else {\n      \"mid\"\n    }\n  }\n}\n",
+        )
+        .unwrap();
+        assert!(
+            out.contains("return if n > 9 { \"high\" } else if n < 0 { \"low\" } else { \"mid\" }"),
+            "{}",
+            out
+        );
+    }
+
+    /// A comment written inside a multi-line literal stays inside it. It
+    /// used to sit in the queue until the next declaration opened and then
+    /// print there, so a note about one map key came out documenting the
+    /// property AFTER the literal — the count was preserved, the meaning
+    /// of the sentence was not.
+    #[test]
+    fn comments_inside_literals_stay_where_they_were_written() {
+        let src = "space a\n\npart W {\n  make = () => {\n    return {\n      a: 1,\n      // why b matters\n      b: 2,  // and a trailing one\n      c: 3,\n    }\n  }\n  tags = [\n    \"one\",\n    // the second tag names the policy\n    \"two\",\n  ]\n  other = () => 5\n}\n";
+        assert_fmt_faithful("literal-comments.ash", src);
+        let out = format_source("t.ash", src).unwrap();
+        assert!(
+            out.contains("      // why b matters\n      b: 2,  // and a trailing one"),
+            "the comment must stay on the key it was written above:\n{}",
+            out
+        );
+        assert!(
+            out.contains("    // the second tag names the policy\n    \"two\","),
+            "the same holds inside a list literal:\n{}",
+            out
+        );
+        assert!(
+            !out.contains("// why b matters\n  tags") && !out.contains("// the second tag names the policy\n  other"),
+            "no comment may migrate onto a declaration it does not describe:\n{}",
+            out
+        );
+    }
+
     #[test]
     fn corpus_and_reference_survive_formatting() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -838,6 +1019,30 @@ mod tests {
             blocks += 1;
         }
         assert!(blocks >= 10, "expected reference blocks, found {}", blocks);
+
+        // And every example. t_examples asserts `fmt(src) == src` over this
+        // same tree, which is a fixpoint check on files that are ALREADY
+        // canonical — it cannot see a construct the formatter mangles until
+        // someone commits one. Running the three properties over the
+        // examples closes that gap: the AST fingerprint would have caught
+        // the `else if` meaning change the moment an example used one.
+        let mut example_files = 0;
+        for entry in std::fs::read_dir(root.join("examples")).unwrap() {
+            let dir = entry.unwrap().path();
+            if !dir.is_dir() {
+                continue;
+            }
+            for file in crate::find_ash_files(&dir) {
+                let src = std::fs::read_to_string(&file).unwrap();
+                assert_fmt_faithful(&file.to_string_lossy(), &src);
+                example_files += 1;
+            }
+        }
+        assert!(
+            example_files >= 20,
+            "expected the example corpus, found {} files",
+            example_files
+        );
     }
 
     #[test]

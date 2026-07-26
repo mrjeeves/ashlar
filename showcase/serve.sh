@@ -17,7 +17,7 @@ if [ ! -x "$BIN" ]; then
   cargo build --release || { echo "build failed"; exit 1; }
 fi
 
-# name:port — the map examples/gallery/settings.json mirrors for the fifteen it
+# name:port — the map examples/gallery/settings.json mirrors for the sixteen it
 # frames. Keep them in sync; t_examples_showcase_launchers_agree_on_every_port
 # asserts they are.
 EXAMPLES=(
@@ -37,6 +37,7 @@ EXAMPLES=(
   "abacus:8095"
   "commons:8093"
   "hello:8094"
+  "slate:8097"
 )
 
 # `ledger` reaches a real SQLite database across the foreign boundary, so its
@@ -81,7 +82,7 @@ if build_ledger_shim; then
   fi
 else
   echo
-  echo "  The other fourteen examples are unaffected. ledger's page will serve"
+  echo "  The other fifteen examples are unaffected. ledger's page will serve"
   echo "  but its store will fault at the boundary, with that same correction."
   echo "  \`abacus\` is the foreign example that needs no compiler at all."
   echo
@@ -107,7 +108,7 @@ for entry in "${EXAMPLES[@]}"; do
 done
 
 echo
-echo "All sixteen are up. Open the gallery:"
+echo "All seventeen are up. Open the gallery:"
 echo
 echo "  http://127.0.0.1:8080"
 echo

@@ -1469,8 +1469,22 @@ impl<'a> Evaluator<'a> {
                 };
                 let payload = arg(&mut args, 1);
                 let handlers = self.subs.get(&channel).cloned().unwrap_or_default();
+                // A subscriber's fault is that subscriber's. It used to be
+                // everyone's: `?` here abandoned the loop, so one bad
+                // handler silently denied the message to every subscriber
+                // after it AND ended the publisher's request with that
+                // fault's status — a visitor posting a reading got a 500
+                // naming a division by zero in someone else's open page.
+                //
+                // A handler is other people's code running because an
+                // event happened, which is what `spawn` is, and §9.9
+                // already settles that case: logged, not fatal. Same rule
+                // here, and delivery continues down the list.
                 for h in handlers {
-                    self.call(h, vec![payload.clone()])?;
+                    if let Err(fault) = self.call(h, vec![payload.clone()]) {
+                        let msg = format!("subscriber on `{}` failed: {}", channel, fault);
+                        self.emit_log("error", &msg, None, "std.publish", crate::tokens::Span::point(0, 0));
+                    }
                 }
                 Ok(V::None)
             }
