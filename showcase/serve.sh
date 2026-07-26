@@ -38,6 +38,7 @@ EXAMPLES=(
   "commons:8093"
   "hello:8094"
   "quarry:8096"
+  "slate:8097"
 )
 
 # `ledger` reaches a real SQLite database across the foreign boundary, so its
@@ -108,7 +109,7 @@ for entry in "${EXAMPLES[@]}"; do
 done
 
 echo
-echo "All seventeen are up. Open the gallery:"
+echo "All eighteen are up. Open the gallery:"
 echo
 echo "  http://127.0.0.1:8080"
 echo

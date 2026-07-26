@@ -37,7 +37,8 @@
       "label": "Flagship",
       "sites": [
         { "name": "commons", "blurb": "A full team chat — the whole language", "url": "http://127.0.0.1:8093" },
-        { "name": "quarry", "blurb": "A layered public status board, no login", "url": "http://127.0.0.1:8096" }
+        { "name": "quarry", "blurb": "A layered public status board, no login", "url": "http://127.0.0.1:8096" },
+        { "name": "slate", "blurb": "A shared pad — two people typing at once", "url": "http://127.0.0.1:8097" }
       ]
     },
     {

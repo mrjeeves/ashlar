@@ -114,6 +114,41 @@ One thing stays true regardless and needs no decision: **cold-read the
 construct, never the word** (ADR-0015 scored `personal` 3/3 on the bare word; in
 its slot it reads as `private`).
 
+Delivered 2026-07-26 (third pass) — **`slate`: a shared pad, and the one
+problem that makes a pad real software.** The eighteenth example, and the answer
+to a fair criticism of the seventeenth: `quarry` demonstrates composition, but
+it is a readout over a structure fixed at boot, fed by a simulator this repo
+wrote — a dashboard, not an application. `slate` is a product: open a URL, type,
+and whoever else has it open sees the text as you write it. No account, no
+session, no invite; the URL is the permission.
+
+It exists for **two people typing at once**, which is not optional for a pad and
+is not solvable by pretending. The browser shim sends the field's whole value,
+so the server never sees an operation — it sees a snapshot, and taking snapshots
+at face value is last-write-wins: the slower typist's copy lands on the faster
+one's and a paragraph disappears with no error anywhere. So each page keeps the
+text it had in front of it as per-instance state, an edit is `(base, incoming)`
+against the pad's `current`, and the merge is three-way, line by line. Different
+lines both survive; the same line is a conflict where the pad's copy stands and
+the writer who lost is told. When any edit lands the pad publishes its new text
+on a channel every editor subscribes to, so a page's base moves with its screen;
+and a line matching what the pad held one version ago is read as a page that has
+not caught up, so a fast typist cannot silently undo a colleague
+([ADR-0028](decisions/0028-what-a-snapshot-transport-can-merge.md), which states
+what that bound costs as well as what it buys).
+
+The browser runs no editor code: no CRDT library, no operational transform
+shipped to the client, no diffing in JavaScript. The merge is about forty lines
+of Ashlar. Around it: presence off the socket lifecycle, revisions snapshotted
+on a rhythm where restoring is itself an edit and so merges, and two spaces
+layering the edit seam — `slate.limits` for size, `slate.history` for snapshots
+— ordered by the `use` between them. Proven by
+`t_examples_slate_merges_two_people_typing_at_once`, which drives live
+co-editing and a crossed keystroke over two real sockets, true concurrency over
+the HTTP edit route where both clients state the base they were editing, the
+conflict that must be reported rather than swallowed, and the deliberate later
+rewrite that must still land so the lag rule cannot freeze the text.
+
 Delivered 2026-07-26 (second pass) — **the open world, which the first pass of
 `quarry` assumed away.** The example was built as a clean room: a fixed fleet,
 deterministic fake telemetry, and every input well formed — a shape chosen partly

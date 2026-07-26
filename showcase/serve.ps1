@@ -42,6 +42,7 @@ $examples = @(
   @{ name = 'commons';    port = 8093 }
   @{ name = 'hello';      port = 8094 }
   @{ name = 'quarry';     port = 8096 }
+  @{ name = 'slate';      port = 8097 }
 )
 
 # `ledger` reaches SQLite over the `native` transport, which needs a POSIX
@@ -97,7 +98,7 @@ try {
   }
 
   Write-Host ''
-  Write-Host 'All seventeen are up. Open the gallery:'
+  Write-Host 'All eighteen are up. Open the gallery:'
   Write-Host ''
   Write-Host '  http://127.0.0.1:8080'
   Write-Host ''

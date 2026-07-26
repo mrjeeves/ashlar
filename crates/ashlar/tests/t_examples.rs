@@ -1276,6 +1276,183 @@ fn t_examples_quarry_is_a_public_board_with_no_login() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+#[test]
+fn t_examples_slate_merges_two_people_typing_at_once() {
+    // A shared pad, and the one problem that makes a pad real software:
+    // two people typing at the same time. The client sends the whole
+    // field, so the naive server takes the last snapshot it received and
+    // the other person's work disappears with no error anywhere. This
+    // test is the proof that it does not.
+    let dir = staged("slate");
+    let (port, stop, join) = start(dir.clone());
+
+    // Two browsers open the same pad. No login, no invite: the URL is it.
+    let (status, _, page_a) = req(port, "GET", "/p/welcome", None, None);
+    assert_eq!(status, 200);
+    let (_, _, page_b) = req(port, "GET", "/p/welcome", None, None);
+    let id_a = attr_of(&page_a, "data-ash-page").unwrap();
+    let id_b = attr_of(&page_b, "data-ash-page").unwrap();
+    let mut a = ws_open(port);
+    let mut b = ws_open(port);
+    ws_send(&mut a, &format!("{{\"page\":\"{}\"}}", id_a));
+    ws_send(&mut b, &format!("{{\"page\":\"{}\"}}", id_b));
+    std::thread::sleep(std::time::Duration::from_millis(100));
+
+    // Presence: each page named itself off the stone list on arrival, and
+    // A's roster carries both.
+    let (_, _, seen) = req(port, "GET", "/api/pad/welcome", None, None);
+    assert!(seen.contains("granite") || seen.contains("basalt"), "the roster names its visitors: {}", seen);
+    assert!(seen.contains("\"here\":[\""), "{}", seen);
+
+    let (inst_a, key_a) = event_target(&page_a, "oninput", 0).unwrap();
+    let (inst_b, key_b) = event_target(&page_b, "oninput", 0).unwrap();
+    let typing = |s: &mut TcpStream, inst: &str, h: &str, value: &str| {
+        ws_send(
+            s,
+            &format!(
+                "{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"oninput\",\"value\":\"{}\"}}}}",
+                inst, h, value
+            ),
+        );
+    };
+
+    // A writes the first three lines. B's page is patched with them —
+    // live co-editing, with no editor library and no client code: the
+    // whole browser side is the runtime's shim (§9.4).
+    typing(&mut a, &inst_a, &key_a, "alpha\\nbeta\\ngamma");
+    ws_expect(&mut b, "gamma", 20);
+
+    // A changes the first line. B is patched again...
+    typing(&mut a, &inst_a, &key_a, "ALPHA\\nbeta\\ngamma");
+    ws_expect(&mut b, "ALPHA", 20);
+
+    // ...and now B's keystroke arrives carrying the text B had BEFORE
+    // that patch — a finger that came down while the patch was in
+    // flight. Taken at face value it silently undoes A's line, which is
+    // the failure a shared editor may never have. The pad recognises a
+    // line it held one version ago and keeps A's, while B's own change on
+    // the third line still lands.
+    typing(&mut b, &inst_b, &key_b, "alpha\\nbeta\\nGAMMA");
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    let (_, _, crossed) = req(port, "GET", "/api/pad/welcome", None, None);
+    assert!(
+        crossed.contains("ALPHA") && crossed.contains("GAMMA"),
+        "a keystroke that crossed a patch must not revert the other writer: {}",
+        crossed
+    );
+    assert!(
+        crossed.contains("\"clashes\":0"),
+        "and being a step behind is not a conflict — crying wolf at every \
+         fast typist is its own failure: {}",
+        crossed
+    );
+
+    // True concurrency, stated exactly: two clients that each say what
+    // they were editing. This is the path a script, an integration, or a
+    // second editor takes, and it is where "at the same time" is a fact
+    // rather than a race the test has to win.
+    let edit = |base: &str, body: &str, who: &str| {
+        req(
+            port,
+            "POST",
+            "/api/edit/welcome",
+            Some(&format!(
+                "{{\"base\":\"{}\",\"body\":\"{}\",\"who\":\"{}\"}}",
+                base, body, who
+            )),
+            None,
+        )
+    };
+    // The pad currently reads ALPHA/beta/GAMMA, and that is the text both
+    // of these clients say they were editing.
+    let held = "ALPHA\\nbeta\\nGAMMA";
+    edit(held, "ALPHA\\nfrom-ada\\nGAMMA", "ada");
+    edit(held, "ALPHA\\nbeta\\nGAMMA-2", "bob");
+    let (_, _, both) = req(port, "GET", "/api/pad/welcome", None, None);
+    assert!(
+        both.contains("from-ada") && both.contains("GAMMA-2"),
+        "simultaneous edits to different lines both survive: {}",
+        both
+    );
+    assert!(both.contains("\"clashes\":0"), "different lines are not a conflict: {}", both);
+
+    // Same base, SAME line: a real disagreement. One lands, the other is
+    // refused and told — never dropped in silence.
+    let now_held = "ALPHA\\nfrom-ada\\nGAMMA-2";
+    edit(now_held, "ALPHA\\nada-again\\nGAMMA-2", "ada");
+    edit(now_held, "ALPHA\\nbob-instead\\nGAMMA-2", "bob");
+    let (_, _, after) = req(port, "GET", "/api/pad/welcome", None, None);
+    assert!(after.contains("ada-again"), "the first edit stands: {}", after);
+    assert!(!after.contains("bob-instead"), "the second did not overwrite it: {}", after);
+    assert!(after.contains("\"clashes\":1"), "the conflict is counted: {}", after);
+    let told = ws_expect(&mut a, "same line", 30);
+    assert!(
+        told.contains("the copy already on the pad won"),
+        "and every page on the pad hears which way it went: {}",
+        told
+    );
+
+    // A deliberate rewrite one step later must still land — the rule that
+    // protects a lagging writer must not freeze the text.
+    edit("ALPHA\\nada-again\\nGAMMA-2", "ALPHA\\nrewritten\\nGAMMA-2", "cy");
+    let (_, _, rewritten) = req(port, "GET", "/api/pad/welcome", None, None);
+    assert!(rewritten.contains("rewritten"), "an ordinary later edit lands: {}", rewritten);
+
+    // A layered policy refuses an edit the pad will not hold, on the same
+    // seam the history layer uses — and the refusal reaches the writer
+    // rather than being swallowed.
+    let huge = "x".repeat(20_001);
+    let (refused, _, why) = req(
+        port,
+        "POST",
+        "/api/edit/welcome",
+        Some(&format!("{{\"base\":\"\",\"body\":\"{}\",\"who\":\"a script\"}}", huge)),
+        None,
+    );
+    assert_eq!(refused, 409, "the size policy refuses: {}", why);
+    assert!(why.contains("20000 characters"), "and says what the limit is: {}", why);
+
+    // Presence departs with the socket, like any other unmount (§9.5).
+    drop(b);
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    let (_, _, alone) = req(port, "GET", "/api/pad/welcome", None, None);
+    let here = alone
+        .split("\"here\":[")
+        .nth(1)
+        .and_then(|rest| rest.split(']').next())
+        .unwrap_or("");
+    assert_eq!(
+        here.matches('"').count() / 2,
+        1,
+        "one page left, one remains: {}",
+        alone
+    );
+
+    // Making a pad is a native form post: no client code involved, and the
+    // title becomes an address a person can read out loud.
+    let (made, head, _) = req(port, "POST", "/new", Some("{\"title\":\"Sprint Notes\"}"), None);
+    assert_eq!(made, 302);
+    assert!(
+        head.contains("/p/sprint-notes"),
+        "the title becomes a slug: {}",
+        head
+    );
+    let (_, _, fresh) = req(port, "GET", "/api/pad/sprint-notes", None, None);
+    assert!(fresh.contains("\"body\":\"\""), "a new pad starts empty: {}", fresh);
+
+    // The pads outlive the process; presence does not, and neither should.
+    drop(a);
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+    let (port2, stop2, join2) = start(dir.clone());
+    let (_, _, kept) = req(port2, "GET", "/api/pad/welcome", None, None);
+    assert!(kept.contains("rewritten"), "stored pads survive a restart: {}", kept);
+    assert!(kept.contains("\"here\":[]"), "presence does not: {}", kept);
+    stop2.store(true, Ordering::Relaxed);
+    join2.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Parse `name -> port` pairs out of a showcase launcher or the gallery page.
 /// Each of the three files states the map in its own syntax; this reduces them
 /// to the same set so they can be compared.
@@ -1430,7 +1607,7 @@ fn t_examples_gallery_frames_a_chosen_example() {
     // Every example the settings name is in the sidebar, under its heading.
     for name in [
         "counter", "todo", "chat", "poll", "ticker", "pong", "foundry", "press", "guardrails",
-        "diary", "locker", "ledger", "abacus", "commons", "quarry", "hello",
+        "diary", "locker", "ledger", "abacus", "commons", "quarry", "slate", "hello",
     ] {
         assert!(
             html.contains(&format!(">{}<", name)),
