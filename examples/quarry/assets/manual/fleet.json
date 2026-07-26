@@ -1,0 +1,12 @@
+{
+  "note": "Published for machines. The board at / is the same fleet, live.",
+  "lines": [
+    { "key": "yard", "name": "the yard", "stage": "intake", "feeds": ["saw"] },
+    { "key": "saw", "name": "primary saw", "stage": "cut", "feeds": ["polish", "edge"] },
+    { "key": "kiln", "name": "drying kiln", "stage": "cure", "feeds": ["polish"] },
+    { "key": "polish", "name": "polish line", "stage": "finish", "feeds": ["crate"] },
+    { "key": "edge", "name": "edging line", "stage": "finish", "feeds": ["crate"] },
+    { "key": "crate", "name": "crating", "stage": "pack", "feeds": ["dock"] },
+    { "key": "dock", "name": "loading dock", "stage": "ship", "feeds": [] }
+  ]
+}

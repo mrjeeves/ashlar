@@ -9,7 +9,40 @@ with no passing test is not a satisfied requirement (T-META). An empty open
 section is a claim, so it is kept honest: an item leaves it only when its
 test runs for real.
 
-## Open — one item
+## Open — three items
+
+**A `return` is not yet a shape position** ([ADR-0025](decisions/0025-a-return-is-a-shape-position.md)).
+Two halves of one gap, both found by writing `examples/quarry`. A `pipe`
+layer over a data shape that returns a complete, correctly-shaped literal is
+REJECTED, with a fix (`Make every layer return X`) its author has already
+followed — the workaround is to route the literal through a call that names
+the shape, which is why `guardrails` and `quarry` both carry an identity
+property for it. And the reverse: when one `return` in a block is a map
+literal and another is a data shape, the shapes do not join, the block
+degrades to `Unknown`, and an incomplete literal reaches the wire as
+`{"field_n":null}` from a program that checked clean. That second one is a
+D3 violation — statically decidable, undetected, and not in the reference's
+documented pair of undetectable faults. Serves **A4, D1, D3**. Proven by:
+the two reproductions in ADR-0025, the first as a compiling fixture and the
+second as a T-A4 loud-failure fixture, plus removing the `keep` properties
+from `guardrails` and `quarry`. It is scheduled rather than improvised
+because both available shortcuts damage something worth more than the fix —
+re-checking after inference double-reports, and diagnosing disagreement
+without first propagating the expected shape would reject the correct
+program, which A4 ranks as the worse failure.
+
+**A comment between the parts of a one-line expression still has nowhere to
+go.** [ADR-0024](decisions/0024-a-formatter-that-loses-code-is-not-a-formatter.md)
+closed comment loss inside multi-line list and map literals — the comment now
+prints at the item it was written above, and trailing comments stay on their
+item's line. What remains is a comment written inside an expression that
+prints on ONE line: there is no line to put it back on, so it still moves to
+the next construct. Unlike the closed case it is visible rather than silent
+(the comment lands somewhere a reader can see), which is why it is an item
+here and not a defect. Serves **G1** (the formatter's meaning- and
+comment-preserving claim). Proven by: an `assert_fmt_faithful` fixture whose
+comment sits mid-expression, with the property extended from comment COUNT
+to comment position.
 
 **A provably cold A3 read needs a reader outside this repository.** Run 5
 (2026-07-25, `suites/t_a3/results/2026-07-25-sonnet-run5.md`) scored **24/25**
@@ -65,6 +98,51 @@ fails there.
 One thing stays true regardless and needs no decision: **cold-read the
 construct, never the word** (ADR-0015 scored `personal` 3/3 on the bare word; in
 its slot it reads as `private`).
+
+Delivered 2026-07-26 — **`quarry`: a layered program with nobody signed in,
+and the two formatter defects it found.** `examples/quarry` is the seventeenth
+example and the first written as a large program rather than as a demonstration
+of one construct: eight spaces in one `use` chain, five of them layering a
+single store through all five merge kinds — `classify` and `announce` as
+`pipe`s, `boot`/`wind` as `stack` and `stack reverse`, `tags` as `append`,
+`limits` as `deep`. Nothing in it authenticates. There is no `signup`, no
+`login`, no session and no `peruser`; the complexity is composition, and the
+board is the same page for everyone who opens it.
+
+It carries three things no other example had. **`allow` with no identity in
+it**: the public report desk guards on program state — a shutter the board can
+close — so a closed desk ends the request with 403 before `handle` runs, which
+is authorization without authentication. **Static assets** (§9.8): `files =
+"manual"` publishes the fleet layout at `/manual/fleet.json`, the first use of
+that construct outside T-G. And a **view part that instantiates itself**,
+drawing the fleet graph to whatever depth the data has, beside a recursion among
+named functions that computes a fault's blast radius from the same `feeds`
+edges — locals are single-assignment, so the frontier and the answer are
+parameters, and the walk carries fuel because a graph that arrives as data can
+cycle where a `use` graph cannot. Proven by
+`t_examples_quarry_is_a_public_board_with_no_login`, which drives the layered
+escalation (two thresholds readings, then a streaks escalation on the third),
+the 403 at the closed desk, the 404s, the recursive tree, the asset and its
+traversal guard, cross-client reactivity over a socket, the alert channel, and
+`stored` surviving a restart.
+
+Writing it found two silent defects in `ashlar fmt`
+([ADR-0024](decisions/0024-a-formatter-that-loses-code-is-not-a-formatter.md)),
+both fixed here with regression tests. `else if` in EXPRESSION position printed
+as `else { if ... }`, which is a statement block whose value is `none` — so the
+first pass changed what the program returned and the second deleted the branch
+outright (`else {  }`), with `ashlar check` clean throughout. And a comment
+inside a multi-line literal migrated onto the next declaration, where it
+described something else; the comment count was preserved, which is why the
+property test never saw it. The formatter's property corpus — same AST,
+idempotent, comments preserved — now runs over `examples/` as well, because
+`t_examples` only ever asserted `fmt(src) == src` on files that were already
+canonical and so could not see a construct the formatter mangles until one was
+committed.
+
+It also found what [ADR-0025](decisions/0025-a-return-is-a-shape-position.md)
+records and the open section now carries: a `return` is not yet a shape
+position.
 
 Delivered 2026-07-25 — **the showcase is an Ashlar program.** `examples/gallery`
 replaces `showcase/index.html`: a sidebar of the other fifteen examples with a

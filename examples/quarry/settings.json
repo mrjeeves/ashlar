@@ -1,0 +1,5 @@
+{
+  "quarry.thresholds.Policy.warn": 60,
+  "quarry.thresholds.Policy.trip": 85,
+  "quarry.streaks.Escalation.streak": 3
+}

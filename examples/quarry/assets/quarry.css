@@ -1,0 +1,266 @@
+/* quarry — the public status board. `style = "quarry"` (§9.4); every rule
+   here is reached by a class NAME carried on an element, never by an
+   inline style. The `.b0`–`.b9` bars are the load-bearing case: the view
+   quantizes a reading into a named bucket, and this file decides what a
+   bucket looks like. */
+
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --panel-2: #1e222b;
+  --line: #262b36;
+  --ink: #e6e9ef;
+  --muted: #8b93a7;
+  --accent: #5b8cff;
+  --accent-ink: #ffffff;
+  --ok: #3ddc84;
+  --warn: #f2c14e;
+  --bad: #ff6b6b;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+
+body {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+.app {
+  max-width: 68rem;
+  margin: 0 auto;
+  padding: 28px 20px 64px;
+}
+
+h2 {
+  margin: 0 0 4px;
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: 0.2px;
+}
+
+h3 {
+  margin: 22px 0 8px;
+  font-size: 13px;
+  font-weight: 650;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--muted);
+}
+
+.muted { color: var(--muted); margin: 0 0 14px; font-size: 13px; }
+
+/* -- banner --------------------------------------------------------- */
+
+.banner {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 18px 28px;
+  padding: 18px 22px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--muted);
+  border-radius: 16px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+
+.banner.steady { border-left-color: var(--ok); }
+.banner.strained { border-left-color: var(--warn); }
+.banner.tripped { border-left-color: var(--bad); }
+
+.wordmark { margin: 0; font-size: 20px; font-weight: 700; letter-spacing: -0.3px; }
+.tagline { margin: 0; font-size: 12px; color: var(--muted); }
+
+.state { display: flex; align-items: center; gap: 8px; }
+.lamp { width: 10px; height: 10px; border-radius: 5px; background: var(--muted); }
+.lamp.steady { background: var(--ok); }
+.lamp.strained { background: var(--warn); }
+.lamp.tripped { background: var(--bad); }
+.word { font-size: 13px; letter-spacing: 0.4px; text-transform: uppercase; color: var(--muted); }
+
+.figures { display: flex; gap: 22px; margin: 0; margin-left: auto; }
+.figure dt { font-size: 11px; text-transform: uppercase; letter-spacing: 0.7px; color: var(--muted); }
+.figure dd { margin: 0; font-size: 20px; font-variant-numeric: tabular-nums; }
+
+.desk { display: flex; flex-direction: column; gap: 6px; align-items: flex-end; }
+
+.shutter {
+  padding: 8px 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.shutter.open { border-color: rgba(61, 220, 132, 0.5); color: var(--ok); }
+.shutter.closed { border-color: rgba(255, 107, 107, 0.5); color: var(--bad); }
+.shutter:hover { filter: brightness(1.15); }
+
+.manual { font-size: 12px; color: var(--muted); text-decoration: none; }
+.manual:hover { color: var(--accent); }
+
+/* -- the fleet grid -------------------------------------------------- */
+
+.main { margin-top: 20px; display: flex; flex-direction: column; gap: 20px; }
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(13rem, 1fr));
+  gap: 12px;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-top: 2px solid var(--line);
+  border-radius: 14px;
+  padding: 14px 16px 16px;
+}
+.card.strained { border-top-color: var(--warn); }
+.card.tripped { border-top-color: var(--bad); }
+.card.steady { border-top-color: rgba(61, 220, 132, 0.6); }
+
+.cardhead { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.name { color: var(--ink); text-decoration: none; font-weight: 600; }
+.name:hover { color: var(--accent); }
+.stage { font-size: 11px; text-transform: uppercase; letter-spacing: 0.6px; color: var(--muted); }
+
+.load { margin: 6px 0 10px; font-size: 30px; font-variant-numeric: tabular-nums; letter-spacing: -0.5px; }
+.sub { margin: 10px 0 0; font-size: 12px; color: var(--muted); }
+
+/* The sparkline: ten named buckets, one rule each. */
+/* Fixed-width bars, not flexed: a line with three readings so far draws
+   three bars, not three fat ones. */
+.spark { display: flex; align-items: flex-end; gap: 3px; height: 34px; }
+.bar { width: 7px; flex: none; background: var(--accent); border-radius: 2px 2px 0 0; opacity: 0.85; }
+.b0 { height: 10%; }
+.b1 { height: 18%; }
+.b2 { height: 26%; }
+.b3 { height: 34%; }
+.b4 { height: 44%; }
+.b5 { height: 54%; }
+.b6 { height: 64%; }
+.b7 { height: 76%; background: var(--warn); }
+.b8 { height: 88%; background: var(--warn); }
+.b9 { height: 100%; background: var(--bad); }
+
+/* -- flow and journal ------------------------------------------------ */
+
+.cols { display: grid; grid-template-columns: 1.2fr 1fr; gap: 20px; }
+
+.flow, .journal, .wall, .detail {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 18px 20px 20px;
+}
+
+.trees { display: flex; flex-direction: column; gap: 6px; }
+
+.node { display: flex; flex-direction: column; }
+.kids { margin-left: 18px; padding-left: 12px; border-left: 1px solid var(--line); }
+
+.twig {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  color: var(--ink);
+  text-decoration: none;
+  font-size: 13px;
+}
+.twig:hover { color: var(--accent); }
+.twig .dot { width: 7px; height: 7px; border-radius: 4px; background: var(--ok); }
+.twig.strained .dot { background: var(--warn); }
+.twig.tripped .dot { background: var(--bad); }
+
+.entries { list-style: none; margin: 8px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.entry {
+  display: flex;
+  gap: 10px;
+  align-items: baseline;
+  padding: 8px 10px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  font-size: 13px;
+}
+.entry .tag {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  background: rgba(255, 107, 107, 0.16);
+  color: var(--bad);
+}
+.entry.closed .tag { background: rgba(139, 147, 167, 0.16); color: var(--muted); }
+.entry.quiet, .note.quiet, .quiet { color: var(--muted); }
+
+/* -- the public wall ------------------------------------------------- */
+
+.report { display: flex; gap: 10px; margin: 12px 0 16px; flex-wrap: wrap; }
+.field {
+  padding: 9px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--ink);
+  font: inherit;
+  outline: none;
+}
+.field:focus { border-color: var(--accent); }
+.grow { flex: 1; min-width: 12rem; }
+.pick { max-width: 12rem; }
+
+.primary {
+  padding: 9px 16px;
+  background: var(--accent);
+  color: var(--accent-ink);
+  border: none;
+  border-radius: 10px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.primary:hover { filter: brightness(1.08); }
+
+.notes { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.note { display: flex; gap: 10px; font-size: 13px; padding: 7px 10px; background: var(--panel-2); border-radius: 10px; }
+.note .on { color: var(--accent); min-width: 7rem; }
+.note .said { color: var(--ink); }
+
+/* -- the ticker ------------------------------------------------------ */
+
+.ticker {
+  margin-top: 20px;
+  padding: 14px 18px;
+  background: var(--panel-2);
+  border: 1px dashed var(--line);
+  border-radius: 14px;
+}
+.tickerhead { margin: 0 0 6px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted); }
+.heard { list-style: none; margin: 0; padding: 0; font-size: 13px; display: flex; flex-direction: column; gap: 4px; }
+
+/* -- one line -------------------------------------------------------- */
+
+.back { font-size: 12px; color: var(--muted); text-decoration: none; }
+.back:hover { color: var(--accent); }
+.detail .level { margin: 4px 0 14px; font-size: 13px; color: var(--muted); }
+.detail .level.strained { color: var(--warn); }
+.detail .level.tripped { color: var(--bad); }
+.detail .spark { height: 60px; }
+
+@media (max-width: 60rem) {
+  .cols { grid-template-columns: 1fr; }
+  .figures { margin-left: 0; flex-wrap: wrap; gap: 16px; }
+  .desk { align-items: flex-start; }
+}

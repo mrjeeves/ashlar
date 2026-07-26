@@ -1,7 +1,7 @@
 # Showcase
 
 Launchers. They start every example at once, each on its own port, with
-`examples/gallery` on **8080** — an Ashlar program that frames the other fifteen.
+`examples/gallery` on **8080** — an Ashlar program that frames the other sixteen.
 
 The gallery used to live here as a hand-written `index.html` opened over a local
 file URL, because a page of links needs addresses and B5 forbade a location in
@@ -18,7 +18,7 @@ directory is now just the two launchers.
 
 One command, no arguments. Needs Rust 1.65+; `ledger` additionally needs
 SQLite's development package (`libsqlite3-dev` / `sqlite-devel`) because it links
-the real library. Everything else needs only Rust. It starts all sixteen — each
+the real library. Everything else needs only Rust. It starts all seventeen — each
 on its own port — then tells you to open <http://127.0.0.1:8080>. Ctrl-C stops
 every example at once.
 
@@ -28,7 +28,7 @@ other and with `examples/gallery/settings.json` — so the three copies cannot
 drift, a new example cannot stay out of the gallery, and the gallery cannot
 frame an address nothing is serving.
 
-On Windows, fifteen of the sixteen work unchanged. `ledger` reaches SQLite over
+On Windows, sixteen of the seventeen work unchanged. `ledger` reaches SQLite over
 the `native` transport, which needs a POSIX dynamic loader, so its page serves
 but its store faults with that correction; `abacus` is the cross-platform
 foreign example, a Python worker co-process.
@@ -36,7 +36,7 @@ foreign example, a Python worker co-process.
 `ledger` is the one example with a build step: it reaches a real SQLite database
 over the `native` transport, so its shim must compile first. If that fails the
 launcher prints **rustc's actual error** and, when the error names libsqlite3,
-the package to install — then says plainly that the other fifteen are
+the package to install — then says plainly that the other sixteen are
 unaffected. When it succeeds, the launcher runs `ashlar foreign check` to prove
 the capability is reachable rather than assuming the build implies it.
 

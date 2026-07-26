@@ -41,6 +41,7 @@ $examples = @(
   @{ name = 'abacus';     port = 8095 }
   @{ name = 'commons';    port = 8093 }
   @{ name = 'hello';      port = 8094 }
+  @{ name = 'quarry';     port = 8096 }
 )
 
 # `ledger` reaches SQLite over the `native` transport, which needs a POSIX
@@ -72,7 +73,7 @@ if ($onWindows) {
       Write-Host '    macOS           ships with the Xcode command line tools'
     }
     Write-Host ''
-    Write-Host '  The other fourteen examples are unaffected. ledger''s page will serve'
+    Write-Host '  The other sixteen examples are unaffected. ledger''s page will serve'
     Write-Host '  but its store will fault at the boundary, with that same correction.'
   } else {
     # Prove reachability rather than assuming the build implies it.
@@ -96,7 +97,7 @@ try {
   }
 
   Write-Host ''
-  Write-Host 'All sixteen are up. Open the gallery:'
+  Write-Host 'All seventeen are up. Open the gallery:'
   Write-Host ''
   Write-Host '  http://127.0.0.1:8080'
   Write-Host ''
