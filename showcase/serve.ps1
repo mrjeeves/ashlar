@@ -15,10 +15,18 @@ Set-Location (Join-Path $PSScriptRoot '..')
 $onWindows = $env:OS -eq 'Windows_NT'
 $bin = if ($onWindows) { 'target\release\ashlar.exe' } else { 'target/release/ashlar' }
 
-if (-not (Test-Path $bin)) {
-  Write-Host 'building the release binary first...'
+# Build, rather than build-only-if-missing: `cargo build` is the incremental
+# build system and a no-op when nothing changed, while the old check served
+# whatever binary was lying around — so a `git pull` left you running the
+# code from before it.
+if (Get-Command cargo -ErrorAction SilentlyContinue) {
+  Write-Host 'building (a no-op if nothing changed)...'
   cargo build --release
   if ($LASTEXITCODE -ne 0) { throw 'build failed' }
+} elseif (-not (Test-Path $bin)) {
+  throw "no cargo, and no $bin to fall back on. Install Rust 1.65 or newer and run this again."
+} else {
+  Write-Host "note: cargo is not on PATH, so $bin is used as-is - it may predate this checkout."
 }
 
 # name:port — the map serve.sh and examples/gallery/settings.json mirror. Keep
@@ -88,18 +96,57 @@ if ($onWindows) {
 $procs = @()
 try {
   Write-Host ''
+  # Each example keeps its own log. This used to be discarded, which threw
+  # away the only evidence of a program that refused to start — a port
+  # already taken, a missing setting, a stored value that no longer fits
+  # its shape — while the line below claimed it was up.
+  $logs = '.showcase-logs'
+  New-Item -ItemType Directory -Force -Path $logs | Out-Null
   foreach ($ex in $examples) {
     $p = Start-Process -FilePath $bin `
       -ArgumentList @('run', "examples/$($ex.name)", '--port', "$($ex.port)") `
-      -PassThru -WindowStyle Hidden
+      -PassThru -WindowStyle Hidden `
+      -RedirectStandardOutput (Join-Path $logs "$($ex.name).log") `
+      -RedirectStandardError (Join-Path $logs "$($ex.name).err")
     $procs += $p
     Write-Host ("  {0,-12} http://127.0.0.1:{1}" -f $ex.name, $ex.port)
   }
 
+  # Starting a process says nothing about whether it stayed started, so ask
+  # before claiming.
+  Start-Sleep -Seconds 1
+  $dead = @()
+  for ($i = 0; $i -lt $procs.Count; $i++) {
+    if ($procs[$i].HasExited) { $dead += $examples[$i].name }
+  }
+
   Write-Host ''
-  Write-Host 'All seventeen are up. Open the gallery:'
-  Write-Host ''
-  Write-Host '  http://127.0.0.1:8080'
+  if ($dead.Count -eq 0) {
+    Write-Host ("All {0} are up. Open the gallery:" -f $procs.Count)
+    Write-Host ''
+    Write-Host '  http://127.0.0.1:8080'
+  } else {
+    Write-Host ("{0} of {1} did not start: {2}" -f $dead.Count, $procs.Count, ($dead -join ', '))
+    foreach ($name in $dead) {
+      Write-Host ''
+      Write-Host "  $name said:"
+      foreach ($f in @((Join-Path $logs "$name.err"), (Join-Path $logs "$name.log"))) {
+        if (Test-Path $f) {
+          Get-Content $f -Tail 6 | ForEach-Object { Write-Host "    $_" }
+        }
+      }
+    }
+    Write-Host ''
+    Write-Host "  Full output for every example is in $logs\."
+    if ($dead -contains 'gallery') {
+      Write-Host '  The gallery is the page on 8080, so that address will refuse to connect.'
+    } else {
+      Write-Host ''
+      Write-Host '  The rest are up. Open the gallery:'
+      Write-Host ''
+      Write-Host '    http://127.0.0.1:8080'
+    }
+  }
   Write-Host ''
   Write-Host 'Press Ctrl-C to stop them all.'
 
