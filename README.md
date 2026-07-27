@@ -150,14 +150,15 @@ reordering was a real defect here, not a hypothetical
 
 Ashlar treats intelligibility as a design constraint.
 
-A fixed corpus shows fresh readers valid Ashlar without its reference and asks
-what the code means. A misread is evidence against the surface, not a failure
-of the reader. Candidate syntax is read in place, with its neighboring tokens,
-because words do not carry meaning alone. The project has changed language
-words when the naive reading pointed toward a security error, and it has
-refused to change them when the evidence did not justify the disruption.
+A fixed corpus shows fresh agents valid Ashlar under the same `AGENTS.md`
+baseline every author receives and asks what the code means. A misread is
+evidence against the whole authoring surface, not a failure of the reader.
+Candidate syntax is read in place, with its neighboring tokens, because words
+do not carry meaning alone. The project has changed language words when the
+reading pointed toward a security error, and refused when the evidence did not
+justify disruption.
 
-Where correct cold reading is impossible, the wrong reading must fail loudly.
+Where correct reading is impossible, the wrong reading must fail loudly.
 Plausible constructs imported from neighboring languages are kept as an
 adversarial corpus. Semicolons, hash comments, imports, classes, truthiness,
 shadowing, interpolation, and illegal overrides do not run with surprising
@@ -392,7 +393,7 @@ The repository does not keep one test suite and call the matter settled. Its
 proof surface includes:
 
 - the bounded and executable language reference;
-- cold-read comprehension and plausible-wrong-syntax corpora;
+- agent-read comprehension and plausible-wrong-syntax corpora;
 - exhaustive resolution and composition checks;
 - machine-applied diagnostic corrections;
 - blast-radius, atomicity, migration, and reversal checks;

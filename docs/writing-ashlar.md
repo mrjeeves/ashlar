@@ -5,16 +5,11 @@ in `AGENTS.md` first; it is short on purpose. This page is the
 supplement: the mistakes agents actually make when they guess instead of
 reading, collected as they happened.
 
-**This file is deliberately not part of `AGENTS.md`.** Anything in
-`AGENTS.md` is injected into every in-repo agent's context automatically,
-including the readers of the A3 cold-read gate — and a gate that measures
-whether Ashlar reads correctly to someone who has never seen it cannot
-have the answers sitting in the reader's system prompt. That is not a
-hypothetical: it invalidated gate runs 3 and 4
-([ADR-0021](decisions/0021-the-a3-readers-were-not-cold.md)). So the
-language lives here, behind a path, and `AGENTS.md` links it without an
-`@`-import. `t_meta_agents_md_does_not_teach_the_language` keeps it that
-way.
+The complete language reference lives in `AGENTS.md`; this page only records
+recurring authoring mistakes. That file is injected into every in-repo agent's
+context, which is the authoring baseline A3 measures. The rubric and previous
+answers stay out of the reader's context; the contract and reference do not
+([ADR-0021](decisions/0021-the-a3-readers-were-not-cold.md)).
 
 ## Declarations and locals
 
