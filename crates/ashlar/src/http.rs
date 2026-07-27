@@ -194,6 +194,10 @@ pub enum Parse {
     Incomplete,
     Bad,
     TooLarge,
+    /// Framed in a way the server will not guess at. Answered with a 400
+    /// naming the conflict, on the same principle as `TooLarge`: a refusal
+    /// is still a correction, and a reset tells the caller nothing.
+    Refused(&'static str),
     Ready(HttpRequest),
 }
 
@@ -222,25 +226,106 @@ pub fn parse_request(buf: &[u8]) -> Parse {
             headers.insert(k.trim().to_lowercase(), v.trim().to_string());
         }
     }
-    let content_length: usize = headers
-        .get("content-length")
-        .and_then(|v| v.parse().ok())
-        .unwrap_or(0);
-    if content_length > BODY_CAP {
-        return Parse::TooLarge;
-    }
     let avail = &buf[header_end + 4..];
-    if avail.len() < content_length {
-        return Parse::Incomplete;
-    }
-    let mut body = avail.to_vec();
-    body.truncate(content_length);
+    let chunked = headers
+        .get("transfer-encoding")
+        .map(|v| v.to_lowercase().split(',').any(|t| t.trim() == "chunked"))
+        .unwrap_or(false);
+
+    let body = if chunked {
+        // A client may frame a body it cannot measure in advance, and every
+        // HTTP/1.1 client is allowed to: a streamed `fetch` body, a proxy
+        // that re-framed, `curl -T -`. Reading only `content-length` meant
+        // that body was silently dropped and the handler was handed nothing,
+        // so a program refused a request whose body was exactly right — the
+        // caller blamed for the runtime's gap. Transport is not supposed to
+        // be visible in handler code (G2).
+        if headers.contains_key("content-length") {
+            // Two framings at once is ambiguous, and the ambiguity is the
+            // one request smuggling is built from. Refuse rather than pick.
+            return Parse::Refused(
+                "both `transfer-encoding: chunked` and `content-length` were sent; \
+                 send one framing, not both",
+            );
+        }
+        match decode_chunked(avail) {
+            Chunked::Incomplete => return Parse::Incomplete,
+            Chunked::Bad => return Parse::Bad,
+            Chunked::TooLarge => return Parse::TooLarge,
+            Chunked::Done(body) => body,
+        }
+    } else {
+        let content_length: usize = headers
+            .get("content-length")
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(0);
+        if content_length > BODY_CAP {
+            return Parse::TooLarge;
+        }
+        if avail.len() < content_length {
+            return Parse::Incomplete;
+        }
+        let mut body = avail.to_vec();
+        body.truncate(content_length);
+        body
+    };
+
     Parse::Ready(HttpRequest {
         method,
         path,
         headers,
         body,
     })
+}
+
+enum Chunked {
+    Done(Vec<u8>),
+    Incomplete,
+    Bad,
+    TooLarge,
+}
+
+/// Decode a chunked body (RFC 7230 §4.1): each chunk is a hex size, optional
+/// `;extensions`, CRLF, that many bytes, CRLF; a zero-size chunk ends the
+/// body, followed by optional trailers and a final CRLF.
+fn decode_chunked(mut rest: &[u8]) -> Chunked {
+    let mut body = Vec::new();
+    loop {
+        let Some(eol) = find_subslice(rest, b"\r\n") else {
+            return Chunked::Incomplete;
+        };
+        let line = &rest[..eol];
+        // Chunk extensions are legal and carry no meaning here.
+        let size_text = match line.iter().position(|&b| b == b';') {
+            Some(i) => &line[..i],
+            None => line,
+        };
+        let Ok(size_text) = std::str::from_utf8(size_text) else {
+            return Chunked::Bad;
+        };
+        let Ok(size) = usize::from_str_radix(size_text.trim(), 16) else {
+            return Chunked::Bad;
+        };
+        rest = &rest[eol + 2..];
+        if size == 0 {
+            // Trailers, then the blank line that ends the message.
+            return match find_subslice(rest, b"\r\n") {
+                Some(_) => Chunked::Done(body),
+                None => Chunked::Incomplete,
+            };
+        }
+        if body.len() + size > BODY_CAP {
+            return Chunked::TooLarge;
+        }
+        if rest.len() < size + 2 {
+            return Chunked::Incomplete;
+        }
+        body.extend_from_slice(&rest[..size]);
+        if &rest[size..size + 2] != b"\r\n" {
+            return Chunked::Bad;
+        }
+        rest = &rest[size + 2..];
+    }
 }
 
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
@@ -1129,6 +1214,14 @@ pub fn serve(
                             );
                             let resp =
                                 response_bytes(413, "text/plain", &[], msg.as_bytes());
+                            if let Handled::Close(c) = finish(conn, resp) {
+                                closing.push(c);
+                            }
+                            continue;
+                        }
+                        Parse::Refused(why) => {
+                            let conn = pending.remove(p).stream;
+                            let resp = response_bytes(400, "text/plain", &[], why.as_bytes());
                             if let Handled::Close(c) = finish(conn, resp) {
                                 closing.push(c);
                             }

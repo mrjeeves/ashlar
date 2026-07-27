@@ -478,6 +478,109 @@ part pub {
 }
 
 #[test]
+fn t_g_a_chunked_request_body_reaches_the_handler() {
+    // covers: G2 (transport is not visible in handler code), G4.
+    //
+    // Found by driving `examples/slate` with raw sockets rather than the
+    // client this repo wrote. Every HTTP/1.1 client may frame a body it
+    // cannot measure in advance — a streamed `fetch`, a proxy that
+    // re-framed, `curl -T -` — and the runtime read only `content-length`,
+    // so that body silently became empty. The program then refused a
+    // request whose body was exactly right, and the message blamed the
+    // caller for the runtime's gap.
+    let app = r#"space demo
+
+part Server {
+  port = 0
+}
+
+part echo {
+  route = "/echo"
+  handle pipe = (req: std.Request) => {
+    let m = fields(req.data) ?? fail(400, "want an object")
+    return "got:" + text(m["v"] ?? "nothing")
+  }
+}
+"#;
+    let root = fixture("chunked", &[("app.ash", app)]);
+    let (port, stop, join) = start(root);
+
+    let json = br#"{"v":"streamed"}"#;
+    let head = "POST /echo HTTP/1.1\r\nhost: t\r\ncontent-type: application/json\r\n\
+                transfer-encoding: chunked\r\n\r\n";
+
+    // One chunk.
+    let one = format!("{}{:X}\r\n{}\r\n0\r\n\r\n", head, json.len(), String::from_utf8_lossy(json));
+    let (status, body) = raw_exchange(port, one.as_bytes());
+    assert_eq!(status, 200, "{}", body);
+    assert!(body.contains("got:streamed"), "the whole body must arrive: {}", body);
+
+    // Split across chunks, one of them carrying a chunk extension — both
+    // legal, and both things a real client emits without asking.
+    let (a, b) = json.split_at(7);
+    let split = format!(
+        "{}{:X};meta=1\r\n{}\r\n{:X}\r\n{}\r\n0\r\n\r\n",
+        head,
+        a.len(),
+        String::from_utf8_lossy(a),
+        b.len(),
+        String::from_utf8_lossy(b)
+    );
+    let (status, body) = raw_exchange(port, split.as_bytes());
+    assert_eq!(status, 200, "{}", body);
+    assert!(body.contains("got:streamed"), "chunks must reassemble in order: {}", body);
+
+    // Both framings at once is the ambiguity request smuggling is built
+    // from. Refuse, and say why — a reset would teach the caller nothing.
+    let ambiguous = format!(
+        "POST /echo HTTP/1.1\r\nhost: t\r\ncontent-type: application/json\r\n\
+         transfer-encoding: chunked\r\ncontent-length: 5\r\n\r\n{:X}\r\n{}\r\n0\r\n\r\n",
+        json.len(),
+        String::from_utf8_lossy(json)
+    );
+    let (status, body) = raw_exchange(port, ambiguous.as_bytes());
+    assert_eq!(status, 400, "{}", body);
+    assert!(body.contains("not both"), "the refusal must name the conflict: {}", body);
+
+    // A chunked body must not arrive empty, which is what reading only
+    // `content-length` produced: the handler saw nothing and refused a
+    // request that was correct.
+    let empty_shaped = format!("{}0\r\n\r\n", head);
+    let (status, body) = raw_exchange(port, empty_shaped.as_bytes());
+    assert_eq!(status, 400, "an actually-empty chunked body is still empty: {}", body);
+
+    // The measured framing is untouched.
+    let plain = format!(
+        "POST /echo HTTP/1.1\r\nhost: t\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{}",
+        json.len(),
+        String::from_utf8_lossy(json)
+    );
+    let (status, body) = raw_exchange(port, plain.as_bytes());
+    assert_eq!(status, 200, "{}", body);
+    assert!(body.contains("got:streamed"), "{}", body);
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}
+
+/// Send exact bytes on a fresh connection and read the whole reply.
+/// The point is control over framing, which a helper that builds the
+/// request for you cannot give.
+fn raw_exchange(port: u16, request: &[u8]) -> (u16, String) {
+    let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    s.set_read_timeout(Some(std::time::Duration::from_secs(5))).unwrap();
+    s.write_all(request).unwrap();
+    let mut buf = String::new();
+    let _ = s.read_to_string(&mut buf);
+    let status: u16 = buf
+        .split_whitespace()
+        .nth(1)
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    (status, buf)
+}
+
+#[test]
 fn t_g_scheduled_task_runs() {
     // covers: G4 (scheduled tasks), reference 9.7
     let app = r#"space demo
