@@ -54,5 +54,8 @@ part config {
 
 part render {
   route = "/api/render"
-  handle pipe = (req: std.Request) => Pipeline.render(text(req.data.body))
+  handle pipe = (req: std.Request) => {
+    let d = fields(req.data) ?? fail(400, "send a JSON object: { body }")
+    return Pipeline.render(text(d["body"] ?? ""))
+  }
 }

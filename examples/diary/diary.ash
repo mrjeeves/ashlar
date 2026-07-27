@@ -58,7 +58,8 @@ part gate {
 part join {
   route = "/join"
   handle pipe = (req: std.Request) => {
-    signup(text(req.data.email), text(req.data.password))
+    let d = fields(req.data) ?? fail(400, "send a JSON object: { email, password }}")
+    signup(text(d["email"] ?? ""), text(d["password"] ?? ""))
     return redirect("/")
   }
 }
@@ -66,7 +67,8 @@ part join {
 part enter {
   route = "/enter"
   handle pipe = (req: std.Request) => {
-    login(text(req.data.email), text(req.data.password))
+    let d = fields(req.data) ?? fail(400, "send a JSON object: { email, password }}")
+    login(text(d["email"] ?? ""), text(d["password"] ?? ""))
     return redirect("/")
   }
 }
@@ -83,12 +85,18 @@ part leave {
 // primitives a programmatic client wants.
 part register {
   route = "/api/signup"
-  handle pipe = (req: std.Request) => signup(text(req.data.email), text(req.data.password))
+  handle pipe = (req: std.Request) => {
+    let d = fields(req.data) ?? fail(400, "send a JSON object: { email, password }")
+    return signup(text(d["email"] ?? ""), text(d["password"] ?? ""))
+  }
 }
 
 part session {
   route = "/api/login"
-  handle pipe = (req: std.Request) => login(text(req.data.email), text(req.data.password))
+  handle pipe = (req: std.Request) => {
+    let d = fields(req.data) ?? fail(400, "send a JSON object: { email, password }")
+    return login(text(d["email"] ?? ""), text(d["password"] ?? ""))
+  }
 }
 
 part quit {

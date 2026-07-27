@@ -103,6 +103,13 @@ and superseding one is ordinary work.
    real one, and a finding is not closed until it is closed THERE. Its
    first run proved the point: the favicon capability had landed and no
    example served one.
+   **A capability is not delivered until the corpus uses it.** Twice now a
+   fix landed in the language and stayed missing from the examples — the
+   favicon, and `fields` guarding a hostile body, which slate had and eleven
+   others did not, four of them handling passwords. So sweeps beat instances:
+   `t_examples_no_route_blames_the_runtime_for_the_callers_body` posts
+   hostile bodies at every route in every example, enumerated from source so
+   a new example is covered the day it is written.
 9. **Refactors never partially apply** (E-series): blast radius first,
    atomic apply, post-verify rollback, and reversal to the same PROGRAM
    — same parts and homes, same composition order, and a visibility

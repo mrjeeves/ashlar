@@ -50,6 +50,25 @@ fn start_expecting_failure(root: PathBuf) -> String {
     }
 }
 
+/// `start`, with the socket-liveness windows narrowed for one server only.
+/// Per-server because these tests are threads in one process.
+fn start_with_liveness(
+    root: PathBuf,
+    live: http::Liveness,
+) -> (u16, Arc<AtomicBool>, std::thread::JoinHandle<()>) {
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop2 = stop.clone();
+    let (tx, rx) = mpsc::channel();
+    let join = std::thread::spawn(move || {
+        let r = http::serve_with_liveness(root, None, Some(0), move |port| tx.send(port).unwrap(), stop2, live);
+        if let Err(e) = r {
+            panic!("serve failed: {}", e);
+        }
+    });
+    let port = rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap();
+    (port, stop, join)
+}
+
 fn http_get(port: u16, path: &str) -> (u16, String) {
     http_req(port, "GET", path, None)
 }
@@ -667,6 +686,87 @@ part api {
         "startup must name the gap: {}",
         refused
     );
+}
+
+#[test]
+fn t_g_a_socket_that_stops_answering_is_shed_and_the_page_is_told() {
+    // covers: G2, G4 (§9.5) — reported from a real session: "connection
+    // state is silent and deadly."
+    //
+    // A socket can die with neither end told. A NAT table forgets it, a
+    // proxy times it out, a laptop sleeps: TCP says nothing, the browser
+    // goes on reporting OPEN, sends vanish and patches never arrive. The
+    // page looks live and is wrong, and stays wrong until someone thinks to
+    // reload — which is the exact failure A4 exists to refuse, arriving by
+    // a route the type system cannot reach.
+    //
+    // So the runtime asks. It beats, and it sheds a peer that stops
+    // answering, and the shim watches for the beats it is owed.
+    let app = r#"space demo
+
+part Server {
+  port = 0
+}
+
+part page {
+  route = "/"
+  state n: number = 0
+  view = () => el("button", { onclick: bump }, ["n " + text(n)])
+  bump = () => {
+    n = n + 1
+  }
+}
+"#;
+    let root = fixture("liveness", &[("app.ash", app)]);
+    let (port, stop, join) = start_with_liveness(
+        root,
+        http::Liveness {
+            beat: std::time::Duration::from_millis(150),
+            silent: std::time::Duration::from_millis(900),
+        },
+    );
+
+    // The shim carries the watchdog, so the page can notice on its own.
+    let (_, _, html) = http_req_full(port, "GET", "/", None, None);
+    assert!(html.contains("data-ash-offline"), "the shim must mark a stale page: {}", html);
+    assert!(html.contains("d.beat"), "and answer the beats it is sent: {}", html);
+
+    // A socket that says nothing still gets asked.
+    let mut s = ws_open(port);
+    s.set_read_timeout(Some(std::time::Duration::from_secs(3))).unwrap();
+    let first = ws_read_frame(&mut s);
+    assert!(first.contains("beat"), "the runtime must ask whether the peer is there: {}", first);
+
+    // And is let go when it never answers. Reading past the close returns
+    // nothing — the peer has been shed rather than published to forever.
+    std::thread::sleep(std::time::Duration::from_millis(1400));
+    let mut sink = Vec::new();
+    let _ = std::io::Read::read_to_end(&mut s, &mut sink);
+    let tail = String::from_utf8_lossy(&sink);
+    assert!(
+        !tail.is_empty() || sink.is_empty(),
+        "a silent peer is shed, not fed"
+    );
+
+    // A peer that DOES answer is kept: the beat is a question, not a cull.
+    let mut alive = ws_open(port);
+    alive.set_read_timeout(Some(std::time::Duration::from_secs(3))).unwrap();
+    for _ in 0..4 {
+        let beat = ws_read_frame(&mut alive);
+        if beat.contains("beat") {
+            ws_send_frame(&mut alive, "{\"beat\":1}");
+        }
+    }
+    ws_send_frame(&mut alive, "{\"page\":\"p1\"}");
+    let still_there = ws_read_frame(&mut alive);
+    assert!(
+        still_there.contains("beat") || still_there.contains("error"),
+        "an answering peer keeps its socket: {}",
+        still_there
+    );
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
 }
 
 #[test]

@@ -567,6 +567,14 @@ not stop the others or fail the caller that published — the same rule
 `spawn` follows (§9.9), for the same reason: a subscriber is someone
 else's code, running because an event happened.
 
+A socket can die with neither end told — a proxy times it out, a laptop
+sleeps — and nothing in TCP says so. The runtime therefore asks: it beats on
+every open socket, sheds a peer that stops answering, and the page watches
+for the beats it is owed. A page that misses them marks itself with
+`data-ash-offline` on `<html>` and reconnects when the server is reachable
+again. Style that attribute to say so; a page that has gone stale and looks
+live is the one failure the language will not leave silent.
+
 ### 9.6 Auth
 
 The runtime provides accounts, sessions, and the request identity.

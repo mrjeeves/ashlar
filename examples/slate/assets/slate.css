@@ -188,3 +188,20 @@ body {
 @media (max-width: 56rem) {
   .columns { grid-template-columns: 1fr; }
 }
+
+/* A page whose socket has gone quiet says so. The runtime sets
+   data-ash-offline on <html> when the beats it is owed stop arriving
+   (§9.5); without something like this the page just looks live and is
+   wrong, which is the failure that made the rule. */
+html[data-ash-offline] .app::before {
+  content: "reconnecting — what you type now may not reach the pad";
+  display: block;
+  background: #7a2b2b;
+  color: #fff;
+  padding: 0.5rem 0.9rem;
+  font-size: 0.85rem;
+  letter-spacing: 0.01em;
+}
+html[data-ash-offline] .editor textarea {
+  opacity: 0.55;
+}

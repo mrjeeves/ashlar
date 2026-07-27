@@ -61,7 +61,8 @@ part results {
 part ballot {
   route = "/api/vote"
   handle pipe = (req: std.Request) => {
-    Store.cast(text(req.data.option))
+    let d = fields(req.data) ?? fail(400, "send a JSON object: { option }")
+    Store.cast(text(d["option"] ?? ""))
     return "ok"
   }
 }

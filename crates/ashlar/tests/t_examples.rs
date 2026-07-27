@@ -299,6 +299,124 @@ fn t_examples_hello_serves() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Every POST route in the whole corpus, fed a body the caller chose and the
+/// program did not expect. None of them may answer with the runtime taking
+/// the blame.
+///
+/// This is a CLASS test, and it exists because fixing one instance was not
+/// enough twice running. `fields` (ADR-0026) landed with slate guarded and
+/// left eleven other examples indexing `req.data` straight — including four
+/// handling passwords — so a JSON array posted at them came back as
+/// `500 internal: `.password` on a list`. The same shape as the favicon: the
+/// capability closed in the language, still open in the corpus.
+///
+/// Enumerated from source rather than listed here, so a new example is
+/// covered the day it is written and no list can go stale.
+#[test]
+fn t_examples_no_route_blames_the_runtime_for_the_callers_body() {
+    // covers: A4, D3, G4
+    let mut checked = 0;
+    let mut failures: Vec<String> = Vec::new();
+
+    for example in example_names() {
+        let routes = routes_of(&example);
+        if routes.is_empty() {
+            continue;
+        }
+        let dir = staged(&example);
+        let (port, stop, join) = start(dir.clone());
+
+        for route in &routes {
+            // A captured segment takes any literal; give it one.
+            let path = route
+                .split('/')
+                .map(|seg| {
+                    if seg.starts_with('{') && seg.ends_with('}') { "probe" } else { seg }
+                })
+                .collect::<Vec<_>>()
+                .join("/");
+
+            // A well-formed object is the control. A route that fails the
+            // same way for every body is broken for a reason that is not the
+            // body — an unbuilt foreign shim, say — and that 500 belongs to
+            // the deployment, not the caller. What this test forbids is a
+            // route answering WORSE because of the body's shape.
+            let (control_status, _, _) = req(port, "POST", &path, Some("{}"), None);
+            let control_blames = control_status >= 500;
+
+            for body in ["[1,2,3]", "42", "\"hello\"", "not json at all", "null"] {
+                let (status, _, text) = req(port, "POST", &path, Some(body), None);
+                checked += 1;
+                if control_blames {
+                    continue;
+                }
+                if status >= 500 || text.contains("internal:") {
+                    failures.push(format!(
+                        "{} POST {} with `{}` -> {} {}\n    (a well-formed `{{}}` body gets {})",
+                        example, path, body, status, text.trim(), control_status
+                    ));
+                }
+            }
+        }
+
+        stop.store(true, Ordering::Relaxed);
+        join.join().unwrap();
+    }
+
+    assert!(checked > 50, "the sweep found almost nothing to check ({})", checked);
+    assert!(
+        failures.is_empty(),
+        "{} of {} hostile bodies were answered by blaming the runtime.\n\
+         A body the caller chose is the caller's fault: guard with \
+         `fields(req.data) ?? fail(400, ...)`.\n\n{}",
+        failures.len(),
+        checked,
+        failures.join("\n")
+    );
+}
+
+/// Every directory under `examples/` that holds a project.
+fn example_names() -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(examples_root())
+        .unwrap()
+        .flatten()
+        .filter(|e| e.path().is_dir())
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| !n.starts_with('.'))
+        .collect();
+    names.sort();
+    names
+}
+
+/// The `route = "..."` literals an example declares. Parsed from source
+/// because a hand-kept list is a list that goes stale.
+fn routes_of(example: &str) -> Vec<String> {
+    let mut out = Vec::new();
+    let mut stack = vec![examples_root().join(example)];
+    while let Some(dir) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&dir) else { continue };
+        for e in entries.flatten() {
+            let p = e.path();
+            if p.is_dir() {
+                stack.push(p);
+            } else if p.extension().and_then(|x| x.to_str()) == Some("ash") {
+                let src = std::fs::read_to_string(&p).unwrap_or_default();
+                for line in src.lines() {
+                    let t = line.trim();
+                    if let Some(rest) = t.strip_prefix("route = \"") {
+                        if let Some(end) = rest.find('"') {
+                            out.push(rest[..end].to_string());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
 #[test]
 fn t_examples_counter_clicks() {
     let dir = staged("counter");

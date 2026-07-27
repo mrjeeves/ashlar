@@ -153,6 +153,21 @@ const browser = await chromium.launch({
     alone.here.length === 1, JSON.stringify(alone.here));
 
   check('slate: the browser console is clean', errors.length === 0, errors.join(' | '));
+
+  // A socket can die with neither end told. The page must notice on its own,
+  // because a stale page that looks live is the failure this refuses.
+  const liveAtRest = await a.evaluate(() => document.documentElement.hasAttribute('data-ash-offline'));
+  check('slate: a live page is not marked offline', liveAtRest === false, String(liveAtRest));
+  await ctx.setOffline(true);
+  await sleep(55000);
+  const noticed = await a.evaluate(() => document.documentElement.hasAttribute('data-ash-offline'));
+  check('slate: a page cut off notices and says so (§9.5)', noticed === true,
+    noticed ? 'watchdog fired' : 'still looks live');
+  await ctx.setOffline(false);
+  await sleep(4000);
+  const recovered = await a.evaluate(() => document.documentElement.hasAttribute('data-ash-offline'));
+  check('slate: it reconnects when the network returns', recovered === false, String(recovered));
+
   await ctx.close(); srv.kill();
 }
 
