@@ -254,6 +254,40 @@ fn check_routes(
     let mut routes: Vec<(String, String, String, Span)> = Vec::new();
     for (full, cp) in composed {
         let Some(prop) = cp.props.get("route") else { continue };
+
+        // A route has to answer with something. A part carrying only a
+        // `route` used to compile clean and serve a JSON dump of
+        // `std.Request` — headers included — a response form §9.2 does not
+        // define, reached by falling through every branch that does. Rule 4:
+        // a construct that does not fully work does not exist.
+        let answers = ["handle", "view", "files", "redirect"]
+            .iter()
+            .any(|k| cp.props.contains_key(*k));
+        if !answers {
+            let (file, span) = match &prop.value {
+                MergedValue::Single(pr) => (
+                    program.files[pr.file_idx].path.clone(),
+                    program.files[pr.file_idx].ast.parts[pr.part_idx].props[pr.prop_idx]
+                        .name_span,
+                ),
+                _ => (String::new(), Span::point(0, 0)),
+            };
+            if !file.is_empty() {
+                diags.push(
+                    Diag::new(
+                        E006_SHAPE,
+                        Level::Error,
+                        &file,
+                        span,
+                        format!("`{}` has a `route` but nothing to answer with.", full),
+                        )
+                    .with_fix(
+                        "Give it a `handle` pipe, a `view`, or `files`.".to_string(),
+                        vec![],
+                    ),
+                );
+            }
+        }
         let source = match &prop.value {
             MergedValue::Single(pr) => program.files[pr.file_idx].ast.parts[pr.part_idx].props
                 [pr.prop_idx]
@@ -1017,14 +1051,46 @@ impl<'a> Cx<'a> {
                 }
                 // `every` durations are validated at build time (§9.7).
                 if prop.name == "every" {
-                    if let Expr::Text(t) = &value.expr {
-                        if !valid_duration(t) {
+                    // The unit is the whole point: `every = 10` names no
+                    // scale. It used to pass unremarked because the check
+                    // only fired on text, and the task then never ran —
+                    // statically decidable, undetected, and not in the
+                    // reference's documented pair of undetectable faults,
+                    // which is the third category D3 forbids.
+                    match &value.expr {
+                        Expr::Text(t) if valid_duration(t) => {}
+                        Expr::Text(t) => self.err(
+                            value.span,
+                            format!("`\"{}\"` is not a duration.", t),
+                            "Write digits then a unit: `ms`, `s`, `m`, `h`, or `d` — e.g. `\"10m\"`.".to_string(),
+                            vec![],
+                        ),
+                        Expr::Number(n) => {
+                            let whole = if n.fract() == 0.0 {
+                                format!("{}", *n as i64)
+                            } else {
+                                format!("{}", n)
+                            };
                             self.err(
                                 value.span,
-                                format!("`\"{}\"` is not a duration.", t),
-                                "Write digits then a unit: `ms`, `s`, `m`, `h`, or `d` — e.g. `\"10m\"`.".to_string(),
+                                format!("`{}` is not a duration: it names no unit.", whole),
+                                format!(
+                                    "Write it as text with a unit — `\"{}s\"` for seconds, or `ms`, `m`, `h`, `d`.",
+                                    whole
+                                ),
                                 vec![],
-                            );
+                            )
+                        }
+                        _ => {
+                            let actual = self.infer(value);
+                            if !actual.is_unknown() {
+                                self.err(
+                                    value.span,
+                                    format!("`every` is a duration in text, found `{}`.", render(&actual)),
+                                    "Write digits then a unit: `ms`, `s`, `m`, `h`, or `d` — e.g. `\"10m\"`.".to_string(),
+                                    vec![],
+                                );
+                            }
                         }
                     }
                 }

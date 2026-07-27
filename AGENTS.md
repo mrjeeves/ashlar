@@ -72,13 +72,21 @@ and superseding one is ordinary work.
 2. **Zero dependencies** (G1, `t_meta_g1_zero_dependencies`): the
    workspace has no external crates. JSON, SHA-1, HTTP, WebSockets,
    PBKDF2 — all hand-rolled in-tree. Do not add a crate; write the code.
-3. **The only `unsafe`** is the `dlopen`/`dlsym` pair in `foreign.rs`,
-   confined to `open_library`/`lookup` and gated `#[cfg(unix)]` — the one
-   platform-specific thing in the workspace. Do not add more: the `worker`
-   and `http` transports beside it are plain safe Rust and run wherever
-   Rust runs, so a new capability should reach for one of those. Without a
-   POSIX loader the `native` transport refuses with that correction, which
-   is why the binary builds on Windows at all.
+3. **`unsafe` appears exactly twice**, both `#[cfg(unix)]`, both a pair of
+   extern declarations with one call site: the `dlopen`/`dlsym` pair in
+   `foreign.rs` (`open_library`/`lookup`), and `signal` in `http.rs`
+   (`listen_for_shutdown`), whose handler does nothing but set an
+   `AtomicBool` — the one action async-signal-safety allows. The second
+   is not a loosening: §9.1 promised a shutdown hook ran, nothing outside
+   the tests ever set the flag, and rule 4 says a construct that does not
+   fully work does not exist. Either the hook went or the handler came in,
+   and `examples/slate` winds its pads down in it (ADR-0029).
+   Do not add a third for a CAPABILITY: the `worker` and `http` transports
+   are plain safe Rust and run wherever Rust runs, so a new capability
+   should reach for one of those. Without a POSIX loader the `native`
+   transport refuses with that correction, and off unix a signal is not
+   caught — which is why the binary builds on Windows at all, and the
+   reference says so.
 4. **No stubs** (`t_no_stubs`): no `todo!`, `unimplemented!`, or
    commented-out "coming soon" surface. A command or construct that
    doesn't fully work does not exist.

@@ -16,6 +16,29 @@ part Clock {
   }
 }
 
+// The directory form of `files` (§9.8): the whole folder under this route,
+// as against the single-file form the root paths use. Both forms are in the
+// corpus so both are defended.
+part docs {
+  route = "/docs"
+  files = "docs"
+}
+
+// A schedule reported in the units a human writes: minutes, not 60000ms.
+// `log.warn` and `log.debug` exist alongside `log.info`; a corpus that only
+// ever calls one is a corpus that would not notice the others breaking.
+part Sweep {
+  state swept: number = 0
+  every = "5m"
+  run = () => {
+    swept = swept + 1
+    log.debug("sweep", { n: swept })
+    if swept > 100 {
+      log.warn("sweeping a great deal", { n: swept })
+    }
+  }
+}
+
 part page {
   route = "/"
   view = () => el("div", { class: "stage" }, [

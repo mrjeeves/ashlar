@@ -753,6 +753,15 @@ fn t_examples_pong_syncs_across_two_windows() {
 fn t_examples_ticker_schedule_drives_state() {
     let dir = staged("ticker");
     let (port, stop, join) = start(dir.clone());
+
+    // The DIRECTORY form of `files` (§9.8), which had no corpus site at all
+    // until an adversarial read pointed out that the reference's own first
+    // example was undefended. The single-file form is proved in slate.
+    let (dstatus, _, doc) = req(port, "GET", "/docs/notes.md", None, None);
+    assert_eq!(dstatus, 200, "a directory mounts under its route: {}", doc);
+    assert!(doc.contains("directory form"), "{}", doc);
+    let (dbare, _, _) = req(port, "GET", "/docs", None, None);
+    assert_eq!(dbare, 404, "the directory itself is not a file");
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
     let mut beats = 0.0;
     while std::time::Instant::now() < deadline {
