@@ -109,7 +109,7 @@ its source.
 
 Two of those projects are driven against a co-process rather than the system
 they name — `abacus` against Python, `enclave` against a stand-in for the mesh
-daemon — and both skip with a printed reason when the co-process's language is
+daemons — and both skip with a printed reason when the co-process's language is
 absent. `enclave` also carries the G5 half `vendor` cannot check: its
 `vendor/mesh/` is asserted byte-identical to `lib/mesh/`, because a vendored
 dependency that drifts from its source is the version skew a registry exists to

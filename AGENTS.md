@@ -452,9 +452,9 @@ Every diagnostic identifies a location, states the cause in one sentence, and
 states the correction specifically enough to apply without judgment. When a
 `fix` with `edits` is present, applying it produces source that compiles past
 that error without introducing a new one and never changes what a name resolves
-to; `ashlar fix` applies such fixes. Where no edit is derivable without a
-judgment the author has not made — an ambiguous name, above — `edits` is empty
-and the note names every candidate. `id`s are stable, `req` names the
+to; `ashlar fix` applies such fixes. Where no edit is derivable without a judgment
+the author has not made — an ambiguous name — `edits` is empty and the note
+names every candidate. `id`s are stable, `req` names the
 requirement enforced, and `ashlar check --human` renders the same diagnostics
 as prose. Warnings never block a build; errors do.
 
@@ -471,10 +471,10 @@ program's single one, or errors listing candidates if there is not exactly one;
 `ashlar run chat.app` names one explicitly. The bound port is the root's `port`
 unless `ashlar run --port 8091` overrides it — a deployment fact bound at run
 time, never written in source (B5). On start the runtime loads stored state
-(§9.3), then calls the root's `start` stack if declared. On shutdown — `SIGINT`
-or `SIGTERM` on unix — it calls `stop`, prints what that stack logged, then
+(§9.3), then calls the root's `start` stack if declared. On shutdown — `SIGINT` or
+`SIGTERM` on unix — it calls `stop`, prints what that stack logged, then
 flushes stored state; elsewhere a signal is not caught and only stored state
-survives, being flushed whenever it changes. A source
+survives, flushed whenever it changes. A source
 change rebuilds and hot-reloads in place: state properties carry over by full
 name, open pages reconnect and re-render, and a change that fails to compile
 emits diagnostics and leaves the old program running.
@@ -541,8 +541,7 @@ part Store {
 - `stored` — persisted by the runtime's embedded store, keyed by the property's
   full name; survives restarts. Values are validated against the current shape
   at startup: a field added since the value was written is filled from its
-  default, one with no default is a startup error naming every gap at once. A
-  defaulted field is a migration, a required one a refusal to guess.
+  default, one with no default is a startup error naming every gap at once.
 - `peruser` — a modifier before `state` or `stored`: the value is scoped to the
   current user, each isolated from every other by construction. Reading or
   writing one with no user in scope — an anonymous request, a scheduled task,
@@ -599,7 +598,7 @@ the focused field, its caret and typing in flight; a server-side change to the
 value (a cleared draft) still wins. An attr value is text, the name of a
 function property, or an inline function of zero or one parameter
 (`(e: std.Event) => ...`; `std.Event` has `name: text` and `data: data`).
-Serving a view part from a `route` wires all of this up; no other setup exists.
+Serving a view part from a `route` wires this up; no other setup exists.
 
 A `title` element names the page: it sets the browser tab and re-renders like
 any other element, so a title reading state follows it.
@@ -766,12 +765,13 @@ machine that deploys — so `ashlar foreign check` proves it on demand against t
 bindings in force, before a request finds out. Foreign calls may block; the
 runtime schedules around them.
 
-Two space names derive to a co-process rather than a library, because what
-they name belongs to the machine, not the project: `mesh` — who else is on
-the private network this machine joined — and `mesh.sites`, the sites they
-serve. `ashlar run --mesh` publishes the port it is serving through
-`mesh.sites`, reaching that network and nobody else; `ashlar mesh` says what
-both answer, before a page needs them.
+Two space names derive to a co-process rather than a library, and that
+co-process is this toolchain: `mesh` — who else is on the private network this
+machine joined — and `mesh.sites`, the sites they serve. `ashlar mesh worker`
+speaks the control sockets the mesh's daemons already expose, so nothing
+outside the project changes to make the boundary work. `ashlar run --mesh`
+publishes the port it is serving through `mesh.sites`, reaching that network
+and nobody else; `ashlar mesh` says what both answer.
 
 A foreign call may name a reactive collection, so a store behind the boundary
 is live without leaving the language:
@@ -894,8 +894,8 @@ any part's layers raises `W002` naming the part and its order before and after;
 ## 12. What programs cannot do
 
 Each is a compile error naming the Ashlar construct instead: no macros,
-user-defined syntax, or operator overloading — the surface does not extend, so
-this reference stays complete; no single-name imports or aliases; no
+user-defined syntax, or operator overloading — the surface does not extend; no
+single-name imports or aliases; no
 exceptions, `while`, truthiness, or text interpolation; no classes or
 inheritance (layers on parts); no registry or version resolution (dependencies
 are vendored); no dynamic access to anything named (computed keys reach data

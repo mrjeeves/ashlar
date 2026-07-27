@@ -387,8 +387,9 @@ zero-dependency rule is not permission to counterfeit expertise.
 
 A private mesh is the same shape of admission. Two space names — `mesh`, who
 else is on the network this machine joined, and `mesh.sites`, the sites they
-serve — reach the mesh daemon the machine already runs, over that same
-boundary. `ashlar run --mesh` publishes the port the origin is serving to that
+serve — reach the mesh daemons the machine already runs, over that same
+boundary, through an adapter this toolchain provides rather than one the mesh
+was made to ship for us. `ashlar run --mesh` publishes the port the origin is serving to that
 network and to nobody else: no forwarded port, no public address, no third
 party holding the session. The language grows nothing to do it. A program that
 wants to *show* the mesh vendors [`lib/mesh`](lib/mesh), whose `grid` is a

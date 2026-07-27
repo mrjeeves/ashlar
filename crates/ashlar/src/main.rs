@@ -28,7 +28,8 @@ mod cli {
     ashlar delta [path]\n  \
         ashlar vendor <source> [path]\n  \
         ashlar foreign check [space] [path]\n  \
-        ashlar mesh [path]\n";
+        ashlar mesh [path]\n  \
+        ashlar mesh worker\n";
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum Cmd {
@@ -53,6 +54,7 @@ mod cli {
         Vendor { source: String, path: String },
         ForeignCheck { space: Option<String>, path: String },
         Mesh { path: String },
+        MeshWorker,
     }
 
     /// Parse the command and its arguments (everything after the binary
@@ -289,9 +291,22 @@ mod cli {
                 };
                 Ok(Cmd::Run { path, part, port, mesh })
             }
-            "mesh" => Ok(Cmd::Mesh {
-                path: one_path(rest)?,
-            }),
+            "mesh" => {
+                // `ashlar mesh worker` is the co-process the two mesh spaces
+                // derive to (§9.10): the runtime spawns it, and it speaks the
+                // control sockets the mesh daemons already expose. It is a
+                // real command all the same, so a person can drive it by hand
+                // to see exactly what a site sees.
+                if rest.first().map(String::as_str) == Some("worker") {
+                    if rest.len() > 1 {
+                        return Err("`mesh worker` takes no arguments".to_string());
+                    }
+                    return Ok(Cmd::MeshWorker);
+                }
+                Ok(Cmd::Mesh {
+                    path: one_path(rest)?,
+                })
+            }
             "fmt" => {
                 let mut path: Option<String> = None;
                 let mut check_only = false;
@@ -350,6 +365,7 @@ mod cli {
             Cmd::Fmt { path, check_only } => run_fmt(&path, check_only),
             Cmd::Run { path, part, port, mesh } => run_serve(&path, part, port, mesh),
             Cmd::Mesh { path } => run_mesh(&path),
+            Cmd::MeshWorker => ashlar::meshd::run(),
             Cmd::Rename { target, new_name, path, plan_only } => {
                 run_refactor(&path, plan_only, |srcs| plan_rename(srcs, &target, &new_name))
             }

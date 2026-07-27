@@ -103,12 +103,6 @@ body {
 
 .mesh-name { font-weight: 600; }
 
-.mesh-sites {
-  margin-left: auto;
-  color: var(--muted);
-  font-size: 13px;
-}
-
 .mesh-empty {
   margin: 0;
   padding: 14px 12px;

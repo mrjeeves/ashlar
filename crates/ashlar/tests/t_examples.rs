@@ -1254,6 +1254,8 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
             {"id":"n2","label":"grace","here":false,"sites":[]}]"#,
     )
     .unwrap();
+    // The roster answers who is here; what they SERVE is the other space,
+    // which a machine can be unable to answer while answering this one.
 
     // Nobody polled from the browser and nobody clicked. The schedule in the
     // vendored library noticed the roster's revision move, the `updates`

@@ -76,22 +76,41 @@ pub const MESH_SPACE: &str = "mesh";
 pub const SITES_SPACE: &str = "mesh.sites";
 
 /// The two spaces whose derived default is a co-process rather than a native
-/// library, and the command each derives to.
+/// library — and the command is this toolchain, in worker mode.
 ///
 /// The derivation rule (ADR-0017) answers "where does this capability live"
-/// with a path inside the project, which is right for a capability the
-/// project supplies and wrong for one the machine already runs: the mesh
-/// daemon is installed once and shared by everything on the box, exactly like
-/// the proxy that terminates TLS in front of the origin (ADR-0013). So these
-/// two names derive to the commands that speak for it. Everything else is
-/// unchanged — a `foreign.json` entry still overrides them, `check` still
-/// reports an unknown key, and the manifest still records whichever won.
+/// with a path inside the project, which is right for a capability the project
+/// supplies and wrong for one the machine already runs. The mesh daemon is the
+/// second kind, installed once and shared by everything on the box, exactly
+/// like the proxy that terminates TLS in front of the origin (ADR-0013).
+///
+/// What it must NOT do is make the mesh ship an Ashlar-shaped adapter. That is
+/// the failure this whole ADR exists to end: a boundary that only works once
+/// the foreign system has been re-authored for us is not a boundary. So the
+/// adapter is ours — `ashlar mesh worker` speaks the control sockets those
+/// daemons already expose to their own clients (§9.10) — and the mechanism is
+/// the ordinary worker transport, so a `foreign.json` entry still overrides
+/// it, `check` still reports an unknown key, and the manifest still records
+/// whichever won.
 pub fn derived_worker(space: &str) -> Option<Vec<String>> {
     match space {
-        MESH_SPACE => Some(vec!["myownmesh".to_string(), "ashlar".to_string()]),
-        SITES_SPACE => Some(vec!["allmystuff-ashlar".to_string()]),
+        MESH_SPACE | SITES_SPACE => Some(vec![
+            "ashlar".to_string(),
+            "mesh".to_string(),
+            "worker".to_string(),
+        ]),
         _ => None,
     }
+}
+
+/// Whether an argv is this toolchain answering its own derived default. A
+/// worker named `ashlar` is only findable when the toolchain is on PATH, and
+/// it very often is not — a `cargo run` build, a binary in a release
+/// directory. Spawning falls back to the running executable for exactly this
+/// argv and nothing else, so the derived default works wherever `ashlar`
+/// itself was started from without turning every worker into a guess.
+pub fn is_self_worker(run: &[String]) -> bool {
+    run.len() == 3 && run[0] == "ashlar" && run[1] == "mesh" && run[2] == "worker"
 }
 
 /// Where the binding file lives: `ASHLAR_FOREIGN` if set, else
@@ -676,7 +695,15 @@ impl Worker {
 }
 
 fn spawn_worker(root: &Path, run: &[String]) -> Result<Worker, std::io::Error> {
-    let mut child = Command::new(&run[0])
+    // The derived mesh binding names this toolchain, which is not always on
+    // PATH under the name `ashlar`. Answer it with the executable that is
+    // already running rather than refusing a capability we ourselves provide.
+    let program: PathBuf = if is_self_worker(run) {
+        std::env::current_exe().unwrap_or_else(|_| PathBuf::from(&run[0]))
+    } else {
+        PathBuf::from(&run[0])
+    };
+    let mut child = Command::new(program)
         .args(&run[1..])
         .current_dir(root)
         .stdin(Stdio::piped())
@@ -1038,20 +1065,20 @@ mod tests {
     #[test]
     fn the_two_mesh_spaces_derive_to_a_co_process() {
         // covers: B5, G4
+        // And the co-process is US. The mesh daemons do not ship an
+        // Ashlar-shaped adapter and must not have to: this toolchain speaks
+        // the sockets they already expose.
         let mut b = Boundary::new();
         let root = std::env::temp_dir();
-        assert_eq!(
-            b.via(&root, MESH_SPACE).unwrap(),
-            Via::Worker {
-                run: vec!["myownmesh".to_string(), "ashlar".to_string()]
-            }
-        );
-        assert_eq!(
-            b.via(&root, SITES_SPACE).unwrap(),
-            Via::Worker {
-                run: vec!["allmystuff-ashlar".to_string()]
-            }
-        );
+        let ours = Via::Worker {
+            run: vec![
+                "ashlar".to_string(),
+                "mesh".to_string(),
+                "worker".to_string(),
+            ],
+        };
+        assert_eq!(b.via(&root, MESH_SPACE).unwrap(), ours);
+        assert_eq!(b.via(&root, SITES_SPACE).unwrap(), ours);
         // A neighbouring name is not one of them: the rule is two names, not
         // a prefix, so `mesh.anything` stays an ordinary space.
         assert_eq!(b.via(&root, "mesh.demo").unwrap(), Via::derived());
@@ -1078,11 +1105,28 @@ mod tests {
         // covers: E3
         assert_eq!(derived_worker_radius("tools", "chat.data"), None);
         let off = derived_worker_radius(SITES_SPACE, "tools").expect("leaving a mesh name reports");
-        assert!(off.contains("allmystuff-ashlar") && off.contains("foreign/tools"), "{}", off);
+        assert!(off.contains("ashlar mesh worker") && off.contains("foreign/tools"), "{}", off);
         let onto = derived_worker_radius("tools", MESH_SPACE).expect("entering a mesh name reports");
-        assert!(onto.contains("myownmesh ashlar"), "{}", onto);
+        assert!(onto.contains("ashlar mesh worker"), "{}", onto);
         let across = derived_worker_radius(MESH_SPACE, SITES_SPACE).expect("both ends report");
-        assert!(across.contains("allmystuff-ashlar"), "{}", across);
+        assert!(across.contains("ashlar mesh worker"), "{}", across);
+    }
+
+    #[test]
+    fn only_our_own_derived_argv_falls_back_to_this_executable() {
+        assert!(is_self_worker(&[
+            "ashlar".to_string(),
+            "mesh".to_string(),
+            "worker".to_string()
+        ]));
+        // Anything a deployment wrote is spawned exactly as written.
+        assert!(!is_self_worker(&["ashlar".to_string(), "mesh".to_string()]));
+        assert!(!is_self_worker(&[
+            "python3".to_string(),
+            "mesh".to_string(),
+            "worker".to_string()
+        ]));
+        assert!(!is_self_worker(&[]));
     }
 
     #[test]

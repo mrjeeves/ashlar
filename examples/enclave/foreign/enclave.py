@@ -48,7 +48,6 @@ def _peer_rows():
                 "id": str(p.get("id", "")),
                 "label": str(p.get("label", "")),
                 "here": bool(p.get("here", False)),
-                "sites": len(p.get("sites") or []),
             }
         )
     return rows

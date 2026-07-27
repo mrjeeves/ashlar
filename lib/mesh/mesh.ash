@@ -6,17 +6,19 @@ space mesh
 // `el(mesh.grid, {})` wherever the people belong.
 //
 // Everything here crosses the one boundary (§9.10). The mesh daemon is
-// installed once per machine and shared by everything on it, so the space
-// name binds it: `mesh` derives to a co-process, and a `foreign.json` entry
-// overrides that like any other space.
+// installed once per machine and shared by everything on it, so the space name
+// binds it: `mesh` derives to `ashlar mesh worker`, which speaks the daemon's
+// own control socket. A `foreign.json` entry overrides that like any other
+// space, and the mesh ships nothing on Ashlar's behalf.
 
 // One other node on this mesh. `here` is connected right now, as against
-// merely known — a roster remembers, presence does not.
+// merely known — a roster remembers, presence does not. Three fields, and
+// deliberately not a site count: what a peer SERVES is `mesh.sites`, which a
+// machine can be unable to answer while answering this perfectly well.
 part Peer {
   id: text
   label: text
   here: bool
-  sites: number
 }
 
 // This node's own place: the identity peers address it by, and the mesh it
@@ -93,7 +95,7 @@ part Watch {
 // Appearance binds by name (ADR-0010) — the classes below are the contract
 // with the app's stylesheet, and this space ships none of its own:
 // `mesh-grid`, `mesh-peer`, `mesh-dot`, `mesh-dot-here`, `mesh-name`,
-// `mesh-sites`, `mesh-empty`.
+// `mesh-empty`.
 part grid {
   view = () => el("div", { class: "mesh-grid" }, cards())
   cards = () => {
@@ -104,7 +106,6 @@ part grid {
     return map(all, (p: mesh.Peer) => el("div", { class: "mesh-peer" }, [
       el("span", { class: if p.here { "mesh-dot mesh-dot-here" } else { "mesh-dot" } }, []),
       el("span", { class: "mesh-name" }, [p.label]),
-      el("span", { class: "mesh-sites" }, [text(p.sites) + " site(s)"]),
     ]))
   }
 }
