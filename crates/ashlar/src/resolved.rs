@@ -133,7 +133,7 @@ pub const STD_PARTS: &[&str] = &["Request", "Event", "User", "Element", "log"];
 pub const STD_FNS: &[&str] = &[
     "el", "publish", "subscribe", "signup", "login", "logout", "spawn", "redirect", "fail",
     "len", "range", "keys", "put", "drop", "slice", "find", "map", "filter", "sort", "join",
-    "split", "contains", "text", "number", "json", "now", "id",
+    "split", "contains", "text", "number", "json", "fields", "now", "id",
 ];
 
 /// Properties of `std.log`.

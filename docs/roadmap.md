@@ -11,20 +11,21 @@ test runs for real.
 
 ## Open — three items
 
-**`data` has no discriminator, so a boundary cannot ask what arrived**
-([ADR-0026](decisions/0026-data-is-a-union-with-no-discriminator.md)). Every
-value from outside a program is `data`, a union of six members, and nothing in
-the language distinguishes them. `number(t)` and `json(t)` already answer "not
-that shape" with `none`; there is no such answer for "is this a map", so a body
-that is valid JSON but not an object faults on the first index and ends as a
-**500 whose message begins `internal:`** — the runtime taking the blame for a
-condition the caller chose. Two halves: the missing conversions, and the status
-belonging to the caller. Serves **A4, D3, G4**. Proven by: `examples/quarry`'s
-driving test, which today asserts the 500 and names the ADR, plus a T-A4 fixture
-once the guard exists. Related and cheaper to state than to fix: the idiom the
-checker pushes hardest toward at a boundary — `number(text(x)) ?? 0` — launders
-bad input into a plausible value, and rejecting costs three times the
-characters of inventing.
+**The boundary idiom still runs downhill toward being wrong**
+([ADR-0026](decisions/0026-data-is-a-union-with-no-discriminator.md), whose
+other two halves are resolved). `number(text(x)) ?? 0` is the shortest thing
+that type-checks where a program meets input it did not write, and it launders
+bad input into a plausible value — a reading of zero nothing downstream can
+tell from a real one. `??` is the operator the checker pushes you toward: an
+optional must be dealt with, and inventing a default is the cheapest way to
+deal with it. Refusing costs a `let`, a comparison, and a `fail` — three times
+the characters. For an AI-first language that is a design defect and not a
+user error, because the short program is the one that gets written. Serves
+**A4, D5**. No decision yet on what changes: the honest options (a conversion
+that carries its own refusal, or making `??` at a boundary say what it
+swallowed) both trade surface for a gradient, and neither has been measured
+against the corpus. Proven, when it lands, by a corpus program whose refusing
+form is not longer than its laundering form.
 
 **A comment between the parts of a one-line expression still has nowhere to
 go.** [ADR-0024](decisions/0024-a-formatter-that-loses-code-is-not-a-formatter.md)
@@ -93,6 +94,33 @@ fails there.
 One thing stays true regardless and needs no decision: **cold-read the
 construct, never the word** (ADR-0015 scored `personal` 3/3 on the bare word; in
 its slot it reads as `private`).
+
+Delivered 2026-07-27 — **a boundary can ask what arrived**
+([ADR-0026](decisions/0026-data-is-a-union-with-no-discriminator.md), closed in
+place). `fields(x)` answers the one question `data` could not be asked: for a
+map of data, the map; for every other member of the union, `none`. Total by
+construction, and shaped like `json(t)` — it answers `data?`, so what comes
+back is read exactly as the body would have been rather than through a second
+indexing idiom.
+
+One guard now covers three cases: a missing body, a body that is not JSON, and
+a body that is valid JSON but not an object all answer `none`. `slate`'s two
+write routes replaced their `req.data == none` check rather than adding to it,
+and the hostile bodies that used to end as a **500 beginning `internal:`** are
+now the route's own **400** with a message the route wrote.
+
+**The status half of ADR-0026 is withdrawn rather than deferred**, and the
+reason is worth more than the feature would have been: *malformed is relative
+to the handler.* `[1,2,3]` is a fine body for a route that wants a list, and
+nothing at the boundary knows which routes those are — so any rule relabelling
+an `internal:` 500 as a 400 is guessing, which is the same laundering the ADR
+condemns in `?? 0`, moved into the runtime. With the question askable the
+handler answers it, and the 500 that rule existed to relabel no longer happens.
+
+Serves **A4, D3, G4**. Proven by `t_examples_slate_merges_two_people_typing_at_once`
+(three non-object bodies, each a 400 that does not say `internal:`) and
+`fields_answers_for_every_member_of_data` in `eval.rs` (all six members, none
+of which faults). Reference §9.11 grew one row, 58 bytes.
 
 Delivered 2026-07-27 — **a `return` is a shape position**
 ([ADR-0025](decisions/0025-a-return-is-a-shape-position.md), closed in place).

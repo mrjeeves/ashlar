@@ -2249,6 +2249,20 @@ impl<'a> Cx<'a> {
                 }
                 S::Data.opt()
             }
+            "fields" => {
+                // ADR-0026: `data` is a union with no discriminator. This is
+                // the one question a boundary could not ask — `number(t)` and
+                // `json(t)` already answer "not that shape" with `none`, and
+                // there was no equivalent for "is this a map", so a body that
+                // is valid JSON but not an object faulted on the first index.
+                //
+                // It answers `data?`, exactly as `json(t)` does, so what comes
+                // back is read the same way the body would have been —
+                // `body!.line`, not a second indexing idiom. Only the
+                // knowledge changed, not the value.
+                arity(self, 1);
+                S::Data.opt()
+            }
             "now" => {
                 arity(self, 0);
                 S::Number

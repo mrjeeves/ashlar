@@ -738,6 +738,7 @@ The builtin space, implicitly used everywhere. Parts: `Request`, `Event`,
 | `text(x)` | any value rendered as text |
 | `number(t)` | text parsed as number, else `none` |
 | `json(t)` | text parsed as data, else `none` |
+| `fields(x)` | `x` if it is a map of data, else `none` |
 | `now()` | milliseconds since epoch |
 | `id()` | a new unique text id |
 

@@ -1441,6 +1441,13 @@ impl<'a> Evaluator<'a> {
                 V::Text(s) => Ok(from_json(&s).unwrap_or(V::None)),
                 other => Err(Fault::new(format!("internal: `json` of {}.", kind_of(&other)))),
             },
+            // ADR-0026: answers `none` for every member of `data` that is not
+            // a map, so a boundary can refuse a body it cannot read instead of
+            // faulting on the first index. Total: no value faults here.
+            "fields" => Ok(match arg(&mut args, 0) {
+                m @ V::Map(_) => m,
+                _ => V::None,
+            }),
             "now" => Ok(V::Number(
                 std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
@@ -2196,6 +2203,35 @@ mod tests {
         assert_eq!((f.status, f.message.as_str()), (500, "nope"));
         let f = eval_prop(src, "a.W", "two", vec![]).unwrap_err();
         assert_eq!((f.status, f.message.as_str()), (404, "gone"));
+    }
+
+    /// ADR-0026: the discriminator a boundary needs. Total by construction —
+    /// every member of `data` has an answer, and none of them faults, which
+    /// is the whole point: a value you cannot ask about is one you can only
+    /// index and hope.
+    #[test]
+    fn fields_answers_for_every_member_of_data() {
+        let src = "space a\n\npart W {\n  f = (d: data) => fields(d)\n}\n";
+        let m: BTreeMap<String, V> =
+            [("k".to_string(), V::Number(1.0))].into_iter().collect();
+        assert_eq!(
+            eval_prop(src, "a.W", "f", vec![V::Map(m.clone())]).unwrap(),
+            V::Map(m)
+        );
+        for other in [
+            V::List(vec![V::Number(1.0)]),
+            V::Number(42.0),
+            V::Text("hello".to_string()),
+            V::Bool(true),
+            V::None,
+        ] {
+            assert_eq!(
+                eval_prop(src, "a.W", "f", vec![other.clone()]).unwrap(),
+                V::None,
+                "fields({:?}) must answer `none`, not fault",
+                other
+            );
+        }
     }
 
     #[test]

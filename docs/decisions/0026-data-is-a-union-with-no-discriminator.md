@@ -2,7 +2,8 @@
 
 Date: 2026-07-26
 
-Status: accepted as a finding; the language change is open work (docs/roadmap.md)
+Status: accepted; the discriminator landed 2026-07-27, the status half is
+withdrawn (see Resolution)
 
 ## Context
 
@@ -90,3 +91,47 @@ that justifies the work.
 - The counted-refusals surface is worth keeping regardless of the language
   change: a status page that reports only the inputs it liked is
   describing its authors rather than its inputs.
+
+## Resolution (2026-07-27)
+
+**The discriminator landed: `fields(x)`.** For a map of data, the map; for
+every other member of the union — list, number, text, bool, `none` — it
+answers `none`. Total by construction, which is the point: a value you
+cannot ask about is one you can only index and hope.
+
+It answers `data?`, exactly as `json(t)` does, so what comes back is read
+the same way the body would have been (`edit!["base"]`) rather than
+through a second indexing idiom. Only the knowledge changed, not the
+value. One row in §9.11, and one guard now subsumes three cases — a
+missing body, a body that is not JSON, and a body that is JSON but not an
+object all answer `none`, so `slate`'s routes replaced their
+`req.data == none` check rather than adding to it.
+
+**The second half is withdrawn, not deferred.** This ADR said a caller's
+malformed body should be a 400 rather than a 500, and flagged that it
+"needs care" because the runtime cannot always trace a fault to caller
+input. Reading the dispatch path settles it more sharply than that:
+
+> **Malformed is relative to the handler.** `[1,2,3]` is a perfectly good
+> body for a route that wants a list. Nothing at the boundary knows which
+> routes those are, so any rule that turns an `internal:` 500 into a 400
+> because the body "looks wrong" is guessing — and a plausible-but-wrong
+> 400 is exactly the laundering this ADR condemns in `number(text(x)) ?? 0`,
+> moved from the program into the runtime.
+
+The handler is the only thing that knows what it wanted. With the question
+askable, it says so itself: `slate` refuses with its own `fail(400, ...)`,
+and both the status and the message come from the code that knows. That is
+better than the original proposal, not a lesser version of it — the 500 it
+was trying to relabel no longer happens.
+
+A 500 that *does* survive is now honest: it means a program indexed
+something it never asked about, which is a program bug, and reporting it as
+the server's fault is correct.
+
+**What this does not close:** the ergonomic gradient. `number(text(x)) ?? 0`
+is still the shortest thing that type-checks at a boundary, and it still
+launders bad input into a plausible value. Rejecting still costs a `let`, a
+comparison, and a `fail`. That is a separate finding about which programs
+are cheap to write, and it stays open in the roadmap rather than being
+quietly counted as fixed here.
