@@ -202,7 +202,7 @@ fn t_meta_core_docs_exist() {
     // covers: G1 — and AGENTS.md is load-bearing: the agent-facing contract
     // must exist, carry the hierarchy, CARRY THE LANGUAGE REFERENCE ITSELF,
     // and be what CLAUDE.md resolves to (one contract, not two drifting
-    // copies — and since ADR-0031, one FILE, not a contract plus a reference
+    // copies — and since A1's 2026-07-27 revision, one FILE, not a contract plus a reference
     // that could disagree with it).
     let root = support::repo_root();
     for rel in [
@@ -216,7 +216,7 @@ fn t_meta_core_docs_exist() {
     }
     assert!(
         !root.join("reference").exists(),
-        "reference/ lives inside AGENTS.md since ADR-0031; a second copy is exactly the drift \
+        "reference/ lives inside AGENTS.md since A1's 2026-07-27 revision; a second copy is exactly the drift \
          the merge removed"
     );
     let agents = std::fs::read_to_string(root.join("AGENTS.md")).unwrap();

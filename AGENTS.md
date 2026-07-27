@@ -85,7 +85,7 @@ with the test that catches its regression.
 |---|---|
 | language behavior | the reference below + a test + (if user-visible failure) `docs/diagnostics.md` |
 | a diagnostic's cause/fix | its `docs/diagnostics.md` row |
-| a design trade | an ADR — a new file only when it REVERSES or supersedes one; an ADR that deferred its own implementation closes in place with a Resolution section |
+| a design trade | **EDIT the ADR that owns it.** A new file only when it reverses or supersedes one; an ADR that deferred its own implementation closes in place with a Resolution. Carrying out a decision already made spawns no file |
 | work found but not done | `docs/roadmap.md`, with its requirement and the test that will prove it. Delivered work does NOT go there |
 | anything in `README.md` | keep README, this file, and reality agreeing |
 | the reference below | re-run T-A1/A2/A5 and eyeball the budget |
@@ -100,9 +100,9 @@ with the test that catches its regression.
   same commit; big claims get adversarial verification against the built binary.
 - The honest sentence beats the impressive one — in diagnostics, docs, commit
   messages, and this file.
-- **Prose is not an artifact.** Before adding a file, section, or paragraph,
-  find the one that should have said it and fix that instead. A count or recital
-  duplicating something checkable is cruft the moment it is written.
+- **Prose is not an artifact.** Before adding a file, section, or paragraph —
+  an ADR above all — find the one that should have said it and fix that. A
+  recital duplicating something checkable is cruft the moment it is written.
 
 **Budget: ≤40,000 bytes total, reference included** (T-A1), no reference section
 over 20% of the reference's bytes (T-A5). Every sentence below is true of the
@@ -283,8 +283,8 @@ layer's function in composition order.
 
 - `stack` functions take no parameters and must return a map or `none`; a
   returned map merges one level onto the part's state properties, and the call
-  returns the part. Lifecycle is not a separate concept: it is `stack` plus
-  the use order.
+  returns the part. Lifecycle is not a separate concept: it is `stack` plus the
+  use order.
 - `pipe` functions take exactly one parameter. The first receives the call's
   argument, each later one the previous return, and the call returns the last.
   All layers must agree in parameter and return shape.
@@ -522,9 +522,8 @@ The same handler serves HTTP and WebSocket; transport is not visible in handler
 code. Over HTTP the path is the URL; over the built-in socket a client sends
 `{path, data}` envelopes to the same routes. The return value is the response:
 a data value renders as JSON, text as plain text, an `Element` (§9.4) as an
-HTML document, `redirect(path)` as a redirect. `fail(status, message)` ends the
-request with that status; an uncaught runtime fault ends it with 500 and a
-structured log entry. Two routes matching one path is a compile error naming both.
+HTML document, `redirect(path)` as a redirect. `fail` ends it with a status (§9.9); an
+uncaught runtime fault ends it with 500 and a structured log entry. Two routes matching one path is a compile error naming both.
 
 ### 9.3 State
 
@@ -569,7 +568,7 @@ its state properties; others read them by name or call a function that assigns.
 ### 9.4 Views
 
 A part with a `view` property is a UI element: a zero-parameter function
-returning `std.Element`, built with `el`.
+returning `std.Element`, built with `el`:
 
 ```
 el(tag: text, attrs: {text: text}?, children: [std.Element]?)
@@ -579,10 +578,10 @@ el(PartName, fields: {text: data}?, children: [std.Element]?)
 Text values may appear in `children` and render escaped. A part used with `el`
 instantiates per use: its fields come from the second argument and its `state`
 properties are per-instance. An instance *is* its view's root element, with no
-wrapper around it, so a layout container sees its child views directly. Across
-re-renders a view reuses children by position — the same `el(Part)` keeps the
-same instance, so per-instance state and subscriptions survive, `start` runs
-once on mount and `stop` once when the child is no longer rendered (§9.5).
+wrapper, so a layout container sees its child views directly. Across re-renders
+a view reuses children by position — the same `el(Part)` keeps the same
+instance, so per-instance state and subscriptions survive, `start` runs once on
+mount and `stop` once when the child is no longer rendered (§9.5).
 
 ```ash
 space chat.widgets
@@ -640,8 +639,8 @@ subscribe(channel: text, handler)   // handler: (message: data) => ...
 ```
 
 `subscribe` in a view part's `start stack` subscribes that instance and
-unsubscribes on unmount; anywhere else the subscription lives for the process.
-Cross-client reactivity (§9.3) rides the same broadcast and needs no channel.
+unsubscribes on unmount; anywhere else it lives for the process. Cross-client
+reactivity (§9.3) rides the same broadcast and needs no channel.
 
 Handlers run in subscription order, and a fault in one is logged without
 stopping the others or failing the publisher — the rule `spawn` follows
@@ -671,8 +670,8 @@ request arrived over TLS — an `X-Forwarded-Proto: https` from a terminating
 proxy (ADR-0013).
 
 Authorization is the `allow` property (§9.2): any routed part may declare
-`allow = (req: std.Request) => bool`, and `false` ends the request with 403
-before `handle` runs. `allow` composes as replace unless a kind is declared.
+`allow = (req: std.Request) => bool`; `false` ends the request with 403 before
+`handle` runs. It composes as replace unless a kind is declared.
 
 ### 9.7 Tasks and schedules
 
@@ -792,9 +791,9 @@ foreign all: () -> [Row] watches Row
 `watches <Shape>` makes the call a dependency edge — a view calling it
 re-renders when the collection changes — and `updates <Shape>` marks that
 collection changed, so every view that read it re-renders and patches across
-every connected client (§9.3). The collection is the data shape it names.
-`watches`/`updates` are contextual (ordinary names elsewhere); one resolving to
-no part is E001.
+every connected client (§9.3). The collection is the data shape it names;
+`watches`/`updates` are contextual (ordinary names elsewhere), and one resolving
+to no part is E001.
 
 ### 9.11 std
 
@@ -880,18 +879,17 @@ single-file change re-checks in under 100ms at a thousand files.
 | `ashlar vendor <source>` | copy an external tree into the project so its spaces resolve |
 
 Refactors are commands, not text edits. Each computes and reports its complete
-blast radius from the manifest, applies atomically or not at all — refusing
-with a reason if the radius cannot be fully computed — leaves no stale
-reference behind, and reverses to the same program, though not necessarily the
-same bytes: `rename` and `rekind` substitute names in place and reverse
+blast radius from the manifest, applies atomically or not at all — refusing with
+a reason if the radius cannot be fully computed — leaves no stale reference
+behind, and reverses to the same program, though not the same bytes: `rename` and `rekind` substitute names in place and reverse
 byte-identically, while `move` adds the `use` lines both sides need and never
 removes one, so reversing it returns the same program with those lines present
 (ADR-0018). Every added line appears in the radius, and `radius` answers "what
 would this touch" without touching it.
 
 Adding a `use` has no command and the widest reach of any edit: it can
-resequence composition order anywhere downstream (§3), so it is reported rather
-than commanded. Against the previous build's manifest, an edit that resequences
+resequence composition order anywhere downstream (§3), so it is reported, not
+commanded. Against the previous build's manifest, an edit that resequences
 any part's layers raises `W002` naming the part and its order before and after;
 `ashlar delta` prints the report. No manifest, no baseline, no claim.
 

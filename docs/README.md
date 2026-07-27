@@ -14,6 +14,6 @@ The paper trail, in the order the hierarchy reads it:
 
 Agents working in this repo start at [`../AGENTS.md`](../AGENTS.md).
 The language reference lives inside [`../AGENTS.md`](../AGENTS.md), after the
-`REFERENCE:BEGIN` marker (ADR-0031), and outranks everything here except the
+`REFERENCE:BEGIN` marker (A1), and outranks everything here except the
 vision: it is the contract the tests encode. The cold-read gate protocol and its run results live in
 [`../suites/t_a3/`](../suites/t_a3/).

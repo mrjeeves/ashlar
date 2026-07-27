@@ -956,7 +956,7 @@ fn t_c9_a_use_edge_that_resequences_layers_is_reported_not_silent() {
     // from base,alpha,zulu to base,zulu,alpha. `ashlar check` exited 0 and
     // printed NOTHING, and over HTTP the program answered `x|base|zulu|alpha`
     // where it had answered `x|base|alpha|zulu`. Determinism was never in
-    // question; being told was (ADR-0012's own words, ADR-0032's finding).
+    // question; being told was (ADR-0012's own words, ADR-0012's finding).
     let dir = std::env::temp_dir().join(format!("ashlar_c9_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();

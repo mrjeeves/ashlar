@@ -144,7 +144,7 @@ Determinism alone is not enough. A repeatable accident is still an accident —
 so a `use` edge that resequences any part's layers raises `W002` naming the
 order before and after, and `ashlar delta` prints the whole report. A silent
 reordering was a real defect here, not a hypothetical
-([ADR-0032](docs/decisions/0032-observability-was-decided-and-never-built.md)).
+([ADR-0012](docs/decisions/0012-semantic-freedom-and-derivability.md)).
 
 ## A world may be strange, but it may not deceive
 
@@ -170,7 +170,7 @@ familiar one sends the bug to production.
 
 The complete contract lives in [`AGENTS.md`](AGENTS.md) — one file carrying
 the working contract and the language reference together, under a hard
-40,000-byte ceiling covering both (ADR-0031). Anything it does not define is a
+40,000-byte ceiling covering both (A1). Anything it does not define is a
 compile error, never a secret feature.
 
 ## Semantic freedom is not free
@@ -211,7 +211,7 @@ When the compiler includes machine edits, applying them must remove the error
 without introducing another **and leave the program meaning what it meant** —
 the stronger half, learned when `ashlar fix` once rewrote an ambiguous name to
 the wrong part and silently changed what a page rendered
-([ADR-0032](docs/decisions/0032-observability-was-decided-and-never-built.md)).
+([ADR-0012](docs/decisions/0012-semantic-freedom-and-derivability.md)).
 Both promises are executed as tests. The quality of the compiler is measured in
 compile-to-clean rounds, which converge in a mean of 1.00 — over the 24% of the
 diagnostic corpus that carries a machine-applicable fix at all. The rest name

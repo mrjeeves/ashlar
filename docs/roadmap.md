@@ -30,7 +30,7 @@ single-file re-check latency and says nothing about the derived-state work the
 whole transitive-visibility trade rests on — closure size, layer flattening,
 collision density. Serves **F1, C9**. Proven by: a generator with controlled
 depth, fan-out, layer density and collision rate, and a measured gate on the
-derived-state work rather than only on parse throughput (ADR-0032).
+derived-state work rather than only on parse throughput (ADR-0012).
 
 **The semantic delta covers order only.** `delta.rs` compares composition order.
 Names entering or leaving a space's closure, and names that newly become
@@ -47,24 +47,19 @@ rename one part. Serves **D5**. Proven by: a cause-level report naming the
 collision once with its downstream sites, and a rounds-to-clean measurement over
 a multi-site fixture.
 
-**The reviewer's comparison programme is not attempted.** Judging whole-space
-`use` against selective-import, separate-ordering and fully-explicit variants at
-10 to 10,000 spaces would mean building three more languages and running agent
-trials across them. Recorded so the absence is deliberate rather than forgotten.
-Serves **the ADR-0012 research questions**. Proven by: nothing here — it is a
-research programme, not an increment.
-
 ## Standing method notes
 
 Not open items — neither has work waiting behind it.
 
-**A3 is met by measurement.** Run 5 scored 24/25 against a bar of 20/25, on
-runs labelled *reduced-contamination* rather than cold: an in-repo reader
-receives the project instructions before any prompt exists to forbid them,
-which is measured per run and recorded. `suites/t_a3/PROTOCOL.md` carries the
-instructions for running a provably cold one from outside this working
-directory. That is a stronger proof of the same claim, not an unmet
-requirement.
+**A3 is met by measurement, and can now only be re-measured from outside.**
+Run 5 scored 24/25 against a bar of 20/25. It was a *reduced-contamination* run,
+not a cold one — an in-repo reader received the project instructions before any
+prompt existed to forbid them. That category is now gone rather than improved:
+`AGENTS.md` carries the reference itself, so in-repo contamination is total and
+certain, and `suites/t_a3/PROTOCOL.md`'s outside-the-repository run is the only
+one there is (docs/decisions/0021-the-a3-readers-were-not-cold.md). The standing
+24/25 is the last figure takeable under the old arrangement, not one that can be
+re-taken on demand.
 
 **Two A3 findings stand recorded with no change to make.** *A3-F1*:
 cross-file layering does not cold-read — 0 of 11 readers across a 2×2 over

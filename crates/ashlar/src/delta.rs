@@ -4,7 +4,7 @@
 //! that can reorder every layered property downstream, and `ashlar check`
 //! answered it with silence: exit 0, no output, different program. ADR-0012
 //! accepted that "deterministic but silent behavioral change remains a
-//! failure" and nothing was built to catch it; ADR-0032 is the finding and
+//! failure" and nothing was built to catch it; ADR-0012 is the finding and
 //! this module is the answer.
 //!
 //! The baseline is the previous `ashlar.manifest`, which already records every

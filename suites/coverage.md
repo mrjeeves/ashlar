@@ -69,19 +69,23 @@ parse-time structural property.
 tie-break). C9 is `delta.rs`: composition order compared against the previous
 manifest, with W002 naming any part whose layers were resequenced by an edit
 elsewhere in the use graph — the check that turns C2's determinism into
-something an author is actually told about (ADR-0032). C4–C8 are `compose.rs`: the five merge kinds against every value
-shape, kind identity across layers, storage identity, and lifecycle-as-`stack`.
-`rekind` — the escape hatch from C5's identity rule — is proven in `t_e.rs`.
+something an author is actually told about (ADR-0012). C4–C8 are `compose.rs`:
+the five merge kinds against every value shape, kind identity across layers,
+storage identity, and lifecycle-as-`stack`. `rekind` — the escape hatch from
+C5's identity rule — is proven in `t_e.rs`.
 
 **D (correction).** D1 and D2 are `t_d.rs`, which applies every fixture's
 machine `edits` in memory and rechecks: the proof that a fix resolves what it
 targets and introduces nothing new. D5 is `t_d5.rs`, the round-trip metric —
-one check → apply → recheck cycle over all 11 machine-fixable fixtures, mean
-rounds-to-clean 1.00. D4 is `diag.rs`'s own tests over the JSONL wire format.
-D6 is `t_d.rs`: an ambiguous name carries a note naming every candidate and
-no edits, and `t_e.rs` drives the case that found it — a rendered page whose
-`el(Card, ...)` survives `ashlar fix` unchanged. D3 is the `t_a4` corpus for its first half (conditions the compiler detects
-rather than deferring to runtime); its second half is a documentation
+one check → apply → recheck cycle, reporting both numbers it owes: 10 of the
+41 fixtures carry a machine-applicable fix at all (24%), and those converge at
+a mean of 1.00 rounds. The fraction is there because the mean alone graded only
+the fixtures that already had fixes. D4 is `diag.rs`'s own tests over the JSONL
+wire format. D6 is `t_d.rs`: an ambiguous name carries a note naming every
+candidate and no edits, and `t_e.rs` drives the case that found it — a rendered
+page whose `el(Card, ...)` survives `ashlar fix` unchanged. D3 is the `t_a4`
+corpus for its first half (conditions the compiler detects rather than
+deferring to runtime); its second half is a documentation
 obligation, and the reference states the reason for each condition it leaves to
 runtime — division by zero, `!` on `none`, foreign shape and reachability, and
 `peruser` with no user.
