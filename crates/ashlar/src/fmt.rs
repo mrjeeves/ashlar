@@ -1094,6 +1094,32 @@ mod tests {
         );
     }
 
+    fn ash_fenced_blocks(markdown: &str) -> Vec<String> {
+        let mut blocks = Vec::new();
+        let mut body = None;
+        for line in markdown.lines() {
+            match body.as_mut() {
+                None if line == "```ash" => body = Some(String::new()),
+                Some(_) if line == "```" => blocks.push(body.take().unwrap()),
+                Some(body) => {
+                    body.push_str(line);
+                    body.push('\n');
+                }
+                None => {}
+            }
+        }
+        assert!(body.is_none(), "unterminated ```ash block");
+        blocks
+    }
+
+    #[test]
+    fn ash_fenced_blocks_accepts_lf_and_crlf() {
+        let lf = "before\n```ash\nspace demo\n```\nafter\n";
+        let crlf = lf.replace('\n', "\r\n");
+        assert_eq!(ash_fenced_blocks(lf), vec!["space demo\n"]);
+        assert_eq!(ash_fenced_blocks(&crlf), vec!["space demo\n"]);
+    }
+
     #[test]
     fn corpus_and_reference_survive_formatting() {
         let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -1133,16 +1159,15 @@ mod tests {
         assert!(checked >= 20, "expected the t_a3 corpus, found {}", checked);
         // Every ```ash block in the reference.
         let reference = std::fs::read_to_string(root.join("reference/ashlar.md")).unwrap();
-        let mut rest = reference.as_str();
-        let mut blocks = 0;
-        while let Some(i) = rest.find("```ash\n") {
-            rest = &rest[i + 7..];
-            let end = rest.find("```").unwrap();
-            assert_fmt_faithful(&format!("refblock{}", blocks), &rest[..end]);
-            rest = &rest[end + 3..];
-            blocks += 1;
+        let blocks = ash_fenced_blocks(&reference);
+        for (i, block) in blocks.iter().enumerate() {
+            assert_fmt_faithful(&format!("refblock{}", i), block);
         }
-        assert!(blocks >= 10, "expected reference blocks, found {}", blocks);
+        assert!(
+            blocks.len() >= 10,
+            "expected reference blocks, found {}",
+            blocks.len()
+        );
 
         // And every example. t_examples asserts `fmt(src) == src` over this
         // same tree, which is a fixpoint check on files that are ALREADY

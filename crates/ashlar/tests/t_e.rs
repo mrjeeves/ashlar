@@ -697,12 +697,18 @@ fn t_e_space_rename_carries_foreign_lib_and_only_stored_migrations() {
     // The derivation rule names a library per probed extension (ADR-0017), so
     // each is radius — a `.dylib` shim is no less bound by space name than a
     // `.so` one. The list is POSIX-only because the `native` transport is.
+    #[cfg(unix)]
     assert_eq!(
         plan.foreign_renames,
         vec![
             ("foreign/old.so".to_string(), "foreign/fresh.so".to_string()),
             ("foreign/old.dylib".to_string(), "foreign/fresh.dylib".to_string()),
         ]
+    );
+    #[cfg(not(unix))]
+    assert!(
+        plan.foreign_renames.is_empty(),
+        "a platform without the native transport has no derived library radius"
     );
     // The binding file keys by space name too, so the key moves with it (E2).
     assert_eq!(
@@ -806,6 +812,7 @@ fn t_e_space_rename_carries_the_foreign_binding_key() {
         radius_out
     );
     // The derivation rule probes each POSIX extension; all are radius.
+    #[cfg(unix)]
     for ext in [".so", ".dylib"] {
         assert!(
             radius_out.contains(&format!("foreign/tools{}", ext)),
