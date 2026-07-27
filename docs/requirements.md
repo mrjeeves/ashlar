@@ -19,14 +19,27 @@ Tests are not sacred. A test that passes while the requirement goes unmet is a b
 **Nor is this document sacred.** The hierarchy is a grant of authority as much as a tie-breaker: exactly one layer — the vision — is fixed and outside the implementer's reach. Every layer below it, this document included, is revisable by whoever is doing the work, on one condition: the revision serves the layer above it and arrives with the evidence and tests that show it does. Waiting for permission to revise a requirement that demonstrably fails the vision is the same failure as quietly weakening a test to spare the code — both replace the argument from above with someone's comfort. Where the deciding evidence cannot be obtained, say what is missing; do not guess and call it a decision.
 ---
 ## 2. The method
-For every unit of work, at every scale:
+Two loops. The inner one builds; the outer one is where the requirements come from.
+
+**Inner — for every unit of work, at every scale:**
 1. Identify which requirement the unit serves.
 2. Write the test that would prove the requirement met.
 3. Build until it passes.
 4. If it cannot pass, the requirement is wrong or incomplete. Return to §1 and revise upward, not downward.
+
 Step 4 is the one that matters. The failure mode is weakening a test to accommodate an implementation. The correct response to an unsatisfiable test is to question the requirement against the vision — and if the requirement is sound, the implementation is wrong no matter how much of it exists.
+
 There is no phase in which tests are written and no phase in which they are not. The test suites have dependencies on each other (§9) and that induces a rough sequence, but sequence is a consequence of dependency, not a prescribed process.
----
+
+**Outer — the language is refined by running it against a world that does not cooperate:**
+1. Build something real with it and **execute it** — a whole program, driven end to end over the transports it actually serves, fed the input an indifferent world actually sends.
+2. Read what execution produced: what was rejected that should not have been, what ran that should not have, what the short program did versus what the correct program had to cost.
+3. That evidence revises the requirements, per §1. Then the engine is refined to the revised requirement, with the test that pins it.
+
+The outer loop is not a nicety and it is not the inner loop restated. A stuck test only reports that a requirement is unreachable *as specified*; it cannot report a requirement that is wrong while perfectly satisfiable, and those are the expensive ones. Only execution against uncooperative input finds them: a checker that rejects a correct program with a correction its author already applied, a boundary a program cannot ask about, a formatter that moves a comment onto the wrong declaration, a refusal that costs three times what inventing a value costs. Each of those passed every test it had.
+
+So **exposure is a requirement of the method, not a testing tactic**: an example that quietly avoids the input it cannot handle is not an example, and a gate whose contamination is assumed rather than measured is not a gate. Where evidence cannot be obtained — a reader outside this repository, a machine that is not this one — say what is missing rather than guessing (§1). What execution finds lands as a revision here first, and only then as code.
+
 ## 3. Principles (the vision)
 **Code is cheap, good design isn't.** Generation is nearly free. Verification, comprehension, and change are not. Optimize those; never ration generation.
 **Names matter more than anything.** Names are the only binding mechanism. Not paths, not positions, not file locations, not declaration order.
@@ -105,7 +118,7 @@ Each suite proves specific requirements. The mapping is explicit so coverage is 
 This suite exists before the compiler does and is the primary gate on syntax decisions.
 **T-A4 — Loud failure.** A corpus of plausible-but-wrong constructs — the things a model would write if it guessed from a neighboring language. Each must produce a compile error. Any that runs is an A4 violation.
 **T-B — Resolution.** Given a dependency graph, asserts which names are visible where. Includes: transitive visibility, zero-resolution errors, multi-resolution errors, case/separator collision errors, and the assertion that no source fixture contains a path.
-**T-C — Composition and merge.** Exhaustive matrix: five merge kinds × value shape combinations × two and three composed sources. Plus: flattening determinism across file layouts, tie-break warning emission, merge-kind-change rejection.
+**T-C — Composition and merge.** The matrix — five merge kinds × value shape combinations × two and three composed sources — plus flattening determinism across file layouts, tie-break warning emission, and merge-kind-change rejection. It never became a separate binary: composition is proved where it lives, in `compose.rs` and `resolve.rs`, and `suites/coverage.md` maps each C requirement to the test that runs. A suite named in this document that does not exist on disk is the coverage lie T-META now checks for.
 **T-D — Correction.** For each error class the compiler can emit: a broken fixture, an assertion that the diagnostic contains a correction, and — the essential part — **an assertion that applying the correction produces compiling source.** This suite is the proof of D2 and should be the largest in the project.
 **T-E — Refactor.** For each command: blast radius correctness, post-refactor absence of the old state, roundtrip reversal — byte-identity for the commands that guarantee it, structural identity of the program for every command — and refusal-on-incomplete-radius.
 **T-F — Build.** Manifest determinism (delete and rebuild), relocation invariance (move files, diff manifest modulo locations), and incremental latency benchmarked as a hard-failing test.
@@ -119,15 +132,20 @@ This suite exists before the compiler does and is the primary gate on syntax dec
 - **Not extensible at the language level.** See A6.
 - **Not a package ecosystem.** See G5.
 ---
-## 11. Open decisions
-Unresolved by design. Each requires judgment and each should be resolved by writing the test first.
-**The name of the language.**
-**The name of the composable unit.** It must survive T-A3. Candidates carry collisions: `component` (UI prior), `type` (type-system prior), `entity` (ECS/DDD prior), `model` (ML/MVC prior). The test decides, not preference.
-**Typing discipline.** Structural, nominal, or gradual. Constrained by A1 and D1: a type system costing 3,000 characters of reference is unaffordable at any expressive benefit, and its errors must be corrections.
-**Anonymity boundary.** Anonymous inline functions are hostile to E2 — they cannot be renamed, moved, or referenced. A precise rule is needed for what may be anonymous. Working position: anything reusable must be named, anything single-use may be inline. The boundary needs definition.
-**Compilation target.** Bytecode or native. F1 is the binding constraint; strategy is not specified.
-**Diagnostic wire format.** D4 specifies the ordering of concerns, not the encoding.
----
+## 11. Decisions
+Every decision this section once listed as open is resolved, each by a record in [`decisions/`](decisions/) stating what was decided, on what evidence, and what it cost. They are named here because the constraints they were decided against are still binding:
+
+| was open | resolved |
+|---|---|
+| The name of the language | `ashlar` (0001) |
+| The name of the composable unit | `part`, chosen against the guessability corpus rather than preference (0002) |
+| Typing discipline | 0004, under A1 and D1: a type system whose errors are not corrections is unaffordable |
+| Anonymity boundary | a function is either named or handed over (0005, 0022) |
+| Compilation target | 0007, with F1 the binding constraint |
+| Diagnostic wire format | 0006 |
+
+A decision is reopened by evidence, not by preference, and reversing one is ordinary work (§1). New evidence outranks an earlier record, which was made on the evidence then available.
+
 ## 12. What is done first
 Not a process. A consequence of test dependency.
 T-A1 and T-A3 have no dependencies — they test the reference, which is written before any implementation exists. They are therefore first, and they gate everything: a reference that fails T-A1 means the language is too large, and a syntax that fails T-A3 means the surface is wrong. Neither is fixable by implementation.
@@ -141,3 +159,7 @@ The first artifact is therefore the reference under 40,000 characters, and the f
 2026-07-25 — **B5 revised** from "no source file contains a location" to "no source file binds by location," adding the `setting` construct (see docs/decisions/0020-settings-and-what-b5-actually-forbids.md). The vision's claim is that *names* are the only binding mechanism and that the build computes where things live; B5 had hardened that into a ban on a location appearing anywhere in source, which is a strictly stronger and different rule. The cost was not theoretical: with no file I/O in `std` and no way to name an address, a program could not render a list of links without a `foreign` co-process — a path to failure the requirement invented rather than the vision. Settings restore the capability without weakening the principle: the name binds, the value is deployment's, and absence fails loud at startup. Revised per §1: requirements are revised when they fail to express the vision.
 
 2026-07-25 — **E4 revised** from byte-identical reversal to reversal of the program, with byte-identity kept as a property of the commands that have it (see docs/decisions/0018-reversibility-is-a-property-not-a-law.md). The vision asks that changing intent have computable blast radius and that changes be *provably contained*; it never asks that reversal be byte-exact. Byte-identity was a proof mechanism promoted to a law, and as a law it outranked E6: `move` already had to be carved out as an exception (ADR-0009), and any future refactor needing to add a declaration would have had to refuse correct work to preserve it. T-E's byte-identity assertions are all retained — the guarantee is weaker as a requirement and unchanged as a delivered fact. Revised per §1: requirements are revised when they fail to express the vision.
+
+2026-07-27 — **§2 revised** to state both loops. The method described only the inner one: identify a requirement, write its test, build, and revise the requirement if the test cannot pass. That is a true account of how code gets written here and a false account of where the requirements came from. Every expensive finding this project has had arrived the other way — from executing a whole program against input that did not cooperate, not from a test that would not go green. A `pipe` layer rejecting a correct literal with a correction its author had applied, a boundary with no way to ask what arrived, a formatter handing a comment to the next declaration, a refusal costing three times what invention costs: each of those passed every test it had, and none of them was reachable from a stuck test, because a stuck test can only report a requirement that is unsatisfiable — never one that is wrong and perfectly satisfiable. Exposure is therefore part of the method and not a testing tactic. Revised per §1: requirements are revised when they fail to express the vision.
+
+2026-07-27 — **§11 rewritten** from "Open decisions" to the resolutions. All six had been settled by ADRs 0001–0007 and 0022 while the section still told a reader the language had no name and no compilation target. A load-bearing document that is stale is worse than one that is silent: it is confidently wrong, which is the failure D1 forbids in diagnostics and A4 forbids in syntax, applied to the requirements themselves. **§9's T-C entry** corrected in the same pass: it described a test binary that was never built, because composition is proved in `compose.rs` and `resolve.rs` where it lives.

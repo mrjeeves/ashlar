@@ -6,10 +6,10 @@ use guardrails.core
 part guardrails.core.Gate {
   review pipe = (d: guardrails.core.Decision) => {
     let fits = len(d.body) <= 24
-    return Gate.keep({
+    return {
       body: d.body,
       allowed: d.allowed and fits,
       notes: if fits { d.notes } else { [...d.notes, "over 24 characters"] },
-    })
+    }
   }
 }

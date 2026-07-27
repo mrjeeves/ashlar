@@ -237,6 +237,51 @@ impl Printer {
         self.last_emitted_line = self.last_emitted_line.max(line);
     }
 
+    /// End a construct that started at source `line` and whose source text
+    /// ran through `end_line`.
+    ///
+    /// A comment written on an inner line of a construct that PRINTS on one
+    /// line has no line of its own to go back to. It used to stay queued
+    /// until the next declaration opened and print there, so a note about
+    /// one term of an expression came out documenting the property below
+    /// it — the count was preserved, the sentence was not, and a comment
+    /// attached to the wrong thing is worse than a missing one because it
+    /// is confidently wrong.
+    ///
+    /// Whatever is still queued from inside this construct belongs to this
+    /// construct. The first leaves as its trailing comment; any others
+    /// follow on their own lines at the same indent. That is as close to
+    /// where they were written as a one-line form allows — the line they
+    /// were on no longer exists.
+    fn close_line_spanning(&mut self, line: u32, end_line: u32) {
+        let mut claimed: Vec<String> = Vec::new();
+        if let Some(t) = self.trailing(line) {
+            claimed.push(t);
+        }
+        while self.next_comment < self.comments.len() {
+            let c = &self.comments[self.next_comment];
+            if c.line > end_line {
+                break;
+            }
+            let (at, text) = (c.line, c.text.clone());
+            claimed.push(text);
+            self.last_emitted_line = self.last_emitted_line.max(at);
+            self.next_comment += 1;
+        }
+        let mut claimed = claimed.into_iter();
+        if let Some(first) = claimed.next() {
+            self.out.push_str("  ");
+            self.out.push_str(&first);
+        }
+        self.out.push('\n');
+        for rest in claimed {
+            self.pad();
+            self.out.push_str(&rest);
+            self.out.push('\n');
+        }
+        self.last_emitted_line = self.last_emitted_line.max(end_line);
+    }
+
     // -- declarations -------------------------------------------------------
 
     fn file(&mut self, f: &SrcFile) {
@@ -355,11 +400,13 @@ impl Printer {
             self.out.push_str(": ");
             self.out.push_str(&shape_text(sh));
         }
+        let mut end_line = p.name_span.end.line;
         if let Some(v) = &p.value {
             self.out.push_str(" = ");
             self.expr(v, 0);
+            end_line = end_line.max(v.span.end.line);
         }
-        self.close_line(line);
+        self.close_line_spanning(line, end_line);
     }
 
     // -- statements ---------------------------------------------------------
@@ -897,10 +944,70 @@ mod tests {
         let second = format_source(name, &formatted)
             .unwrap_or_else(|d| panic!("{}: refmt refused: {:?}\n{}", name, d, formatted));
         assert_eq!(formatted, second, "{}: fmt is not idempotent", name);
-        // Property 3: comments preserved (count).
-        let before = extract_comments(src).len();
-        let after = extract_comments(&formatted).len();
-        assert_eq!(before, after, "{}: comment count changed", name);
+        // Property 3: comments preserved — count AND home.
+        //
+        // Count alone let two silent bugs through: a note above one map key
+        // printing after the literal, and a note inside a one-line
+        // expression printing above the NEXT property. Both preserved the
+        // count and destroyed the sentence. A comment's home is the
+        // declaration it was written in, so that is what gets compared.
+        let before = comment_homes(name, src);
+        let after = comment_homes(name, &formatted);
+        assert_eq!(
+            before, after,
+            "{}: a comment changed the declaration it belongs to.\n--- formatted:\n{}",
+            name, formatted
+        );
+    }
+
+    /// Each comment paired with the declaration it belongs to.
+    ///
+    /// A comment INSIDE a declaration's source extent belongs to that
+    /// declaration; one sitting between declarations documents the one that
+    /// FOLLOWS it, which is what an own-line comment means everywhere. The
+    /// distinction is the whole point: "the last declaration before it"
+    /// cannot tell a note written inside `base`'s expression from one
+    /// stranded between `base` and `other`, and those are exactly the two
+    /// states this property has to separate.
+    fn comment_homes(name: &str, src: &str) -> Vec<(String, String)> {
+        let (toks, _) = crate::lexer::lex(name, src);
+        let parsed = crate::parser::parse(name, &toks)
+            .0
+            .unwrap_or_else(|| panic!("{}: unparseable while locating comments", name));
+        // (first line, last line, name), innermost first.
+        let mut extents: Vec<(u32, u32, String)> = Vec::new();
+        for part in &parsed.parts {
+            let pname = part.name.join(".");
+            for p in &part.props {
+                let start = p.name_span.start.line;
+                let end = p
+                    .value
+                    .as_ref()
+                    .map(|v| v.span.end.line)
+                    .unwrap_or(p.name_span.end.line);
+                extents.push((start, end, format!("{}.{}", pname, p.name)));
+            }
+            extents.push((part.span.start.line, part.span.end.line, format!("part {}", pname)));
+        }
+        extract_comments(src)
+            .iter()
+            .map(|c| {
+                let inside = extents
+                    .iter()
+                    .filter(|(s, e, _)| c.line >= *s && c.line <= *e)
+                    .min_by_key(|(s, e, _)| e - s)
+                    .map(|(_, _, n)| n.clone());
+                let home = inside.unwrap_or_else(|| {
+                    extents
+                        .iter()
+                        .filter(|(s, _, _)| *s > c.line)
+                        .min_by_key(|(s, _, _)| *s)
+                        .map(|(_, _, n)| format!("above {}", n))
+                        .unwrap_or_else(|| "<file>".to_string())
+                });
+                (c.text.clone(), home)
+            })
+            .collect()
     }
 
     /// The shapes that once did not survive formatting, both of them
@@ -939,6 +1046,23 @@ mod tests {
         assert!(
             out.contains("return if n > 9 { \"high\" } else if n < 0 { \"low\" } else { \"mid\" }"),
             "{}",
+            out
+        );
+    }
+
+    /// A comment written between the parts of an expression that PRINTS on
+    /// one line. There is no line to put it back on, so it used to move to
+    /// the next declaration and document that instead — visible rather
+    /// than silent, which is why it outlived the literal case, but wrong
+    /// all the same. It now leaves as its own property's trailing comment.
+    #[test]
+    fn a_comment_inside_a_one_line_expression_stays_with_its_property() {
+        let src = "space a\n\npart W {\n  base = 1 +\n    // the second term is the offset\n    2\n  other = 5\n}\n";
+        assert_fmt_faithful("midexpr.ash", src);
+        let out = format_source("t.ash", src).unwrap();
+        assert!(
+            out.contains("  base = 1 + 2  // the second term is the offset\n  other = 5"),
+            "the comment must stay with `base`, not migrate onto `other`:\n{}",
             out
         );
     }
@@ -1083,3 +1207,4 @@ mod tests {
         assert!(out.contains("[\n    \"one\",\n    \"two\",\n  ]"), "{}", out);
     }
 }
+

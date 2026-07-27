@@ -37,10 +37,13 @@ part padPage {
 part make {
   route = "/new"
   handle pipe = (req: std.Request) => {
-    if req.data == none {
-      return fail(400, "a title, please")
-    }
-    let title = text(req.data["title"] ?? "")
+    // `fields` is the one question a boundary needs and could not ask:
+    // everything from outside is `data`, a union, and this answers `none`
+    // for every member of it that is not a map. One guard covers a missing
+    // body, a body that is not JSON, and a body that is JSON but not an
+    // object — and the refusal is the caller's 400, not the server's 500.
+    let form = fields(req.data) ?? fail(400, "a title, please")
+    let title = text(form["title"] ?? "")
     let key = slug(if title != "" { title } else { "pad" })
     slate.data.Store.ensurePad(key, if title != "" { title } else { key })
     return redirect("/p/" + key)
@@ -102,9 +105,7 @@ part padApi {
 part editApi {
   route = "/api/edit/{key}"
   handle pipe = (req: std.Request) => {
-    if req.data == none {
-      return fail(400, "an edit is a JSON object: { base, body, who }")
-    }
+    let e = fields(req.data) ?? fail(400, "an edit is a JSON object: { base, body, who }")
     let key = req.params["key"]!
     if slate.data.Store.pads[key] == none {
       return fail(404, "no such pad")
@@ -113,10 +114,10 @@ part editApi {
     // answer a malformed request with a cheerful 200 for work that never
     // happened. `data` keeps the difference between "" and missing;
     // asking is the whole cost of not lying to the caller.
-    if req.data["body"] == none {
+    if e["body"] == none {
       return fail(400, "`body` is the pad's new text; an edit without one is not an edit")
     }
-    let why = slate.data.Store.commit(key, text(req.data["base"] ?? ""), text(req.data["body"] ?? ""), text(req.data["who"] ?? "a script"))
+    let why = slate.data.Store.commit(key, text(e["base"] ?? ""), text(e["body"] ?? ""), text(e["who"] ?? "a script"))
     if why != "" {
       return fail(409, why)
     }

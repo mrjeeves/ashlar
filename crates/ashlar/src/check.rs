@@ -62,6 +62,7 @@ pub fn check(
     let mut sites: Vec<FieldSite> = Vec::new();
     let mut tables = Tables::build(program, composed);
     refine_recursive_returns(program, &mut tables);
+    establish_pipe_returns(program, composed, &mut tables);
     let mut pipe_defs: Vec<PipeDef> = Vec::new();
     for idx in 0..program.files.len() {
         let space = ast::name_to_string(&program.files[idx].ast.space);
@@ -85,6 +86,8 @@ pub fn check(
                 sites: Vec::new(),
                 pending_stack: false,
                 stack_ctx: None,
+                pending_ret: None,
+                ret_ctx: None,
                 pipe_defs: Vec::new(),
             };
             cx.check_part_decl(decl);
@@ -150,7 +153,28 @@ fn check_pipe_agreement(
         let mut ret_base: Option<(S, String)> = declared
             .as_ref()
             .filter(|(_, r)| !r.is_unknown())
-            .map(|(_, r)| (r.clone(), "the declared shape".to_string()));
+            .map(|(_, r)| (r.clone(), "the declared shape".to_string()))
+            .or_else(|| {
+                // ADR-0025: where the layers establish one nominal shape, the
+                // baseline is that shape — not whichever layer the file walk
+                // reached first. Seeded by file order, the correction can
+                // point at the untyped side and read "make every layer return
+                // `{text: data}`", instructing the author to delete the
+                // annotation that was right.
+                //
+                // Only across layers, though. Agreement is a property BETWEEN
+                // layers; with one layer there is nothing to agree with, and
+                // seeding a shape derived from that layer's own branches would
+                // report it for disagreeing with itself — a lone layer
+                // returning `V` or `none` returns `V?` and is correct.
+                if defs.len() < 2 {
+                    return None;
+                }
+                tables
+                    .pipe_ret
+                    .get(&(part.clone(), prop.clone()))
+                    .map(|r| (r.clone(), "the shape its layers name".to_string()))
+            });
         for d in &defs {
             if !d.param.is_unknown() {
                 match &param_base {
@@ -208,7 +232,9 @@ fn check_pipe_agreement(
 }
 
 fn origin_phrase(origin: &str) -> String {
-    if origin == "the declared shape" {
+    // Baselines that are not a file: written down, or established across the
+    // layers (ADR-0025). Everything else names the file the layer is in.
+    if origin.starts_with("the ") {
         origin.to_string()
     } else {
         format!("the layer in `{}`", origin)
@@ -460,6 +486,10 @@ struct Tables {
     storage_props: BTreeMap<String, BTreeSet<String>>,
     /// foreign full name and per-space bare -> function shape.
     foreigns: BTreeMap<String, S>,
+    /// (full part name, pipe prop) -> the return shape fixed from outside the
+    /// body, pushed into that property's `return` positions (ADR-0025).
+    /// Absent where no such shape is established; never a guess.
+    pipe_ret: BTreeMap<(String, String), S>,
 }
 
 impl Tables {
@@ -625,6 +655,7 @@ impl Tables {
             data_shape_fields,
             storage_props,
             foreigns,
+            pipe_ret: BTreeMap::new(),
         }
     }
 }
@@ -682,6 +713,8 @@ fn refine_recursive_returns(program: &Program, tables: &mut Tables) {
                         sites: Vec::new(),
                         pending_stack: false,
                         stack_ctx: None,
+                        pending_ret: None,
+                        ret_ctx: None,
                         pipe_defs: Vec::new(),
                     };
                     let returns = cx.fn_return_branches(params, body);
@@ -721,6 +754,128 @@ fn refine_recursive_returns(program: &Program, tables: &mut Tables) {
 /// Resolve an AST shape annotation to an inference shape, from `space`'s
 /// point of view. Unresolvable part names (already E001/E002 elsewhere)
 /// become Unknown rather than erroring twice.
+/// Establish, per `pipe` property, the return shape that is fixed by
+/// something other than the body being checked (ADR-0025). A `return` is a
+/// shape position like any other, but a function's return shape is inferred
+/// from its returns rather than pushed into them, so a map literal at a
+/// `return` was only ever compared to what it structurally resembles.
+///
+/// Two sources count as fixed-from-outside, in order:
+///
+/// 1. The property's declared shape. Written down, so it decides.
+/// 2. Exactly one nominal data shape among the return branches of the
+///    property's layers — the `(v: V) => v` base layer that gives a chain
+///    its shape. Two distinct nominal shapes is a real disagreement and is
+///    left to `check_pipe_agreement`; zero establishes nothing.
+///
+/// Absence is the safe answer everywhere (A4): where no shape is
+/// established the checker infers exactly as it did before. Diagnostics
+/// from these speculative walks are discarded; the main pass re-emits them.
+fn establish_pipe_returns(
+    program: &Program,
+    composed: &BTreeMap<String, ComposedPart>,
+    tables: &mut Tables,
+) {
+    let mut nominals: BTreeMap<(String, String), BTreeSet<String>> = BTreeMap::new();
+    for idx in 0..program.files.len() {
+        let space = ast::name_to_string(&program.files[idx].ast.space);
+        if !program.spaces.contains_key(&space) {
+            continue;
+        }
+        let file = program.files[idx].path.clone();
+        for decl in &program.files[idx].ast.parts {
+            let part_full = if decl.name.len() == 1 {
+                format!("{}.{}", space, decl.name[0])
+            } else {
+                ast::name_to_string(&decl.name)
+            };
+            for prop in &decl.props {
+                if !matches!(
+                    prop.kind.as_ref().map(|k| k.kind),
+                    Some(ast::MergeKind::Pipe)
+                ) {
+                    continue;
+                }
+                let Some(value) = &prop.value else { continue };
+                let Expr::FnLit(params, body) = &value.expr else { continue };
+                let mut cx = Cx {
+                    tables,
+                    space: space.clone(),
+                    file: file.clone(),
+                    part_full: part_full.clone(),
+                    locals: Vec::new(),
+                    diags: Vec::new(),
+                    sites: Vec::new(),
+                    pending_stack: false,
+                    stack_ctx: None,
+                    pending_ret: None,
+                    ret_ctx: None,
+                    pipe_defs: Vec::new(),
+                };
+                let returns = cx.fn_return_branches(params, body);
+                let seen = nominals
+                    .entry((part_full.clone(), prop.name.clone()))
+                    .or_default();
+                for r in returns {
+                    if let S::Part(p) = &r {
+                        if tables.data_shape_fields.contains_key(p) {
+                            seen.insert(p.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut established: BTreeMap<(String, String), S> = BTreeMap::new();
+    for (key, seen) in nominals {
+        let declared = composed
+            .get(&key.0)
+            .and_then(|cp| cp.props.get(&key.1))
+            .and_then(|p| p.shape.as_ref())
+            .and_then(|sh| {
+                let home = program.parts.get(&key.0).map(|i| i.home.as_str()).unwrap_or("");
+                match resolve_shape_in(&tables.bare, home, sh) {
+                    S::Fn(ps, r) if ps.len() == 1 && !r.is_unknown() => Some(*r),
+                    _ => None,
+                }
+            });
+        match declared {
+            Some(r) => {
+                established.insert(key, r);
+            }
+            None if seen.len() == 1 => {
+                let only = seen.into_iter().next().unwrap();
+                established.insert(key, S::Part(only));
+            }
+            None => {}
+        }
+    }
+
+    // The established shape is the property's return shape, and outranks what
+    // `refine_recursive_returns` read off the bodies: a layer returning a map
+    // literal would otherwise refine the whole chain's return to `{text: data}`
+    // and every caller of `Gate.review(...).allowed` would lose its fields.
+    let mut updates: Vec<(String, String, S)> = Vec::new();
+    for (key, r) in &established {
+        if let Some(S::Fn(ps, cur)) = tables.part_props.get(&key.0).and_then(|m| m.get(&key.1)) {
+            if **cur != *r {
+                updates.push((
+                    key.0.clone(),
+                    key.1.clone(),
+                    S::Fn(ps.clone(), Box::new(r.clone())),
+                ));
+            }
+        }
+    }
+    for (part, prop, s) in updates {
+        if let Some(m) = tables.part_props.get_mut(&part) {
+            m.insert(prop, s);
+        }
+    }
+    tables.pipe_ret = established;
+}
+
 fn resolve_shape_in(
     bare: &BTreeMap<String, BTreeMap<String, String>>,
     space: &str,
@@ -774,6 +929,13 @@ struct Cx<'a> {
     /// While walking a stack layer's body: the part whose storage props
     /// constrain return literals. Cleared for nested function literals.
     stack_ctx: Option<String>,
+    /// Set just before inferring a `pipe` prop's value: the NEXT function
+    /// literal walked has its return shape fixed from outside its body
+    /// (ADR-0025), so `return` map literals are checked against it.
+    pending_ret: Option<S>,
+    /// While walking such a body: the shape a returned map literal must fit.
+    /// Cleared for nested function literals, which are plain functions again.
+    ret_ctx: Option<S>,
     /// Pipe layers observed in this declaration, for the agreement pass.
     pipe_defs: Vec<PipeDef>,
 }
@@ -823,8 +985,16 @@ impl<'a> Cx<'a> {
                         if matches!(kind, Some(ast::MergeKind::Stack)) {
                             self.pending_stack = true;
                         }
+                        if matches!(kind, Some(ast::MergeKind::Pipe)) {
+                            self.pending_ret = self
+                                .tables
+                                .pipe_ret
+                                .get(&(self.part_full.clone(), prop.name.clone()))
+                                .cloned();
+                        }
                         let inferred = self.infer(value);
                         self.pending_stack = false;
+                        self.pending_ret = None;
                         // Record pipe layers for the agreement pass (§4).
                         if matches!(kind, Some(ast::MergeKind::Pipe)) {
                             if let (Expr::FnLit(params, _), S::Fn(ps, ret)) =
@@ -1119,6 +1289,15 @@ impl<'a> Cx<'a> {
                 Stmt::Return(Some(e), _) => {
                     if self.stack_return_literal(e) {
                         returns.push(S::Unknown);
+                    } else if let Some(exp) = self.returned_literal_expectation(e) {
+                        // ADR-0025: a `return` is a shape position. Check the
+                        // literal against the shape this property already has,
+                        // exactly as an argument literal is checked, and let it
+                        // contribute THAT shape — not the map it structurally
+                        // resembles, which would fail to join with its
+                        // siblings and degrade the whole block to `Unknown`.
+                        self.check_against(e, &exp);
+                        returns.push(exp);
                     } else {
                         let s = self.infer(e);
                         returns.push(s);
@@ -1131,6 +1310,22 @@ impl<'a> Cx<'a> {
             }
         }
         self.locals.pop();
+    }
+
+    /// The shape a returned expression must be checked against, when there
+    /// is one and the expression is a literal that can be checked
+    /// structurally (ADR-0025).
+    ///
+    /// Deliberately narrow: only a map literal, and only where `ret_ctx`
+    /// established a shape. Pushing the expectation onto every returned
+    /// expression would reject `return none` from a function whose other
+    /// branch returns a shape — a legal optional today, and A4 ranks a
+    /// rejected correct program above a missed error.
+    fn returned_literal_expectation(&self, e: &SExpr) -> Option<S> {
+        match (&self.ret_ctx, &e.expr) {
+            (Some(exp), Expr::MapLit(_)) => Some(exp.clone()),
+            _ => None,
+        }
     }
 
     /// When walking a stack layer's body, a direct `return { ... }` literal
@@ -1430,6 +1625,11 @@ impl<'a> Cx<'a> {
                     None
                 };
                 let saved = std::mem::replace(&mut self.stack_ctx, ctx);
+                // Likewise a pending return shape (ADR-0025): it belongs to
+                // THIS literal's returns, and a nested literal is a plain
+                // function whose returns are its own again.
+                let rctx = self.pending_ret.take();
+                let saved_ret = std::mem::replace(&mut self.ret_ctx, rctx);
                 self.locals.push(BTreeMap::new());
                 let mut ps = Vec::new();
                 for p in params {
@@ -1441,6 +1641,9 @@ impl<'a> Cx<'a> {
                     FnBody::Expr(x) => {
                         if self.stack_return_literal(x) {
                             S::Unknown
+                        } else if let Some(exp) = self.returned_literal_expectation(x) {
+                            self.check_against(x, &exp);
+                            exp
                         } else {
                             self.infer(x)
                         }
@@ -1449,6 +1652,7 @@ impl<'a> Cx<'a> {
                 };
                 self.locals.pop();
                 self.stack_ctx = saved;
+                self.ret_ctx = saved_ret;
                 S::Fn(ps, Box::new(ret))
             }
         }
@@ -2045,6 +2249,20 @@ impl<'a> Cx<'a> {
                 }
                 S::Data.opt()
             }
+            "fields" => {
+                // ADR-0026: `data` is a union with no discriminator. This is
+                // the one question a boundary could not ask — `number(t)` and
+                // `json(t)` already answer "not that shape" with `none`, and
+                // there was no equivalent for "is this a map", so a body that
+                // is valid JSON but not an object faulted on the first index.
+                //
+                // It answers `data?`, exactly as `json(t)` does, so what comes
+                // back is read the same way the body would have been —
+                // `body!.line`, not a second indexing idiom. Only the
+                // knowledge changed, not the value.
+                arity(self, 1);
+                S::Data.opt()
+            }
             "now" => {
                 arity(self, 0);
                 S::Number
@@ -2538,6 +2756,90 @@ mod agreement_tests {
             ),
         ]);
         assert!(r.diags.is_empty(), "{:?}", r.diags);
+    }
+
+    // -- ADR-0025: a `return` is a shape position --
+
+    /// The reproduction ADR-0025 records as its first acceptance case: a
+    /// layer returning a complete, correctly-shaped literal was REJECTED,
+    /// with a correction its author had already followed.
+    #[test]
+    fn a_pipe_layer_returning_a_shaped_literal_is_clean() {
+        let r = check_sources(vec![
+            (
+                "base.ash".to_string(),
+                "space probe\n\npart V {\n  a: text\n  n: number\n}\n\npart S {\n  chain pipe = (v: probe.V) => v\n}\n".to_string(),
+            ),
+            (
+                "layer.ash".to_string(),
+                "space probe.more\nuse probe\n\npart probe.S {\n  chain pipe = (v: probe.V) => {\n    return { a: v.a + \"!\", n: v.n + 1 }\n  }\n}\n".to_string(),
+            ),
+        ]);
+        assert!(r.diags.is_empty(), "{:?}", r.diags);
+    }
+
+    /// ADR-0025's second acceptance case, and the one with teeth: this used
+    /// to compile with zero diagnostics — the two returns failed to join,
+    /// the block degraded to `Unknown`, and a required field reached the
+    /// wire missing. Statically decidable, so D3 admits no third category.
+    #[test]
+    fn a_return_disagreeing_with_the_agreed_shape_names_the_missing_field() {
+        let d = e006(
+            "space probe\n\npart V {\n  a: text\n  n: number\n}\n\npart S {\n  four pipe = (v: probe.V) => {\n    if v.n > 5 {\n      return { a: \"hot\" }\n    }\n    return v\n  }\n}\n",
+        );
+        assert_eq!(d.len(), 1, "{:?}", d);
+        let m = d[0].human();
+        assert!(m.contains("a `probe.V` needs `n`"), "{}", m);
+    }
+
+    /// The expectation reaches only literals. A branch that legitimately
+    /// returns `none` still joins into an optional rather than being
+    /// rejected — pushing the shape onto every returned expression would
+    /// turn a missed error into a false one, which A4 ranks as worse.
+    #[test]
+    fn a_none_branch_beside_a_shaped_return_is_still_clean() {
+        clean(
+            "space probe\n\npart V {\n  a: text\n}\n\npart S {\n  pick pipe = (v: probe.V) => {\n    if v.a == \"\" {\n      return none\n    }\n    return v\n  }\n}\n",
+        );
+    }
+
+    /// The expectation belongs to ONE literal's returns. A function nested
+    /// inside a pipe layer is a plain function again, and its returns are
+    /// its own — the same scoping `stack_ctx` has, for the same reason.
+    #[test]
+    fn a_nested_function_returns_its_own_shape_not_the_layers() {
+        clean(
+            "space p\n\npart V {\n  a: text\n}\n\npart S {\n  f pipe = (v: p.V) => {\n    let rows = map([\"x\"], (t: text) => {\n      return { anything: t, junk: 1 }\n    })\n    return v\n  }\n}\n",
+        );
+    }
+
+    /// With one nominal shape established, the correction names IT — not
+    /// whichever layer the file walk reached first. Seeded by file order it
+    /// read `Make every layer return {text: data}`, telling the author to
+    /// delete the annotation that was right.
+    #[test]
+    fn the_return_shape_correction_names_the_shape_not_the_first_file() {
+        let r = check_sources(vec![
+            (
+                "base.ash".to_string(),
+                "space probe\n\npart V {\n  a: text\n}\n\npart S {\n  chain pipe = (v: probe.V) => v\n}\n".to_string(),
+            ),
+            (
+                "layer.ash".to_string(),
+                "space probe.more\nuse probe\n\npart probe.S {\n  chain pipe = (v: probe.V) => 7\n}\n".to_string(),
+            ),
+        ]);
+        let msgs: Vec<String> = r.diags.iter().map(|d| d.human()).collect();
+        assert!(
+            msgs.iter().any(|m| m.contains("Make every layer return `probe.V`")),
+            "{:?}",
+            msgs
+        );
+        assert!(
+            !msgs.iter().any(|m| m.contains("Make every layer return `number`")),
+            "the correction must not point at the untyped side: {:?}",
+            msgs
+        );
     }
 
     #[test]

@@ -5,12 +5,12 @@ The paper trail, in the order the hierarchy reads it:
 | file | what it is |
 |---|---|
 | [`vision.md`](vision.md) | The fixed principles. Everything below serves this. |
-| [`requirements.md`](requirements.md) | Numbered, testable requirements (A–G series) with the suite map. |
-| [`roadmap.md`](roadmap.md) | The honest "not yet" ledger. Open section currently carries three items; below it, the dated record of what was delivered and what proves it. |
+| [`requirements.md`](requirements.md) | Numbered, testable requirements (A–G), the two-loop method, and the suite map. |
+| [`roadmap.md`](roadmap.md) | The open ledger: what is not yet true. Delivered work is not recorded here — `suites/coverage.md`, `decisions/`, and `git log` each hold it better. |
 | [`diagnostics.md`](diagnostics.md) | The stable diagnostic catalog: E001–E030 + W001, each with its requirement, stage, cause, and correction. |
-| [`decisions/`](decisions/) | ADRs 0001–0028: what was decided, why, and what it cost — from the name itself to the stylesheet boundary, view reconciliation, semantic freedom and derivability, the origin-not-edge deployment posture, the proposed data layer (databases named in source, bound in deployment; kept off the loop's blocking path), the storage-scope cleanup (retire `synced`, add per-user scope — spelled `peruser` since ADR-0019), the shared design language + live showcase for the examples (with the `--port` run-time override), the foreign boundary as a capability whose transport is bound in deployment (keyed by space name, so the refactors, the checker, and the manifest all see it), reversibility recast as a property specific refactors have rather than a law over all of them, the A3 run-3 cold-read findings that respelled `owned` to `peruser` and `reads`/`writes` to `watches`/`updates`, settings and what B5 actually forbids, the two A3 runs whose readers were not cold, a function being either named or handed over, run 5 and the word order behind A3-F1, why a formatter that loses code is not a formatter, the finding that a `return` is not yet a shape position, `data` being a union with no discriminator, a subscriber's fault being that subscriber's, and what a snapshot transport can and cannot merge. |
-| [`ontology.md`](ontology.md) | An essay reading Ashlar as a philosophical ontology: the clean metaphysical reading, six strains, and where the metaphysics actually lives. Reflective, not normative. |
-| [`philosophical_edges.md`](philosophical_edges.md) | The essay's open questions in working form — philosophical guidance for the ongoing design. |
+| [`decisions/`](decisions/) | The ADRs: what was decided, on what evidence, and what it cost. Numbered in order; a new file only when a decision REVERSES an earlier one, and a decision that deferred its own implementation is closed in place. Read the index by title — restating them here is a copy that goes stale. |
+| [`writing-ashlar.md`](writing-ashlar.md) | The traps that catch agents who guess instead of reading the reference. Deliberately not imported by `AGENTS.md` — see the A3 isolation rule. |
+| [`ontology.md`](ontology.md) | An essay reading Ashlar as a philosophical ontology, with [`philosophical_edges.md`](philosophical_edges.md) carrying its open questions. Reflective, not normative: nothing in either constrains the work. |
 
 Agents working in this repo start at [`../AGENTS.md`](../AGENTS.md).
 The language reference lives in [`../reference/ashlar.md`](../reference/ashlar.md)

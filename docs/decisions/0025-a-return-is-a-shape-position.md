@@ -2,7 +2,7 @@
 
 Date: 2026-07-26
 
-Status: accepted; the checker change is open work (docs/roadmap.md)
+Status: accepted; implemented 2026-07-27 (see Resolution)
 
 ## Context
 
@@ -124,3 +124,40 @@ must compile, the second must not.
 - The corpus gains the second reproduction as a fixture when the work
   lands: a program that compiles clean and serves `null` for a required
   field is a T-A4 case (loud failure) that currently is not loud.
+
+## Resolution (2026-07-27)
+
+Implemented; both halves closed by one change, as predicted. Two things
+this decision left open, because neither could be settled without writing
+the pass:
+
+**What counts as "fixed by something other than its own body"?** The
+property's **declared shape** — written down, so it decides. Otherwise,
+**exactly one nominal data shape among the return branches of the
+property's layers**: the `(v: V) => v` base layer, whose return comes from
+a parameter annotation. Two distinct nominal shapes establish nothing —
+that is a real disagreement, already reported. **Absence is the safe
+answer**: where nothing is established the checker infers as before, so
+the pass can only add precision, never invent it. The established shape
+also becomes the property's return shape in the tables, outranking what
+`refine_recursive_returns` read off the bodies — without that, a layer
+returning a map literal refines the whole chain to `{text: data}` and
+every caller of `Gate.review(...).allowed` loses its fields. The first run
+did exactly that to `examples/guardrails`.
+
+**How far does the expectation reach?** To **map literals at a `return`**,
+and no further. A function whose one branch returns `V` and whose other
+returns `none` has return shape `V?` and is correct; pushing `V` onto
+every return rejects it — the exact trade A4 forbids. A map literal is the
+one form that cannot be wrong about what it *is*. Relatedly, the
+established shape seeds the agreement baseline only where two or more
+layers exist: with one layer there is nothing to agree with, and a
+baseline drawn from that layer's own branches reports it for disagreeing
+with itself. The `none` test caught that on the first run.
+
+`Gate.keep` is gone from `guardrails`. The correction points the right way
+— seeded by file order it read `Make every layer return `{text: data}``,
+deleting the annotation that was right. §5's sentence is true of the
+binary again, so the note above about §5 reading stricter than `ashlar
+check` no longer applies. One bound: a **list** literal at a `return` is
+still inferred, and that narrowness is what protects `return none`.

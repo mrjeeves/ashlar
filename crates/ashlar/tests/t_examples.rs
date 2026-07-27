@@ -1160,17 +1160,21 @@ fn t_examples_slate_merges_two_people_typing_at_once() {
         let (got, _, _) = req(port, "POST", "/api/edit/welcome", Some(body), None);
         assert_eq!(got, *want, "malformed edit `{}` must be refused, not written", body);
     }
-    // The one hostile shape no guard in this language can express: a body
-    // that is valid JSON but not an object. `data` is a union with no
-    // discriminator — `number(t)` and `json(t)` answer "not that shape"
-    // with `none`, and nothing answers "is this a map" — so the first
-    // index faults and the caller's malformed input is reported as the
-    // server's fault. Asserted as it IS, with the ADR that says what it
-    // should be; when that lands, this assertion is the one to update.
-    for body in ["[1,2,3]", "42"] {
+    // The shape that used to have no guard: valid JSON, but not an object.
+    // `data` is a union, and nothing answered "is this a map", so the first
+    // index faulted and the caller's choice was reported as the server's
+    // fault — a 500 whose message began `internal:`. `fields` asks it now
+    // (ADR-0026), so the refusal is the route's own 400 and the message is
+    // one the route wrote.
+    for body in ["[1,2,3]", "42", "\"hello\""] {
         let (status, _, seen) = req(port, "POST", "/api/edit/welcome", Some(body), None);
-        assert_eq!(status, 500, "ADR-0026: a non-object JSON body still ends as a 500");
-        assert!(seen.contains("internal:"), "and is still labelled internal: {}", seen);
+        assert_eq!(status, 400, "a non-object JSON body is the caller's fault: {}", seen);
+        assert!(
+            !seen.contains("internal:"),
+            "and the runtime does not take the blame for it: {}",
+            seen
+        );
+        assert!(seen.contains("JSON object"), "the refusal says what was wanted: {}", seen);
     }
 
     // Presence departs with the socket, like any other unmount (§9.5).
