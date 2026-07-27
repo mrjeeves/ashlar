@@ -518,6 +518,23 @@ inline function taking zero parameters or one (`(e: std.Event) => ...`;
 `std.Event` has `name: text` and `data: data`). Serving a view part directly
 from a `route` wires all of this up; no other setup exists.
 
+A `title` element in a view names the page: it sets the browser tab, and
+because it re-renders like any other element, a title that reads state
+follows it.
+
+```ash
+space site
+
+part pad {
+  route = "/pad"
+  state name: text = "untitled"
+  view = () => el("div", {}, [
+    el("title", {}, ["pad — " + name]),
+    el("h1", {}, [name]),
+  ])
+}
+```
+
 Appearance is bound by name, never by a location in source. Elements carry
 `class` names; a stylesheet supplies the rules. The server root names its
 sheet — `style = "app"` resolves to `assets/app.css` like `files` (§9.8), a

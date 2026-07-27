@@ -294,6 +294,123 @@ part c {
 }
 
 #[test]
+fn t_g_a_view_names_its_page_and_the_title_follows_state() {
+    // covers: G4 (§9.4) — found by driving `counter` with a real browser.
+    // Every served page had an empty tab, and nothing in the reference said
+    // how to name one. A `title` element in a view does it, and because it
+    // re-renders like any other element the tab follows state. The capability
+    // was there; the sentence describing it was not, which is an A2 defect —
+    // a correct program needing knowledge the reference does not contain.
+    let app = r#"space demo
+
+part Server {
+  port = 0
+}
+
+part page {
+  route = "/"
+  state n: number = 0
+  view = () => el("div", {}, [
+    el("title", {}, ["count " + text(n)]),
+    el("button", { onclick: bump }, ["clicked " + text(n)]),
+  ])
+  bump = () => {
+    n = n + 1
+  }
+}
+"#;
+    let root = fixture("pagetitle", &[("app.ash", app)]);
+    let (port, stop, join) = start(root);
+
+    let (status, _, html) = http_req_full(port, "GET", "/", None, None);
+    assert_eq!(status, 200);
+    assert!(
+        html.contains("<title>count 0</title>"),
+        "the view's title must reach the document: {}",
+        html
+    );
+    let instance = attr_of(&html, "data-ash-instance").unwrap();
+    let hid = attr_of(&html, "data-ash-h").unwrap();
+
+    // The tab follows state: the patch carries the new title, and carries
+    // exactly one — a second would leave the browser showing either.
+    let ev = format!(
+        r#"{{"event":{{"instance":"{}","h":"{}","name":"onclick"}}}}"#,
+        instance, hid
+    );
+    let reply = ws_roundtrip(port, &ev);
+    assert!(
+        reply.contains("count 1"),
+        "the title must re-render with the state it read: {}",
+        reply
+    );
+    assert_eq!(
+        reply.matches("<title>").count(),
+        1,
+        "exactly one title per patch: {}",
+        reply
+    );
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}
+
+#[test]
+fn t_g3_a_view_instances_state_does_not_survive_reload() {
+    // covers: G3 — the other half of hot reload, and the half the flat
+    // requirement used to get wrong. `t_g3_hot_reload_preserves_state`
+    // proves a full-name-addressable state property carries over. A view
+    // instance's `state` belongs to a PAGE, and the page is gone: driving
+    // `counter` with a real browser through a source edit took the count
+    // from 3 to 0 while the socket reconnected against the new code.
+    //
+    // That is what the reference describes — "state properties carry over by
+    // full name, and open pages reconnect and re-render themselves" — and it
+    // is what G3 now says. The test exists so the two halves cannot drift:
+    // this one must keep failing to preserve, and its sibling must keep
+    // preserving.
+    let v1 = r#"space demo
+
+part Server {
+  port = 0
+}
+
+part page {
+  route = "/"
+  state n: number = 0
+  view = () => el("button", { onclick: bump }, ["v1 " + text(n)])
+  bump = () => {
+    n = n + 1
+  }
+}
+"#;
+    let root = fixture("reload-instance", &[("app.ash", v1)]);
+    let (port, stop, join) = start(root.clone());
+
+    let (_, _, html) = http_req_full(port, "GET", "/", None, None);
+    let instance = attr_of(&html, "data-ash-instance").unwrap();
+    let hid = attr_of(&html, "data-ash-h").unwrap();
+    let ev = format!(
+        "{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onclick\"}}}}",
+        instance, hid
+    );
+    let bumped = ws_roundtrip(port, &ev);
+    assert!(bumped.contains("v1 1"), "{}", bumped);
+
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    std::fs::write(root.join("app.ash"), v1.replace("v1 ", "v2 ")).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1200));
+
+    // A page loading after the reload gets the new code and a fresh instance
+    // at its default — not the 1 the previous page had reached.
+    let (_, _, after) = http_req_full(port, "GET", "/", None, None);
+    assert!(after.contains("v2 0"), "new code, instance state reborn: {}", after);
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}
+
+#[test]
 fn t_g_scheduled_task_runs() {
     // covers: G4 (scheduled tasks), reference 9.7
     let app = r#"space demo
