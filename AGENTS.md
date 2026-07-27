@@ -97,7 +97,12 @@ and superseding one is ordinary work.
    `examples/` compiles clean, is canonically formatted, and is DRIVEN
    at runtime over real HTTP/WebSockets. A broken example is a failing
    test, not a discovery. New feature → consider showing it in an
-   example; new example → it gets a runtime test.
+   example; new example → it gets a runtime test. The client that drives
+   them is one this repo wrote, which is exactly the client that cannot
+   find what a browser finds — so T-BROWSER drives the same corpus with a
+   real one, and a finding is not closed until it is closed THERE. Its
+   first run proved the point: the favicon capability had landed and no
+   example served one.
 9. **Refactors never partially apply** (E-series): blast radius first,
    atomic apply, post-verify rollback, and reversal to the same PROGRAM
    — same parts and homes, same composition order, and a visibility
@@ -138,7 +143,9 @@ T-B (resolution, banned words, no locations in source),
 T-D/T-D5 (fix round-trips; mean rounds-to-clean), T-E (refactor proofs),
 T-F/T-F1 (manifest determinism + the release-only latency gate),
 T-G (runtime conformance), T-META (docs, coverage honesty, no-deps),
-t_examples (the showcase, both depths). `suites/coverage.md` maps every
+t_examples (the showcase, both depths), T-BROWSER (the corpus under a real
+browser — hand-run like T-A3, never in CI because it needs a browser and
+node; protocol and recorded runs in `suites/t_browser/`). `suites/coverage.md` maps every
 requirement id to the test that proves it, and T-META now checks that map
 is not lying in either direction. Every new behavior lands with
 the test that would catch its regression — no exceptions, that is what

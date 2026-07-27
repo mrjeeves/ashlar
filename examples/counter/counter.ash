@@ -9,6 +9,14 @@ part app {
 // program code. el(tally, {...}) instantiates the part below and sets
 // its `label` prop (§9.4). Appearance is a named boundary: the elements
 // carry only `class` names, which meet assets/counter.css by name.
+// Every browser asks for this on every page load. `files` naming one file
+// answers one route exactly (§9.8) — a directory here would need `route = "/"`,
+// which the page below already has.
+part icon {
+  route = "/favicon.ico"
+  files = "favicon.ico"
+}
+
 part page {
   route = "/"
   view = () => el("div", { class: "stage" }, [
