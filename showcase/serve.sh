@@ -12,9 +12,23 @@ set -u
 cd "$(dirname "$0")/.."
 BIN=target/release/ashlar
 
-if [ ! -x "$BIN" ]; then
-  echo "building the release binary first…"
+# Build, rather than build-only-if-missing. `cargo build` IS the incremental
+# build system — it is a no-op in a fraction of a second when nothing
+# changed — and the old check ran whatever binary happened to be lying
+# around, so a `git pull` left you serving the code from before it. For a
+# showcase whose whole claim is "the frames are the real servers", running
+# yesterday's compiler against today's examples is the one failure that
+# looks like success.
+if command -v cargo >/dev/null 2>&1; then
+  echo "building (a no-op if nothing changed)…"
   cargo build --release || { echo "build failed"; exit 1; }
+elif [ ! -x "$BIN" ]; then
+  echo "no cargo, and no $BIN to fall back on."
+  echo "Install Rust 1.65 or newer and run this again."
+  exit 1
+else
+  echo "note: cargo is not on PATH, so $BIN is used as-is —"
+  echo "      it may predate this checkout."
 fi
 
 # name:port — the map examples/gallery/settings.json mirrors for the sixteen it
@@ -89,6 +103,8 @@ else
 fi
 
 PIDS=()
+NAMES=()
+LOGS=".showcase-logs"
 cleanup() {
   echo
   echo "stopping…"
@@ -98,19 +114,57 @@ cleanup() {
 }
 trap cleanup INT TERM
 
+# Each example keeps its own log. This used to be `>/dev/null 2>&1`, which
+# threw away the only evidence of a program that refused to start — a
+# missing setting, a port already taken, a stored value that no longer fits
+# its shape. The line below printed anyway, so the launcher said a server
+# was at an address where nothing was listening.
+mkdir -p "$LOGS"
+
 echo
 for entry in "${EXAMPLES[@]}"; do
   name="${entry%%:*}"
   port="${entry##*:}"
-  "$BIN" run "examples/$name" --port "$port" >/dev/null 2>&1 &
+  "$BIN" run "examples/$name" --port "$port" > "$LOGS/$name.log" 2>&1 &
   PIDS+=($!)
+  NAMES+=("$name")
   printf '  %-12s http://127.0.0.1:%s\n' "$name" "$port"
 done
 
+# Starting a background process says nothing about whether it stayed
+# started, so ask before claiming. A launcher that reports success it did
+# not check is worse than one that reports nothing.
+sleep 1
+DEAD=()
+for i in "${!PIDS[@]}"; do
+  if ! kill -0 "${PIDS[$i]}" 2>/dev/null; then
+    DEAD+=("${NAMES[$i]}")
+  fi
+done
+
 echo
-echo "All seventeen are up. Open the gallery:"
-echo
-echo "  http://127.0.0.1:8080"
+if [ ${#DEAD[@]} -eq 0 ]; then
+  echo "All ${#PIDS[@]} are up. Open the gallery:"
+  echo
+  echo "  http://127.0.0.1:8080"
+else
+  echo "${#DEAD[@]} of ${#PIDS[@]} did not start: ${DEAD[*]}"
+  for name in "${DEAD[@]}"; do
+    echo
+    echo "  $name said:"
+    tail -n 6 "$LOGS/$name.log" 2>/dev/null | sed 's/^/    /'
+  done
+  echo
+  echo "  Full output for every example is in $LOGS/."
+  if printf '%s\n' "${DEAD[@]}" | grep -qx gallery; then
+    echo "  The gallery is the page on 8080, so that address will refuse to connect."
+  else
+    echo
+    echo "  The rest are up. Open the gallery:"
+    echo
+    echo "    http://127.0.0.1:8080"
+  fi
+fi
 echo
 echo "Press Ctrl-C to stop them all."
 wait

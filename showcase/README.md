@@ -40,12 +40,26 @@ the package to install — then says plainly that the other sixteen are
 unaffected. When it succeeds, the launcher runs `ashlar foreign check` to prove
 the capability is reachable rather than assuming the build implies it.
 
-Each launcher builds the release binary if needed, builds `ledger`'s SQLite shim
-where it can,
-and runs each example with `ashlar run examples/<name> --port <n>` — the source
-keeps `port = 8080`, so nothing in any example changes (the port is a
-deployment fact, §9.1/B5). Ctrl-C stops them all. Click a name in the gallery's
-sidebar to swap frames.
+Each launcher runs `cargo build --release` before starting anything. That is a
+no-op in a fraction of a second when nothing has changed, and it is deliberate:
+the old check built only when the binary was *missing*, so a `git pull` left you
+serving the code from before it — the one failure that looks like success for a
+showcase whose claim is that the frames are the real servers. Without cargo on
+PATH an existing binary is still used, with a note saying it may predate the
+checkout.
+
+Then it builds `ledger`'s SQLite shim where it can, and runs each example with
+`ashlar run examples/<name> --port <n>` — the source keeps `port = 8080`, so
+nothing in any example changes (the port is a deployment fact, §9.1/B5). Ctrl-C
+stops them all. Click a name in the gallery's sidebar to swap frames.
+
+**If something does not start, the launcher says so.** Each example's output
+goes to `.showcase-logs/<name>.log`, and after starting them the launcher checks
+which are still running rather than announcing success it never verified. A
+program that refused to start — a port already taken, a missing setting, a
+stored value that no longer fits its shape — is named, with the last few lines
+it printed. `gallery` failing is called out specifically, because it is the page
+on 8080 and its absence is what a browser reports as `ERR_CONNECTION_REFUSED`.
 
 The frames are the **real servers** — there is no baked snapshot to drift from
 the apps (ADR-0016). Each example also runs standalone the usual way:
