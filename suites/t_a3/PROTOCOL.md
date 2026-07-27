@@ -1,11 +1,11 @@
-# A3 guessability gate — protocol
+# A3 agent-reading gate — protocol
 
-Requirement A3 asks a narrow question: if you show a competent reader one
-Ashlar snippet, with no reference material and no repo access, does it read
-the way it means? This corpus and this protocol are how that question gets
-a repeatable, machine-scoreable answer. A failure here is not a bug in a
-model's knowledge — it is evidence that a piece of Ashlar syntax invites a
-wrong mental model, which is a design bug in the syntax.
+Requirement A3 asks the operational question: does a fresh agent working in
+this repository, with the same `AGENTS.md` contract and reference every author
+receives, understand an Ashlar snippet correctly? This corpus and protocol make
+that answer repeatable and machine-scoreable. The baseline is part of the
+language surface, not contamination: an agent is not expected to write Ashlar
+without the file the environment always supplies.
 
 ## What the corpus is
 
@@ -18,7 +18,7 @@ wrong mental model, which is a design bug in the syntax.
   convention only, not Ashlar syntax — it marks "everything below this line
   is a different file" for a human or model reading the snippet.
 - `NN-slug.expect.md` — a one-paragraph correct reading, followed by a
-  `## Must state` list of 3–5 objective bullets: the facts a correct cold
+  `## Must state` list of 3–5 objective bullets: the facts a correct agent
   reading has to include. These bullets are the judge's entire rubric. They
   are written to be checked as true/false against a candidate answer, not as
   a style guide — each one names a specific, falsifiable claim about scope,
@@ -30,63 +30,28 @@ finding to raise against the language, not the test.
 
 ## How the gate runs
 
-1. **Fresh model, no context.** Start a new conversation with the model
-   under test. It must not have `AGENTS.md` (which now carries the
-   reference itself), `docs/diagnostics.md`,
-   this repo, or any other Ashlar material in context — no system prompt
-   excerpting the spec, no retrieval over the repo, nothing. The only prior
-   knowledge it may draw on is whatever it already knows unprompted.
-
-   **This includes the repository's project instructions, which are injected
-   automatically.** An in-repo agent receives `CLAUDE.md` — and everything it
-   `@`-imports — before it sees any prompt. Forbidding the reader to open
-   files does not help: nothing was opened. This is how runs 3 and 4 were
-   invalidated (ADR-0021), and why `AGENTS.md` no longer states any language
-   fact, a rule with a test
-   (`t_meta_agents_md_does_not_teach_the_language`).
-
-   Therefore the isolation is **verified, not assumed**: before or after the
-   read, ask each reader to report verbatim the project instructions it was
-   given, and record that report in the results file (once per run is enough
-   if every reader is spawned identically). If it contains a statement of
-   Ashlar syntax or semantics, the run is void — fix the leak and re-run.
-   Knowing the project's name and that it is a composition language is an
-   unavoidable consequence of running inside the repo; a run so isolated is
-   **reduced-contamination** and must be labelled that way, not "cold".
-
-   **To run a provably cold one**, the reader's working directory must not
-   be this repository — no in-repo agent can produce it, because the
-   project instructions are injected before any prompt exists to forbid
-   them. Copy the 25 snippets out (they are self-contained text), open a
-   chat or a session rooted anywhere else, and paste them one per clean
-   turn with the question below. Record the run with `cold` in its filename
-   and the isolation report showing project instructions that mention no
-   project. Every scored run to date is reduced-contamination, and the
-   scores have been reproducible across three of them — a cold run is a
-   stronger proof of the same claim, not a different claim.
-2. **One snippet at a time.** For each of the 25 `.ash` files, in a clean
-   turn (no memory of previous snippets in the run — treat each as an
-   independent cold read), paste the file's contents verbatim and ask
+1. **Fresh agent, real baseline.** For each snippet, start a fresh agent rooted
+   in this repository. Do not strip or replace its project instructions:
+   `AGENTS.md` is the baseline under test. Do not give it the corpus rubric,
+   previous results, or any extra Ashlar explanation. Instruct it not to open
+   `suites/t_a3/`; the snippet is pasted into the prompt, and the expected file
+   must remain unavailable.
+2. **One snippet per agent.** Paste the `.ash` file's contents verbatim and ask
    exactly:
 
    > State precisely what this code means/does.
 
-   Do not add hints, do not name the language feature being tested, do not
-   answer follow-up questions about it. One prompt, one answer, per
-   snippet.
-3. **Judge each answer against its rubric.** A judge (a separate model call
-   or a human) reads the candidate's answer next to the snippet's
-   `## Must state` bullets and scores each bullet independently,
-   all-or-nothing: a bullet is either clearly and correctly stated
-   (equivalent wording is fine; the fact must be present and correct) or it
-   is not. Partial credit within a bullet is not allowed — half-stating a
-   fact scores it as not stated. The judge also flags, separately, whether
-   the answer contains any **actively wrong claim about merge, order, or
-   storage semantics** (e.g. claiming `append` replaces instead of
-   concatenating, claiming layers run derived-to-base when the snippet has
-   no `reverse`, claiming `state` persists across restarts, claiming `use`
-   order is alphabetical) — such a claim fails the snippet regardless of
-   how many bullets were separately checked off.
+   Do not add hints, name the feature being tested, or answer follow-up
+   questions. One prompt and one answer per fresh agent prevents one fixture
+   from teaching the next.
+3. **Judge each answer against its rubric.** A judge (a separate model call or a
+   human) reads the candidate's answer next to the snippet's `## Must state`
+   bullets and scores each bullet independently, all-or-nothing: a bullet is
+   either clearly and correctly stated (equivalent wording is fine; the fact
+   must be present and correct) or it is not. Partial credit within a bullet is
+   not allowed. The judge separately flags any actively wrong claim about
+   merge, order, or storage semantics; such a claim fails the snippet regardless
+   of how many bullets were checked off.
 
 ## Pass/fail definition
 
@@ -99,8 +64,8 @@ finding to raise against the language, not the test.
     A snippet with 100% of its bullets checked off but one confidently wrong
     claim elsewhere in the answer still fails.
 - **The corpus passes** when at least 80% of its 25 snippets pass (i.e. at
-  least 20 of 25). Below that, A3 is not satisfied and the syntax needs
-  revisiting before the language, not the corpus, is called done.
+  least 20 of 25). Below that, A3 is not satisfied and the language/reference
+  surface needs revisiting before the corpus is called done.
 
 ## Recording results
 
@@ -114,9 +79,9 @@ using the date the run was performed and a short model identifier (e.g.
 `2026-07-22-claude-sonnet-5.md`). That file records, at minimum:
 
 - the model under test and the date;
-- **the isolation evidence from step 1** — what project instructions the
-  readers received, and whether the run is labelled cold or
-  reduced-contamination;
+- **the baseline evidence from step 1** — the agent surface and revision used,
+  confirming that normal repository instructions were present and the rubric
+  was not;
 - for each of the 25 snippets: pass/fail, which bullets were checked correct
   (by number), and whether an actively-wrong-claim flag was raised;
 - the overall corpus score (`<passing>/25`) and pass/fail against the 80%
@@ -164,3 +129,11 @@ also produced the direct evidence for ADR-0021's directional argument:
 one fixture that flipped to PASS in run 3 and back to FAIL here. A3's standing
 result is now **run 5: 24/25, reduced-contamination**, and `11-peruser` /
 `25-foreign-reactive` scored 4/4 clean, closing A3-F5 on measurement.
+
+2026-07-27 — **A3 was corrected to measure the environment Ashlar authors
+actually inhabit.** Once the complete reference moved into `AGENTS.md`, calling
+that context contamination tested a reader who cannot exist in normal work.
+The gate now starts a fresh in-repository agent for each snippet, preserves the
+injected contract/reference, and withholds only the rubric and prior answers.
+Runs 1–5 remain historical evidence for the earlier no-reference question; a
+new run is required against the corrected requirement.

@@ -13,6 +13,14 @@ two, and a ledger nobody can trust is worse than none.
 
 ## Open
 
+**A3 needs its baseline-aware run.** Runs 1–5 measured whether readers without
+the complete reference could infer the language. A3 now measures the actual
+authoring environment: a fresh in-repository agent receives `AGENTS.md` and is
+shown one fixture without its rubric or prior answers. No recorded run used
+that exact baseline after the reference moved into the contract. Serves **A3**.
+Proven by: a 25-fixture run under `suites/t_a3/PROTOCOL.md`, recorded with the
+agent surface and revision it used.
+
 **Capabilities with no corpus site.** An adversarial read listed ten. Four
 now have one — the directory form of `files`, `log.debug`, `log.warn`, and
 duration units beyond `ms`, all in `examples/ticker`. Still undefended:
@@ -50,16 +58,6 @@ a multi-site fixture.
 ## Standing method notes
 
 Not open items — neither has work waiting behind it.
-
-**A3 is met by measurement, and can now only be re-measured from outside.**
-Run 5 scored 24/25 against a bar of 20/25. It was a *reduced-contamination* run,
-not a cold one — an in-repo reader received the project instructions before any
-prompt existed to forbid them. That category is now gone rather than improved:
-`AGENTS.md` carries the reference itself, so in-repo contamination is total and
-certain, and `suites/t_a3/PROTOCOL.md`'s outside-the-repository run is the only
-one there is (docs/decisions/0021-the-a3-readers-were-not-cold.md). The standing
-24/25 is the last figure takeable under the old arrangement, not one that can be
-re-taken on demand.
 
 **Two A3 findings stand recorded with no change to make.** *A3-F1*:
 cross-file layering does not cold-read — 0 of 11 readers across a 2×2 over

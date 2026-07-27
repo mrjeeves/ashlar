@@ -46,7 +46,7 @@ There is no phase in which tests are written and no phase in which they are not.
 
 The outer loop is not a nicety and it is not the inner loop restated. A stuck test only reports that a requirement is unreachable *as specified*; it cannot report a requirement that is wrong while perfectly satisfiable, and those are the expensive ones. Only execution against uncooperative input finds them: a checker that rejects a correct program with a correction its author already applied, a boundary a program cannot ask about, a formatter that moves a comment onto the wrong declaration, a refusal that costs three times what inventing a value costs. Each of those passed every test it had.
 
-So **exposure is a requirement of the method, not a testing tactic**: an example that quietly avoids the input it cannot handle is not an example, and a gate whose contamination is assumed rather than measured is not a gate. Where evidence cannot be obtained — a reader outside this repository, a machine that is not this one — say what is missing rather than guessing (§1). What execution finds lands as a revision here first, and only then as code.
+So **exposure is a requirement of the method, not a testing tactic**: an example that quietly avoids the input it cannot handle is not an example, and a gate run outside the environment it claims to measure is not a gate. Where evidence cannot be obtained — a fresh agent, a machine that is not this one — say what is missing rather than guessing (§1). What execution finds lands as a revision here first, and only then as code.
 
 ## 3. Principles (the vision)
 **Code is cheap, good design isn't.** Generation is nearly free. Verification, comprehension, and change are not. Optimize those; never ration generation.
@@ -59,7 +59,7 @@ The last two are one principle at two time scales. State derived at build time i
 ## 4. Requirements: reference and surface
 **A1.** The complete language reference is at most **40,000 characters**, measured as UTF-8 bytes of the canonical reference document.
 **A2.** The reference is sufficient. No correct program requires knowledge not contained in it. No feature exists that the reference does not describe.
-**A3.** A model with no reference in context, shown any construct from the language, states its meaning correctly. This is measured against a fixed corpus (§9, T-A3) with a defined pass threshold.
+**A3.** A fresh agent in the repository's normal authoring environment, shown any construct from the language, states its meaning correctly. This is measured against a fixed corpus (§9, T-A3) with a defined pass threshold. The environment includes `AGENTS.md`: an agent is not expected to author Ashlar without the contract and reference it is always given.
 **A4.** Where a reader's guess is wrong, the wrongness surfaces as a compile error, not as running code with different behavior than intended. False familiarity is worse than unfamiliarity: unfamiliar syntax produces errors, familiar-but-different syntax produces bugs.
 **A5.** No feature costs reference budget disproportionate to its value. A construct occupying 2,000 characters — 5% of the total — is worth 5% of the language or is removed.
 **A6.** The language is not extensible at the surface level. No macros, no user-defined syntax, no operator overloading. Any such feature makes A2 unsatisfiable, because the reference can no longer describe what an arbitrary program means.
@@ -124,7 +124,7 @@ D2 is the requirement that converts "errors are corrections" from an aspiration 
 Each suite proves specific requirements. The mapping is explicit so coverage is checkable.
 **T-A1 — Reference size.** Counts UTF-8 bytes of the reference. Fails the build over 40,000. Runs on every commit. Trivial to write, and it is the requirement most likely to be quietly violated over time.
 **T-A2 — Reference sufficiency.** Extracts every code example from the reference, compiles each, asserts success. Separately: asserts every language construct appearing in any test fixture also appears in the reference.
-**T-A3 — Guessability.** A fixed corpus of snippets paired with their correct interpretation. A model with no reference in context is asked what each does. Agreement is scored against a defined threshold. Every failure is a design bug in the syntax, not a documentation gap.
+**T-A3 — Agent reading.** A fixed corpus of snippets paired with their correct interpretation. A fresh in-repository agent, carrying the normal project instructions, is asked what each does without access to the rubric. Agreement is scored against a defined threshold. Every failure is evidence against the language-plus-reference surface the real author receives.
 This suite exists before the compiler does and is the primary gate on syntax decisions.
 **T-A4 — Loud failure.** A corpus of plausible-but-wrong constructs — the things a model would write if it guessed from a neighboring language. Each must produce a compile error. Any that runs is an A4 violation.
 **T-B — Resolution.** Given a dependency graph, asserts which names are visible where. Includes: transitive visibility, zero-resolution errors, multi-resolution errors, case/separator collision errors, and the assertion that no source fixture contains a path.
@@ -163,7 +163,7 @@ A decision is reopened by evidence, not by preference, and reversing one is ordi
 
 ## 12. What is done first
 Not a process. A consequence of test dependency.
-T-A1 and T-A3 have no dependencies — they test the reference, which is written before any implementation exists. They are therefore first, and they gate everything: a reference that fails T-A1 means the language is too large, and a syntax that fails T-A3 means the surface is wrong. Neither is fixable by implementation.
+T-A1 and T-A3 have no implementation dependencies — they test the reference and the authoring surface. They are therefore first, and they gate everything: a reference that fails T-A1 is too large, and a surface that fails T-A3 is not understood in its real environment. Neither is fixable by runtime implementation.
 T-A4 and T-B follow, requiring a parser and resolver but no runtime. T-C requires composition. T-D requires the full front end. T-E requires the manifest. T-F and T-G require the whole system.
 The first artifact is therefore the reference under 40,000 characters, and the first test is the one that counts its bytes.
 
@@ -192,3 +192,13 @@ foreclosing another target that arrives with its own requirements and proof.
 2026-07-27 — **C9 and D6 added; D5 revised.** ADR-0012 accepted four properties in 2026-07: determinism, observability, stability, repairability. Only determinism had requirement ids behind it (C2, C6, F2), so only determinism had tests, so only determinism was built — and the suite stayed green over three live defects. Driving the release binary found them: one `use` line resequenced a part's layers with `check` exiting 0 and printing nothing; `ashlar fix` rewrote `el(Card, ...)` to a different part and the page rendered something else, clean build to clean build; and the same ambiguity was machine-fixable where a name was mentioned and not where it was used. C9 encodes observability of order changes, D6 encodes that a fix preserves meaning and not merely compilability — D2 was satisfied throughout the second defect, which is the proof D2 alone is insufficient. D5 is revised to measure the whole corpus after its reported mean survived the corpus shrinking underneath it. See docs/decisions/0012-semantic-freedom-and-derivability.md. Revised per §1: requirements are revised when they fail to express the vision.
 
 2026-07-27 — **A1 re-read to cover one file.** The cap says "the canonical reference document," and that was taken to mean `reference/ashlar.md` alone. That misses what the budget is for: an agent here receives `AGENTS.md` automatically (via `CLAUDE.md`) and then goes looking for the language, so what it must hold at once is the working contract *and* the reference. Only one of them was budgeted, and together they were 48,704 bytes — 22% over a cap that believed itself satisfied. The canonical document is now `AGENTS.md`, carrying both, at 39,991 of 40,000; `reference/` is deleted. Both halves paid, split by what binds them: the reference could not lose a construct (A2 forbids it, T-A2 enforces it) so it took prose tightening only, while the contract could lose justification, since its arguments live in `docs/decisions/` and `git log`. The consequence for A3 is a reversal recorded in docs/decisions/0021-the-a3-readers-were-not-cold.md — no in-repo reader can be cold once this file carries the reference, so the gate is external-only. Revised per §1: requirements are revised when they fail to express the vision.
+
+2026-07-27 — **A3 revised from a no-reference reader to the real authoring
+baseline.** An agent does not write Ashlar without `AGENTS.md`; the environment
+injects that contract and reference before the task. Removing it measures an
+imaginary author and mistakes the project's primary teaching surface for test
+contamination. T-A3 now holds the environment constant, withholds only the
+rubric and prior answers, and asks whether a fresh agent understands the code it
+is asked to work on. The earlier cold-read runs remain evidence about bare
+syntax, but a new run is required for the revised requirement. Revised per §1:
+the old requirement failed the vision's actual AI-first operating condition.

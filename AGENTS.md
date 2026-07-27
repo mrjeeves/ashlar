@@ -25,8 +25,8 @@ satisfiable, and those are the expensive ones. `docs/requirements.md` §1–2
 argues both points; read it once.
 
 Stop and say so in exactly two cases: **the vision looks wrong** (the user's to
-change — argue, never edit), or **you cannot get the evidence** (a cold read
-needs a fresh reader, a benchmark needs a machine). Neither covers "this is
+change — argue, never edit), or **you cannot get the evidence** (an agent read
+needs a fresh agent, a benchmark needs a machine). Neither covers "this is
 large" or "this reverses an ADR": both are normal, and new evidence outranks a
 record made on older evidence.
 
@@ -73,9 +73,9 @@ Floor is **Rust 1.65** and `Cargo.lock` stays at lockfile **version 3**, both
 pinned by `t_meta_toolchain_floor_is_declared_and_reachable`; "zero warnings"
 means on the floor too. `suites/coverage.md` maps every requirement to its test
 and T-META checks that map both ways — read it rather than a list here. Two
-suites cannot run in CI: **T-A3**, the cold-read gate
-(`suites/t_a3/PROTOCOL.md`), which must run from **outside this repository**
-since this file carries the reference; and **T-BROWSER**
+suites cannot run in CI: **T-A3**, the agent-read gate
+(`suites/t_a3/PROTOCOL.md`), which runs with this file in context to match the
+real authoring environment; and **T-BROWSER**
 (`suites/t_browser/`), needing a browser and node. Every new behavior lands
 with the test that catches its regression.
 

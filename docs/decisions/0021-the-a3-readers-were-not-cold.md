@@ -161,3 +161,19 @@ not an oversight in a prompt, and the fix had to change what was *possible*
 rather than what was intended. Merging the files changes what is possible in the
 other direction, and the honest consequence is that the gate now costs a reader
 outside this repository every time it runs.
+
+## Resolution (2026-07-27) — the baseline is the thing being measured
+
+The external-only conclusion above is reversed. It treated `AGENTS.md` as
+contamination after that file became the contract and reference every real
+Ashlar author receives. An agent is not going to write Ashlar without it, so a
+reader stripped of it is not the environment A3 needs to predict.
+
+The useful lesson from runs 3 and 4 survives: context must be recorded rather
+than assumed. What changes is which context is valid. T-A3 now runs one fresh
+in-repository agent per fixture with the normal injected instructions, while
+withholding the rubric, prior results, and cross-fixture memory. That measures
+the whole authoring surface — syntax plus the bounded reference — and makes a
+failure actionable against whichever of those failed to teach the meaning.
+Runs 1–5 remain historical measurements of the superseded no-reference gate;
+none is relabelled as evidence for the revised A3.

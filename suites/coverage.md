@@ -5,20 +5,14 @@ proves it: a test that runs, or a fixture corpus another test drives. It exists
 so "is this requirement covered" never depends on remembering where things
 landed.
 
-**Status: every requirement has a running test.** There are no `[planned]` rows.
+**Status: every requirement has an evidence site.** There are no `[planned]` rows.
 `cargo test` runs 17 binaries green in debug and release with zero warnings, and
 `t_no_stubs` proves there is no `todo!()` anywhere in `src/`. The one requirement
-that cannot be a CI job is **A3**: it needs a fresh model with no reference in
-context, so it runs by hand via `suites/t_a3/PROTOCOL.md` and its results are
-recorded per-run in `suites/t_a3/results/`. Its standing result is **24/25 from
-run 5**, the first run to measure its own isolation rather than assert it; runs 3
-and 4 remain void as cold reads (ADR-0021, ADR-0023). One part of A3 *is*
-mechanical and does run in CI: `t_meta_agents_md_does_not_teach_the_language`
-guards the gate's isolation, since the leak that voided those runs was a file
-every in-repo agent is handed automatically. It now also asserts that AGENTS.md
-shares no vocabulary with the corpus rubrics — the property that actually
-matters, since a fact a rubric asks for is the only kind of leak that can move a
-score.
+that cannot be a CI job is **A3**: it needs fresh agents in the normal
+repository environment, so it runs by hand via `suites/t_a3/PROTOCOL.md` and
+records each run in `suites/t_a3/results/`. Runs 1–5 measured the superseded
+no-reference question; run 5's 24/25 remains historical evidence, not the result
+of the revised baseline-aware gate. Its next run is open in the roadmap.
 
 A `[runs]` row has real `#[test]`s behind it — in `crates/ashlar/tests/` for the
 integration suites, or in a `#[cfg(test)]` module inside the named source file
@@ -39,14 +33,10 @@ per-section budget distribution and fails on a construct over 20%; A2 extracts
 every ```ash block from the reference and compiles it, which is also what proves
 **C1**. A4 and A6 are the loud-failure corpus — 31 fixtures under `suites/t_a4`,
 each a plausible-but-wrong construct paired with the diagnostic it must produce.
-A3 is the cold-read gate: fixture data plus a hand-run protocol, with no CI
-runner by design (a model that could read the repo would not be cold). Its
-*isolation*, though, is mechanical —
-`t_meta_agents_md_does_not_teach_the_language` bans Ashlar syntax from the one
-file every in-repo agent is handed unasked, which is how two runs came to be
-scored against readers holding the answers (ADR-0021). The row below points at
-the corpus because that is what the requirement's evidence lives in; the guard
-rides in T-META because that is where it can run.
+A3 is the agent-read gate: fixture data plus a hand-run protocol, with no CI
+runner by design because each fixture needs a fresh agent. `AGENTS.md` carrying
+the reference is the baseline under test, not contamination. The rubric and
+previous answers are the material withheld from each reader.
 
 **B (resolution).** B3/B4/B5/B7 are inline fixtures in `t_b.rs` — deliberately
 inline so each failure mode (zero-resolution, ambiguous, case-collision,

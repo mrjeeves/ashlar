@@ -241,6 +241,26 @@ fn t_meta_core_docs_exist() {
     );
 }
 
+#[test]
+fn t_meta_a3_current_docs_preserve_the_authoring_baseline() {
+    // covers: A3 — current instructions must test the environment a real
+    // Ashlar author receives, while keeping the answer rubric unavailable.
+    let root = support::repo_root();
+    for rel in ["suites/t_a3/PROTOCOL.md", "suites/coverage.md"] {
+        let text = support::read_text(&root.join(rel));
+        let prose = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        assert!(
+            prose.contains("AGENTS.md") && prose.contains("baseline"),
+            "{} must preserve AGENTS.md as the A3 authoring baseline",
+            rel
+        );
+        assert!(
+            prose.contains("rubric"),
+            "{} must withhold the A3 answer rubric",
+            rel
+        );
+    }
+}
 
 #[test]
 fn t_meta_planned_rows_are_actually_open() {
