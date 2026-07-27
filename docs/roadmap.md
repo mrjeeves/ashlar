@@ -9,27 +9,7 @@ with no passing test is not a satisfied requirement (T-META). An empty open
 section is a claim, so it is kept honest: an item leaves it only when its
 test runs for real.
 
-## Open — four items
-
-**A `return` is not yet a shape position** ([ADR-0025](decisions/0025-a-return-is-a-shape-position.md)).
-Two halves of one gap, both found by writing `examples/quarry`. A `pipe`
-layer over a data shape that returns a complete, correctly-shaped literal is
-REJECTED, with a fix (`Make every layer return X`) its author has already
-followed — the workaround is to route the literal through a call that names
-the shape, which is why `guardrails` and `quarry` both carry an identity
-property for it. And the reverse: when one `return` in a block is a map
-literal and another is a data shape, the shapes do not join, the block
-degrades to `Unknown`, and an incomplete literal reaches the wire as
-`{"field_n":null}` from a program that checked clean. That second one is a
-D3 violation — statically decidable, undetected, and not in the reference's
-documented pair of undetectable faults. Serves **A4, D1, D3**. Proven by:
-the two reproductions in ADR-0025, the first as a compiling fixture and the
-second as a T-A4 loud-failure fixture, plus removing the `keep` properties
-from `guardrails` and `quarry`. It is scheduled rather than improvised
-because both available shortcuts damage something worth more than the fix —
-re-checking after inference double-reports, and diagnosing disagreement
-without first propagating the expected shape would reject the correct
-program, which A4 ranks as the worse failure.
+## Open — three items
 
 **`data` has no discriminator, so a boundary cannot ask what arrived**
 ([ADR-0026](decisions/0026-data-is-a-union-with-no-discriminator.md)). Every
@@ -113,6 +93,26 @@ fails there.
 One thing stays true regardless and needs no decision: **cold-read the
 construct, never the word** (ADR-0015 scored `personal` 3/3 on the bare word; in
 its slot it reads as `private`).
+
+Delivered 2026-07-27 — **a `return` is a shape position**
+([ADR-0025](decisions/0025-a-return-is-a-shape-position.md), closed in place).
+Where a `pipe` property's return shape is fixed from outside the body —
+declared, or established by the one nominal data shape its layers name — that
+shape is pushed into the property's `return` positions and map literals are
+checked against it, as in any argument position. Both halves closed by the one
+change, as it predicted: the correct program compiles, and `return { a: "hot" }`
+beside `return v` is now `error[E006] a `probe.Reading` needs `n`.` instead of a
+clean check and a required field missing from the response — the D3 third
+category closed. **`Gate.keep` is gone from `guardrails`**; an identity property
+existing to give a literal a shape was the language telling on itself. The
+correction points the right way too: seeded by file order it read `Make every
+layer return `{text: data}``, deleting the annotation that was right.
+
+Serves **A4, D1, D3**. Proven by five tests in `check.rs`'s agreement suite —
+both reproductions, the `none` branch that must stay clean, nested-literal
+scoping, and the correction's orientation — plus `suites/t_a4/39-return-shape-drift`.
+The bound worth stating: a **list** literal at a `return` is still inferred, and
+that narrowness is what keeps the pass from rejecting a correct `return none`.
 
 Removed 2026-07-26 — **`examples/quarry`.** It was a public status board over a
 fleet fixed at boot, fed by a simulated sensor this repo wrote: composition

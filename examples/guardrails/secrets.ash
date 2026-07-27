@@ -7,10 +7,10 @@ use guardrails.length
 part guardrails.core.Gate {
   review pipe = (d: guardrails.core.Decision) => {
     let clean = not contains(d.body, "secret")
-    return Gate.keep({
+    return {
       body: d.body,
       allowed: d.allowed and clean,
       notes: if clean { d.notes } else { [...d.notes, "contains secret"] },
-    })
+    }
   }
 }

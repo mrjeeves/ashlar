@@ -46,7 +46,6 @@ part Decision {
 // `review` is a typed extension point. It starts by accepting a request;
 // later spaces can add policy by layering this pipe.
 part Gate {
-  keep = (d: guardrails.core.Decision) => d
   review pipe = (d: guardrails.core.Decision) => d
 }
 
