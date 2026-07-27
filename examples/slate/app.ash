@@ -20,6 +20,14 @@ part home {
   view = () => el(slate.ui.index, {})
 }
 
+// The absolute paths a program does not get to choose. `files` naming one
+// file answers one route exactly (§9.8), which is the only way to reach
+// them without taking `/` away from the page above.
+part robots {
+  route = "/robots.txt"
+  files = "robots.txt"
+}
+
 // A page's identity is the page, not a person: every open tab gets a name
 // off the list so the roster can say who is here, and it means nothing
 // once the socket closes. That is the whole of "identity" in this

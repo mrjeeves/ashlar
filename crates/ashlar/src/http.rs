@@ -1405,9 +1405,19 @@ fn flush_state(path: &std::path::Path, ev: &Evaluator) {
     }
 }
 
-/// Static file parts (§9.8): route is a prefix; `files` names a
-/// directory under `assets/`. Returns the full response bytes when a
-/// file part claims the path; the caller drains them without blocking.
+/// Static file parts (§9.8). `files` names an asset under `assets/`, and
+/// what it names decides how the part serves: a DIRECTORY mounts under the
+/// route as a prefix, a FILE answers that one route exactly.
+///
+/// The single-file form exists because the web has absolute paths a program
+/// does not choose — `/favicon.ico`, `/robots.txt`, `/.well-known/...`. With
+/// only the directory form, reaching them meant `route = "/"`, which
+/// collides with the home page (E021), so a program with a home page could
+/// not serve any of them. Nothing new is declared: the build resolves the
+/// name against `assets/` and already knows which it found.
+///
+/// Returns the full response bytes when a file part claims the path; the
+/// caller drains them without blocking.
 fn try_serve_files(ev: &mut Evaluator, root: &std::path::Path, path: &str) -> Option<Vec<u8>> {
     for (full, cp) in ev.composed.iter() {
         let (Some(route_prop), Some(files_prop)) = (cp.props.get("route"), cp.props.get("files"))
@@ -1434,14 +1444,24 @@ fn try_serve_files(ev: &mut Evaluator, root: &std::path::Path, path: &str) -> Op
         let (Some(prefix), Some(dir)) = (text_of(route_prop), text_of(files_prop)) else {
             continue;
         };
-        let Some(rest) = path.strip_prefix(prefix.trim_end_matches('/')) else {
-            continue;
+        let named = root.join("assets").join(&dir);
+        let file = if named.is_file() {
+            // One file at one path: it answers its own route and nothing
+            // below it, so a sibling route is never shadowed.
+            if path != prefix {
+                continue;
+            }
+            named
+        } else {
+            let Some(rest) = path.strip_prefix(prefix.trim_end_matches('/')) else {
+                continue;
+            };
+            let rest = rest.trim_start_matches('/');
+            if rest.is_empty() || rest.split('/').any(|s| s == "..") {
+                return Some(response_bytes(404, "text/plain", &[], b"not found"));
+            }
+            named.join(rest)
         };
-        let rest = rest.trim_start_matches('/');
-        if rest.is_empty() || rest.split('/').any(|s| s == "..") {
-            return Some(response_bytes(404, "text/plain", &[], b"not found"));
-        }
-        let file = root.join("assets").join(&dir).join(rest);
         let resp = match std::fs::read(&file) {
             Ok(bytes) => {
                 let ct = match file.extension().and_then(|e| e.to_str()) {
@@ -1451,6 +1471,8 @@ fn try_serve_files(ev: &mut Evaluator, root: &std::path::Path, path: &str) -> Op
                     Some("json") => "application/json",
                     Some("png") => "image/png",
                     Some("svg") => "image/svg+xml",
+                    Some("txt") => "text/plain",
+                    Some("ico") => "image/x-icon",
                     _ => "application/octet-stream",
                 };
                 response_bytes(200, ct, &[], &bytes)

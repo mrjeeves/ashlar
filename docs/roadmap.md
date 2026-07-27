@@ -11,21 +11,12 @@ direction; `docs/decisions/` holds what was decided and why, and `git log`
 holds what changed and when. A third prose copy went stale between the other
 two, and a ledger nobody can trust is worse than none.
 
-## Open — one item
+## Open — none
 
-**A program cannot answer `/favicon.ico`.** Every real browser requests it on
-every page load, and every Ashlar program answers 404 — which Chromium logs as
-a console error on a page that is otherwise clean. `files` (§9.8) serves a
-DIRECTORY under a part's `route` prefix, so there is no way to put one file at
-one absolute path, and the root route is already the program's own page. Found
-by driving `examples/counter` and `examples/slate` with a real browser; the
-repo's own client never asked for it. Serves **G4** (the builtin set covers
-file serving) and **A4** (the wrongness surfaces as noise in every browser
-console rather than as anything the author can act on). Proven by: a driven
-example serving its own icon at the root with a 200, and a T-G case pinning
-whatever rule is chosen — the honest options are letting `files` name a single
-file, or the runtime answering 204 for an icon no program claims, and neither
-has been argued yet.
+Every item this page has carried is delivered. The rule above is what keeps
+that sentence checkable: T-META reads this section, and a `[planned]` row in
+`suites/coverage.md` fails the build unless the requirement it names appears
+here.
 
 ## Standing method notes
 

@@ -411,6 +411,73 @@ part page {
 }
 
 #[test]
+fn t_g_a_files_part_naming_one_file_answers_one_absolute_path() {
+    // covers: G4 (§9.8) — found by driving examples with a real browser.
+    // Every page load asks for /favicon.ico and every program answered 404,
+    // and the same hole hid `/robots.txt` and `/.well-known/...`: `files`
+    // mounted a DIRECTORY under a route prefix, so reaching an absolute path
+    // meant `route = "/"`, which collides with the home page (E021). A
+    // program with a home page could not answer any of them.
+    //
+    // Naming a file instead of a directory answers that one route exactly.
+    // Nothing new is declared — the build resolves the name against assets/
+    // and already knows which it found.
+    let app = r#"space demo
+
+part Server {
+  port = 0
+}
+
+part page {
+  route = "/"
+  view = () => el("div", {}, [el("h1", {}, ["home"])])
+}
+
+part robots {
+  route = "/robots.txt"
+  files = "robots.txt"
+}
+
+part pub {
+  route = "/static"
+  files = "public"
+}
+"#;
+    let root = fixture("onefile", &[("app.ash", app)]);
+    std::fs::create_dir_all(root.join("assets/public")).unwrap();
+    std::fs::write(root.join("assets/robots.txt"), "User-agent: *\n").unwrap();
+    std::fs::write(root.join("assets/public/note.txt"), "in a directory\n").unwrap();
+    let (port, stop, join) = start(root);
+
+    // The named file answers its own path, with a content type read from its
+    // extension rather than the octet-stream fallback.
+    let (status, headers, body) = http_req_full(port, "GET", "/robots.txt", None, None);
+    assert_eq!(status, 200, "{}", body);
+    assert!(body.contains("User-agent: *"), "{}", body);
+    assert!(
+        headers.to_lowercase().contains("content-type: text/plain"),
+        "a .txt file is text: {}",
+        headers
+    );
+
+    // It claims exactly one path: nothing below it, and not the home page,
+    // which is the whole reason the single-file form exists.
+    let (below, _, _) = http_req_full(port, "GET", "/robots.txt/anything", None, None);
+    assert_eq!(below, 404, "a single file must not shadow paths beneath it");
+    let (home, _, home_body) = http_req_full(port, "GET", "/", None, None);
+    assert_eq!(home, 200);
+    assert!(home_body.contains("home"), "{}", home_body);
+
+    // And the directory form is untouched.
+    let (dir_status, _, dir_body) = http_req_full(port, "GET", "/static/note.txt", None, None);
+    assert_eq!(dir_status, 200, "{}", dir_body);
+    assert!(dir_body.contains("in a directory"), "{}", dir_body);
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}
+
+#[test]
 fn t_g_scheduled_task_runs() {
     // covers: G4 (scheduled tasks), reference 9.7
     let app = r#"space demo

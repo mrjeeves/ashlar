@@ -74,7 +74,20 @@ fn t_examples_are_canonically_formatted() {
 /// refuses to start), minus runtime artifacts.
 fn staged(name: &str) -> PathBuf {
     let src = examples_root().join(name);
-    let dst = std::env::temp_dir().join(format!("ashlar_ex_{}_{}", name, std::process::id()));
+    // Unique per CALL, not per process. Tests in one binary run in parallel
+    // threads, and two of them stage `pong`; keyed by pid alone both resolved
+    // to the same directory, so one test's `remove_dir_all` could wipe the
+    // tree the other was already serving from. That is a harness race whose
+    // window moves with build profile — exactly the shape of a test that
+    // passes alone and fails in a full release run.
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seq = NEXT.fetch_add(1, Ordering::Relaxed);
+    let dst = std::env::temp_dir().join(format!(
+        "ashlar_ex_{}_{}_{}",
+        name,
+        std::process::id(),
+        seq
+    ));
     let _ = std::fs::remove_dir_all(&dst);
     std::fs::create_dir_all(&dst).unwrap();
     copy_tree(&src, &dst);
@@ -1025,6 +1038,19 @@ fn t_examples_slate_merges_two_people_typing_at_once() {
     // Two browsers open the same pad. No login, no invite: the URL is it.
     let (status, _, page_a) = req(port, "GET", "/p/welcome", None, None);
     assert_eq!(status, 200);
+    // The absolute path a program does not choose (§9.8). `files` naming one
+    // file is the only way to answer it without taking `/` from the page.
+    let (rstatus, rheaders, rbody) = req(port, "GET", "/robots.txt", None, None);
+    assert_eq!(rstatus, 200, "a deployed program must be able to answer /robots.txt");
+    assert!(rbody.contains("User-agent"), "{}", rbody);
+    assert!(
+        rheaders.to_lowercase().contains("content-type: text/plain"),
+        "served as text, not octet-stream: {}",
+        rheaders
+    );
+    let (rbelow, _, _) = req(port, "GET", "/robots.txt/x", None, None);
+    assert_eq!(rbelow, 404, "one file answers one path and nothing below it");
+
     // The pad names its own tab (§9.4). Found by driving this example with a
     // real browser: every page it served had a blank title, and nothing in
     // the reference said a view could set one — though a view always could.
