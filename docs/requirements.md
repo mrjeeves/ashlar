@@ -123,6 +123,8 @@ This suite exists before the compiler does and is the primary gate on syntax dec
 **T-E — Refactor.** For each command: blast radius correctness, post-refactor absence of the old state, roundtrip reversal — byte-identity for the commands that guarantee it, structural identity of the program for every command — and refusal-on-incomplete-radius.
 **T-F — Build.** Manifest determinism (delete and rebuild), relocation invariance (move files, diff manifest modulo locations), and incremental latency benchmarked as a hard-failing test.
 **T-G — Runtime conformance.** Behavioral tests for each builtin. Protocol transparency: the same handler fixture exercised over HTTP and WebSocket must produce identical results.
+**T-BROWSER — The corpus under a real browser.** The same examples `t_examples` drives, driven instead by an actual browser: titles, absolute-path assets, console cleanliness, a socket through a reload, and two people typing into one field at once. Hand-run with recorded results (`suites/t_browser/`), never in CI, because it needs a browser and node and G1 says `cargo test` needs neither. Its checks are facts about what the program did, so the bar is every check, not a threshold.
+
 **T-META — Coverage.** Parses this document for requirement identifiers, parses the test suites for requirement annotations, asserts every requirement has at least one test. A requirement with no test is not a requirement.
 ---
 ## 10. Non-goals

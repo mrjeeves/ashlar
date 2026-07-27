@@ -143,6 +143,29 @@ fn req(port: u16, method: &str, path: &str, body: Option<&str>, cookie: Option<&
     (status, head, body)
 }
 
+/// Like `req`, but for a body that is not text. An icon is bytes, and
+/// reading bytes into a String is how the first version of this assertion
+/// failed.
+fn req_bytes(port: u16, path: &str) -> (u16, String, Vec<u8>) {
+    let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let text = format!("GET {} HTTP/1.1\r\nhost: t\r\ncontent-length: 0\r\n\r\n", path);
+    s.write_all(text.as_bytes()).unwrap();
+    let mut raw = Vec::new();
+    s.read_to_end(&mut raw).unwrap();
+    let split = raw
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map(|i| i + 4)
+        .unwrap_or(raw.len());
+    let head = String::from_utf8_lossy(&raw[..split]).to_string();
+    let status: u16 = head
+        .split_whitespace()
+        .nth(1)
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(0);
+    (status, head, raw[split..].to_vec())
+}
+
 fn attr_of(html: &str, attr: &str) -> Option<String> {
     let marker = format!("{}=\"", attr);
     let start = html.find(&marker)? + marker.len();
@@ -282,6 +305,11 @@ fn t_examples_counter_clicks() {
     let (port, stop, join) = start(dir.clone());
     let (_, _, html) = req(port, "GET", "/", None, None);
     assert!(html.contains("clicks: 0"), "{}", html);
+    // The smallest example shows the smallest form of §9.8: one file, one
+    // absolute path. A browser asks for it whether or not anyone declared it.
+    let (istatus, _, ibody) = req_bytes(port, "/favicon.ico");
+    assert_eq!(istatus, 200, "the page every browser loads asks for this");
+    assert_eq!(&ibody[..4], b"\x00\x00\x01\x00", "a real ICO");
     let (inst, h) = event_target(&html, "onclick", 0).unwrap();
     let mut ws = ws_open(port);
     ws_send(
@@ -1050,6 +1078,18 @@ fn t_examples_slate_merges_two_people_typing_at_once() {
     );
     let (rbelow, _, _) = req(port, "GET", "/robots.txt/x", None, None);
     assert_eq!(rbelow, 404, "one file answers one path and nothing below it");
+
+    // The path every browser asks for on every page load. T-BROWSER's first
+    // run failed here: the capability had landed and no example served one,
+    // so a console error survived the finding that was meant to close it.
+    let (istatus, iheaders, ibody) = req_bytes(port, "/favicon.ico");
+    assert_eq!(istatus, 200, "a browser asks for this unprompted, every load");
+    assert!(
+        iheaders.to_lowercase().contains("content-type: image/x-icon"),
+        "served as an icon: {}",
+        iheaders
+    );
+    assert_eq!(&ibody[..4], b"\x00\x00\x01\x00", "and it is a real ICO, not a placeholder");
 
     // The pad names its own tab (§9.4). Found by driving this example with a
     // real browser: every page it served had a blank title, and nothing in

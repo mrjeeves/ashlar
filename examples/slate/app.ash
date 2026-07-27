@@ -28,6 +28,11 @@ part robots {
   files = "robots.txt"
 }
 
+part icon {
+  route = "/favicon.ico"
+  files = "favicon.ico"
+}
+
 // A page's identity is the page, not a person: every open tab gets a name
 // off the list so the roster can say who is here, and it means nothing
 // once the socket closes. That is the whole of "identity" in this

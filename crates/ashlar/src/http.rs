@@ -328,6 +328,139 @@ fn decode_chunked(mut rest: &[u8]) -> Chunked {
     }
 }
 
+/// Reconcile one stored value against the shape the program now declares.
+///
+/// Only the data-shape case can be reconciled, and it is the one a deploy
+/// produces: a row written before a field existed. A missing field with a
+/// default is filled; a missing field without one is recorded in `gaps` and
+/// stops startup. Everything else is left exactly as it was found — this
+/// reconciler never invents a value it was not given a default for, and
+/// never reports what it cannot prove.
+fn reconcile_stored(
+    ev: &mut Evaluator,
+    home: &str,
+    shape: &crate::ast::SShape,
+    value: V,
+    path: &str,
+    gaps: &mut Vec<String>,
+) -> V {
+    use crate::ast::Shape;
+    match (&shape.shape, value) {
+        (Shape::Opt(inner), v) => {
+            if v == V::None {
+                V::None
+            } else {
+                reconcile_stored(ev, home, inner, v, path, gaps)
+            }
+        }
+        (Shape::List(elem), V::List(items)) => V::List(
+            items
+                .into_iter()
+                .enumerate()
+                .map(|(i, it)| {
+                    reconcile_stored(ev, home, elem, it, &format!("{}[{}]", path, i), gaps)
+                })
+                .collect(),
+        ),
+        (Shape::Map(val), V::Map(m)) => V::Map(
+            m.into_iter()
+                .map(|(k, v)| {
+                    let sub = format!("{}[\"{}\"]", path, k);
+                    (k.clone(), reconcile_stored(ev, home, val, v, &sub, gaps))
+                })
+                .collect(),
+        ),
+        (Shape::Part(name), V::Map(mut m)) => {
+            let bare = crate::ast::name_to_string(name);
+            let Some(full) = resolve_part_for_shape(ev, home, &bare) else {
+                return V::Map(m);
+            };
+            let Some(cp) = ev.composed.get(&full).cloned() else {
+                return V::Map(m);
+            };
+            for (fname, fprop) in cp.props.iter() {
+                // Fields only: a name and a shape. A property with a value
+                // and no shape is behavior, not stored data.
+                let Some(fshape) = &fprop.shape else { continue };
+                match m.get(fname) {
+                    Some(existing) => {
+                        let sub = format!("{}.{}", path, fname);
+                        let fixed = reconcile_stored(
+                            ev,
+                            &full.rsplit_once('.').map(|(sp, _)| sp.to_string()).unwrap_or_default(),
+                            fshape,
+                            existing.clone(),
+                            &sub,
+                            gaps,
+                        );
+                        m.insert(fname.clone(), fixed);
+                    }
+                    None => {
+                        // `stored` fields declare defaults as ordinary
+                        // property values; evaluating one is what the
+                        // constructor would have done.
+                        let default = match &fprop.value {
+                            crate::resolved::MergedValue::Literal(e) => {
+                                ev.eval_in_part(&full, &e.clone()).ok()
+                            }
+                            crate::resolved::MergedValue::Single(r) => {
+                                let e = ev.program.files[r.file_idx].ast.parts[r.part_idx].props
+                                    [r.prop_idx]
+                                    .value
+                                    .clone();
+                                e.and_then(|e| ev.eval_in_part(&full, &e).ok())
+                            }
+                            _ => None,
+                        };
+                        match default {
+                            Some(d) => {
+                                m.insert(fname.clone(), d);
+                            }
+                            None => gaps.push(format!(
+                                "`{}` has no `{}`, and `{}.{}` declares no default",
+                                path, fname, full, fname
+                            )),
+                        }
+                    }
+                }
+            }
+            V::Map(m)
+        }
+        (_, v) => v,
+    }
+}
+
+/// A part named in a shape, resolved from the space the shape was written
+/// in. Full dotted names resolve directly; a bare name resolves when
+/// exactly one visible part answers to it.
+fn resolve_part_for_shape(ev: &Evaluator, home: &str, name: &str) -> Option<String> {
+    if ev.composed.contains_key(name) {
+        return Some(name.to_string());
+    }
+    let suffix = format!(".{}", name);
+    let mut hit = None;
+    for full in ev.composed.keys() {
+        if full.ends_with(&suffix) && (home.is_empty() || full.starts_with(home)) {
+            if hit.is_some() {
+                return None;
+            }
+            hit = Some(full.clone());
+        }
+    }
+    hit.or_else(|| {
+        let mut only = None;
+        for full in ev.composed.keys() {
+            if full.ends_with(&suffix) {
+                if only.is_some() {
+                    return None;
+                }
+                only = Some(full.clone());
+            }
+        }
+        only
+    })
+}
+
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
@@ -1035,9 +1168,13 @@ pub fn serve(
             }
         }
 
-        // Persistence: load stored values (shape validation happened in
-        // the checker; unknown keys are ignored).
+        // Persistence: load stored values. The checker validates the
+        // LITERALS in this program's source; it has nothing to say about a
+        // value a previous version wrote to disk, which is exactly the value
+        // a deploy hands you. Reconciled below against the shape now
+        // declared (§9.3).
         let state_path = root.join(".ashlar-state.json");
+        let mut loaded: Vec<(String, V)> = Vec::new();
         if carry.is_none() {
             if let Ok(text) = std::fs::read_to_string(&state_path) {
                 if let Some(V::Map(m)) = from_json(&text) {
@@ -1060,10 +1197,41 @@ pub fn serve(
                         {
                             // Accepts both `base` (shared stored) and
                             // `base@userid` (peruser stored) keys.
-                            ev.state.values.insert(k, v);
+                            loaded.push((k, v));
                         }
                     }
                 }
+            }
+        }
+
+        // A stored value written before a field existed is missing it. Where
+        // the field declares a default, that is what a default is for and the
+        // value is filled. Where it does not, there is nothing to invent, and
+        // the program stops at startup naming every gap at once rather than
+        // surfacing as the first request that happened to read one — the same
+        // rule settings already follow (B5, §9.12).
+        {
+            let mut gaps: Vec<String> = Vec::new();
+            for (k, v) in loaded {
+                let base = k.split('@').next().unwrap_or(&k).to_string();
+                let shape = base
+                    .rsplit_once('.')
+                    .and_then(|(part, prop)| ev.composed.get(part).map(|cp| (part.to_string(), cp, prop.to_string())))
+                    .and_then(|(part, cp, prop)| {
+                        cp.props.get(&prop).and_then(|p| p.shape.clone()).map(|sh| (part, sh))
+                    });
+                let filled = match shape {
+                    Some((home, sh)) => reconcile_stored(&mut ev, &home, &sh, v, &base, &mut gaps),
+                    None => v,
+                };
+                ev.state.values.insert(k, filled);
+            }
+            if !gaps.is_empty() {
+                return Err(format!(
+                    "stored state does not fit the shapes this program declares:\n  {}\n\
+                     Give the field a default, or migrate `.ashlar-state.json`.",
+                    gaps.join("\n  ")
+                ));
             }
         }
 

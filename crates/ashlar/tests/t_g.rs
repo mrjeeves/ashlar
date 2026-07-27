@@ -40,6 +40,16 @@ fn start(root: PathBuf) -> (u16, Arc<AtomicBool>, std::thread::JoinHandle<()>) {
     (port, stop, join)
 }
 
+/// Start expecting `serve` to refuse, and return why. A startup that fails
+/// is a delivered behavior here, not an accident, so it needs asserting.
+fn start_expecting_failure(root: PathBuf) -> String {
+    let stop = Arc::new(AtomicBool::new(false));
+    match http::serve(root, None, Some(0), |_| {}, stop) {
+        Ok(()) => panic!("expected startup to refuse, but it served"),
+        Err(e) => e,
+    }
+}
+
 fn http_get(port: u16, path: &str) -> (u16, String) {
     http_req(port, "GET", path, None)
 }
@@ -578,6 +588,85 @@ fn raw_exchange(port: u16, request: &[u8]) -> (u16, String) {
         .and_then(|v| v.parse().ok())
         .unwrap_or(0);
     (status, buf)
+}
+
+#[test]
+fn t_g_stored_state_is_reconciled_against_the_shape_on_start() {
+    // covers: G3, D3 (§9.3) — found by deploying a second version over a
+    // first, which is what every real deploy is. The checker validates the
+    // LITERALS in this program's source; it has nothing to say about a value
+    // the previous version wrote to disk. So a row written before a field
+    // existed loaded with the field simply absent, and `text` field read back
+    // as `none` — a slot the type system swears never holds it, in a program
+    // that checked clean and started clean.
+    let v1 = r#"space demo
+
+part Server {
+  port = 0
+}
+
+part Row {
+  a: text
+}
+
+part Store {
+  stored rows: {text: demo.Row} = {}
+  add = () => {
+    rows = put(rows, "r1", { a: "first" })
+  }
+}
+
+part api {
+  route = "/"
+  handle pipe = (req: std.Request) => {
+    if req.method == "post" {
+      Store.add()
+      return "added"
+    }
+    return Store.rows
+  }
+}
+"#;
+    let root = fixture("migrate", &[("app.ash", v1)]);
+    let (port, stop, join) = start(root.clone());
+    let (status, _, _) = http_req_full(port, "POST", "/", Some(""), None);
+    assert_eq!(status, 200);
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+
+    // v2 adds a field WITH a default. That is what a default is for, so the
+    // row written by v1 is filled rather than left short.
+    std::fs::write(
+        root.join("app.ash"),
+        v1.replace("part Row {\n  a: text\n}", "part Row {\n  a: text\n  b: text = \"filled\"\n}"),
+    )
+    .unwrap();
+    let (port, stop, join) = start(root.clone());
+    let (_, _, body) = http_req_full(port, "GET", "/", None, None);
+    assert!(
+        body.contains("\"b\":\"filled\""),
+        "a defaulted field must be backfilled, not left absent: {}",
+        body
+    );
+    assert!(body.contains("\"a\":\"first\""), "and the old value must survive: {}", body);
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+
+    // v3 adds a field with NO default. There is nothing to invent, so the
+    // program stops at startup naming the gap rather than serving a `text`
+    // that is `none` and faulting on whichever request first reads it.
+    std::fs::write(
+        root.join("app.ash"),
+        v1.replace("part Row {\n  a: text\n}", "part Row {\n  a: text\n  c: text\n}")
+            .replace("{ a: \"first\" }", "{ a: \"first\", c: \"c\" }"),
+    )
+    .unwrap();
+    let refused = start_expecting_failure(root);
+    assert!(
+        refused.contains("has no `c`") && refused.contains("declares no default"),
+        "startup must name the gap: {}",
+        refused
+    );
 }
 
 #[test]

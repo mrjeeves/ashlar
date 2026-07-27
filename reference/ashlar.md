@@ -454,7 +454,10 @@ part Store {
 - `state` — lives for the process (per instance in view parts, §9.4).
 - `stored` — persisted by the runtime's embedded store, keyed by the
   property's full name; survives restarts. Values are validated against the
-  current shape at startup, and a mismatch is a startup error.
+  current shape at startup: a field added since the value was written is
+  filled from its default, and a field with no default to fill is a startup
+  error naming every gap at once. Adding a defaulted field is therefore a
+  migration; adding a required one is a refusal to guess.
 - `peruser` — a modifier before `state` or `stored`: the value is scoped to
   the current user, so each signed-in user has their own, isolated from
   every other by construction. Reading or writing a `peruser` property with
