@@ -58,10 +58,10 @@ Rejected candidates, with the specific collision each fails on:
   with threads.
 - **`unit`** — collides with ML's unit value (the "nothing" return type)
   and with "unit" as in "unit test." Both actively wrong in context.
-- **`element`** — DOM prior. Fatal specifically because Ashlar is a
-  language for building interfaces: `element` would be read as "DOM
-  element" by every reader who has touched a browser, which is most of
-  them, and a part is not only ever a UI element.
+- **`element`** — DOM prior. Fatal specifically because Ashlar's first runtime
+  builds interfaces: `element` would be read as "DOM element" by every reader
+  who has touched a browser, which is most of them, and a part is not only ever
+  a UI element.
 
 `part` is also short, pluralizes regularly (`parts`), and reads correctly
 cold in the canonical example — `part chat.ui.Message { }` — without
