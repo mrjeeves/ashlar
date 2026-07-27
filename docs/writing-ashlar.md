@@ -1,7 +1,7 @@
 # Writing Ashlar code — the traps
 
-For agents authoring examples, fixtures, or tests. Read
-`reference/ashlar.md` first; it is short on purpose. This page is the
+For agents authoring examples, fixtures, or tests. Read the reference
+in `AGENTS.md` first; it is short on purpose. This page is the
 supplement: the mistakes agents actually make when they guess instead of
 reading, collected as they happened.
 

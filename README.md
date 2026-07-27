@@ -132,8 +132,9 @@ platform-specific line in it — `worker` and `http` run wherever Rust runs.
 The language is designed for **agents writing code**, so its values are
 mechanical, and each has teeth:
 
-- **Guessable.** The whole surface fits in one ≤40,000-byte reference
-  (`reference/ashlar.md`), and guessability is *gate-tested*: fresh models
+- **Guessable.** The whole surface fits in one ≤40,000-byte file
+  (`AGENTS.md`, which carries the working contract and the complete language
+  reference together), and guessability is *gate-tested*: fresh models
   cold-read program snippets and their misreads are design bugs
   (`suites/t_a3/`). The standing result is **24/25 from run 5**, against a bar
   of 20/25. The gate earns its keep: its failures have been real design bugs
@@ -162,9 +163,8 @@ mechanical, and each has teeth:
 
 | path | contents |
 |---|---|
-| `reference/` | The complete language reference — the source of truth for every language decision. |
 | `docs/` | Vision, requirements, roadmap, diagnostics catalog, and the ADRs (see `docs/README.md`). |
-| `AGENTS.md` | The agent-facing working contract — hierarchy, hard rules, sync duties. Load-bearing (T-META enforces it). |
+| `AGENTS.md` | One file: the agent-facing working contract (hierarchy, hard rules, sync duties) **and** the complete language reference — the source of truth for every language decision. ≤40,000 bytes in total (ADR-0030, T-A1). Load-bearing; T-META enforces it. |
 | `examples/` | Seventeen complete runnable projects — including `commons` (a full team chat), `slate` (a shared pad where two people typing at once are merged line by line, no account and no client-side editor code), `ledger` (a real SQLite datastore over the `foreign` boundary), `locker` (per-user `peruser` storage that isolates each user by construction), `abacus` (a Python worker, no compiler in sight), and `gallery` (the showcase itself, which renders sixteen addresses it learns from a `setting`) — compiled, format-checked, AND runtime-driven by the suite. All wear one dark house style (ADR-0016). |
 | `showcase/` | The launchers: `serve.sh` (POSIX) or `serve.ps1` (PowerShell) runs every example on its own port, with the `gallery` on 8080 framing the rest. A test asserts both launchers and the gallery's settings agree on every port. |
 | `suites/` | Test corpora and the coverage map: the cold-read gate (protocol, 25 fixtures, per-run results), the 31 loud-failure fixtures, and `coverage.md` — every requirement id to the test that proves it, kept honest by T-META. |
@@ -187,13 +187,16 @@ the vision. Nothing overrides the vision.
 
 ## Status
 
-Complete against its own definitions: every sentence in the reference has
-code and a test behind it, and the increments were adversarially
+Complete against its own definitions, and the increments were adversarially
 re-reviewed. The suite is 17 green test binaries in debug and release with
 zero warnings.
 
-Every sentence of the reference is true of the binary, and the open ledger
-(`docs/roadmap.md`) is empty.
+Two limits on that claim, stated rather than rounded off. **The open ledger
+(`docs/roadmap.md`) is not empty** — it carries the capabilities the corpus does
+not yet exercise. And *every ```ash block* in the reference is compiled by T-A2,
+which is not the same as every **sentence** being checked: the reference's prose
+is read by people, not by a gate, and where the two have disagreed it was the
+prose that was wrong.
 
 That is worth saying only alongside how it got there, because the method is
 the point. Nothing on this list came from a test that would not go green;

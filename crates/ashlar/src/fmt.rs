@@ -1132,7 +1132,7 @@ mod tests {
         }
         assert!(checked >= 20, "expected the t_a3 corpus, found {}", checked);
         // Every ```ash block in the reference.
-        let reference = std::fs::read_to_string(root.join("reference/ashlar.md")).unwrap();
+        let reference = std::fs::read_to_string(root.join("AGENTS.md")).unwrap();
         let mut rest = reference.as_str();
         let mut blocks = 0;
         while let Some(i) = rest.find("```ash\n") {

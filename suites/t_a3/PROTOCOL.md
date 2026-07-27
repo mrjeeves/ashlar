@@ -31,7 +31,8 @@ finding to raise against the language, not the test.
 ## How the gate runs
 
 1. **Fresh model, no context.** Start a new conversation with the model
-   under test. It must not have `reference/ashlar.md`, `docs/diagnostics.md`,
+   under test. It must not have `AGENTS.md` (which now carries the
+   reference itself), `docs/diagnostics.md`,
    this repo, or any other Ashlar material in context — no system prompt
    excerpting the spec, no retrieval over the repo, nothing. The only prior
    knowledge it may draw on is whatever it already knows unprompted.
