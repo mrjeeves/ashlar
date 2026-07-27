@@ -113,3 +113,56 @@ The governing principle is:
 
 > An agent-authored language should minimize semantic freedom while
 > maximizing the derivability of intent, behavior, and change.
+
+## Resolution (2026-07-27) — observability was decided here and not built
+
+This ADR named four properties and only **determinism** had requirement ids
+behind it (C2, C6, F2). No requirement meant no test, which meant no code, while
+`suites/coverage.md` truthfully reported every requirement covered — because the
+missing ones were not requirements. Three defects lived under a green suite,
+each found by driving the release binary, none reachable from a stuck test.
+
+**① A `use` edge silently reordered execution.** Adding `use zulu` to `alpha`
+flipped `base.Chain` from `base,alpha,zulu` to `base,zulu,alpha`; over HTTP the
+program answered `x|base|zulu|alpha` where it had answered `x|base|alpha|zulu`.
+`check` exited 0 and printed nothing — and the `W001` tie-break warning that had
+been flagging the pair *disappeared on the same edit*, so the only signal that
+existed got quieter as the change landed. That is precisely the failure the
+Consequences above forbid.
+
+**② `ashlar fix` silently changed which part a page renders.** `el(Card, ...)`
+rendered `base.Card`; a colliding `audit.Card` arrived, `E002` fired, and the
+toolchain's own repair rewrote the call to `audit.Card` — alphabetically first,
+not what the program had been resolving to. Clean build before, clean build
+after, different program. **D2 was satisfied throughout**, which generalises:
+D2 asks whether a fix *compiles*, never whether it *means the same thing*.
+
+**③** The same ambiguity was machine-fixable where a name was mentioned and not
+where it was used, because emission branched on `k == segs.len()` — and the
+note-only branch was the far commoner position.
+
+**④** And a measurement failure: `t_d5` skipped every fixture with no machine
+fix, so the advertised mean of 1.00 covered only fixtures that already had
+fixes. Repairing ② shrank that corpus 11 → 10 and the mean did not move. The
+true figure is 10 of 41 — **24%**.
+
+**Decided:** **C9** (a change to the use graph that alters composition order is
+reported), **D6** (a machine-applicable fix never changes what a name resolves
+to), and D5 revised to measure the whole corpus. Delivered as `delta.rs`
+comparing against the previous manifest — which has always recorded layer order,
+so nothing new is derived and no parser is added — plus `W002`, `ashlar delta`,
+and `E002` emitting no edits at either site. No manifest means no baseline and
+nothing is claimed: the manifest is gitignored, so CI and fresh clones stay
+quiet, and the case this catches is an agent editing in a live tree.
+
+The D5 number got worse on purpose and prints every run. Its floor is set low
+deliberately: D6 forbids inventing an edit where choosing one would be a guess,
+so driving the fraction up by relaxing that is the regression the gate exists to
+show.
+
+**Still open, in `docs/roadmap.md`:** the research questions above remain
+research questions — the variant comparison would mean building three more
+languages; `t_f1`'s 1,000-file fixture has no graph at all (depth 1, zero
+layers, zero collisions), so nothing measures the derived-state work this trade
+rests on; diagnostics still multiply with symptoms rather than naming one cause;
+and the delta covers order only, not visibility or ambiguity.

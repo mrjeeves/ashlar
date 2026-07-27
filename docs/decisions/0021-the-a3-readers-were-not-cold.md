@@ -135,3 +135,29 @@ A3 is untouched — it asked the right question, and the corpus asked it correct
 The gate caught two real design bugs even while contaminated. What failed was
 the isolation of the harness around it, and the reason it took two days to
 notice is that the leaking file was the one every agent is told to read first.
+
+## Reversal (2026-07-27) — the guard is gone, and so is the in-repo run
+
+`t_meta_agents_md_does_not_teach_the_language` is **deleted**. A1's budget was
+re-read to cover one file — `AGENTS.md`, with the language reference inside it,
+under 40,000 bytes total (see `docs/requirements.md`, A1 revision) — because an
+agent here receives that file automatically and then goes looking for the
+language, so what it holds at once is both. Once `AGENTS.md` *is* the reference,
+a test banning Ashlar syntax from it contradicts itself, and a narrowed version
+guarding only the workflow half would keep the letter and none of the point: the
+reader receives the whole file either way.
+
+This does not weaken A3; it removes the pretence that an in-repo run could ever
+approximate a cold one. Contamination used to be partial and measurable — the
+*reduced-contamination* category above. It is now total and certain, so that
+category is gone with it, and `suites/t_a3/PROTOCOL.md`'s outside-the-repository
+run is not merely the stronger proof but the only one.
+
+The cost is real and is not rounded off: the cheap in-repo approximation that
+produced runs 1–5 no longer exists, and the standing 24/25 is the last
+measurement takeable under the old arrangement rather than one that can be
+re-taken on demand. What this ADR got right survives — the leak was structural,
+not an oversight in a prompt, and the fix had to change what was *possible*
+rather than what was intended. Merging the files changes what is possible in the
+other direction, and the honest consequence is that the gate now costs a reader
+outside this repository every time it runs.

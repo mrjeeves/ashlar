@@ -114,7 +114,7 @@ fn t_b5_no_locations_in_fixtures_or_reference() {
         }
     }
 
-    let reference_text = support::read_text(&root.join("reference/ashlar.md"));
+    let reference_text = support::read_text(&root.join("AGENTS.md"));
     let blocks = support::extract_ash_blocks(&reference_text);
     for (i, block) in blocks.iter().enumerate() {
         checked_any = true;

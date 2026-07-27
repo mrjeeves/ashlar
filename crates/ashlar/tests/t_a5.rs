@@ -17,7 +17,17 @@ mod support;
 fn t_a5_section_budget_distribution() {
     // covers: A5
     let root = support::repo_root();
-    let text = support::read_text(&root.join("reference/ashlar.md"));
+    let whole = support::read_text(&root.join("AGENTS.md"));
+
+    // A5 governs CONSTRUCTS, so it measures the reference half of AGENTS.md
+    // only: the working contract's sections are rules, not language surface,
+    // and counting them would both dilute every construct's share and put a
+    // workflow paragraph on trial for a language budget (A1, revised).
+    const MARKER: &str = "<!-- REFERENCE:BEGIN -->";
+    let start = whole
+        .find(MARKER)
+        .unwrap_or_else(|| panic!("AGENTS.md is missing the `{}` marker", MARKER));
+    let text = &whole[start + MARKER.len()..];
     let total = text.len();
 
     // Split at `## ` and `### ` headings; a `##` section's own entry
@@ -40,7 +50,7 @@ fn t_a5_section_budget_distribution() {
 
     let mut report = String::new();
     report.push_str(&format!(
-        "reference/ashlar.md: {} bytes of the 40,000 A1 budget\n",
+        "AGENTS.md reference half: {} bytes; whole file is the 40,000 A1 budget\n",
         total
     ));
     let mut worst: Option<(String, usize)> = None;

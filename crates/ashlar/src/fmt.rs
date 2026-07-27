@@ -1158,7 +1158,9 @@ mod tests {
         }
         assert!(checked >= 20, "expected the t_a3 corpus, found {}", checked);
         // Every ```ash block in the reference.
-        let reference = std::fs::read_to_string(root.join("reference/ashlar.md")).unwrap();
+        // The CRLF-tolerant extractor is main's (#57); the path is this
+        // branch's — the reference lives in AGENTS.md now (A1).
+        let reference = std::fs::read_to_string(root.join("AGENTS.md")).unwrap();
         let blocks = ash_fenced_blocks(&reference);
         for (i, block) in blocks.iter().enumerate() {
             assert_fmt_faithful(&format!("refblock{}", i), block);

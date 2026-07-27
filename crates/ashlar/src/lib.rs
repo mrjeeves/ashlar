@@ -11,6 +11,7 @@
 pub mod ast;
 pub mod check;
 pub mod compose;
+pub mod delta;
 pub mod diag;
 pub mod eval;
 pub mod fixup;
@@ -113,9 +114,20 @@ pub fn check_project(root: &Path) -> CheckResult {
     let declared = settings::declared(&result.composed);
     let mut setting_diags = settings::check_file(root, &declared);
 
-    if !binding_diags.is_empty() || !setting_diags.is_empty() {
+    // C9: the previous `ashlar.manifest` is the baseline a semantic delta is
+    // measured against, and like the two files above it is on disk — which is
+    // why this belongs here and not in `check_sources`. A `use` edge that
+    // resequenced a part's layers is a behavioral change no diagnostic used to
+    // mention (ADR-0012). Absent manifest, no baseline, no delta.
+    let mut order_diags = match delta::load(root) {
+        Some(base) => delta::diagnostics(&base, &result.program),
+        None => Vec::new(),
+    };
+
+    if !binding_diags.is_empty() || !setting_diags.is_empty() || !order_diags.is_empty() {
         result.diags.append(&mut binding_diags);
         result.diags.append(&mut setting_diags);
+        result.diags.append(&mut order_diags);
         sort_diags(&mut result.diags);
     }
     result

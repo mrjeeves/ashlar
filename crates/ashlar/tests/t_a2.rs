@@ -7,11 +7,11 @@ mod support;
 fn t_a2_reference_examples_compile_with_zero_diagnostics() {
     // covers: A2, C1
     let root = support::repo_root();
-    let reference_path = root.join("reference/ashlar.md");
+    let reference_path = root.join("AGENTS.md");
     let text = support::read_text(&reference_path);
 
     let blocks = support::extract_ash_blocks(&text);
-    assert!(!blocks.is_empty(), "found no ```ash fenced blocks in reference/ashlar.md");
+    assert!(!blocks.is_empty(), "found no ```ash fenced blocks in AGENTS.md");
 
     let sources: Vec<(String, String)> = blocks
         .into_iter()
@@ -36,7 +36,7 @@ fn t_a2_reference_examples_compile_with_zero_diagnostics() {
 fn t_a2_fixture_keywords_are_all_taught_by_the_reference() {
     // covers: A2
     let root = support::repo_root();
-    let reference_text = support::read_text(&root.join("reference/ashlar.md"));
+    let reference_text = support::read_text(&root.join("AGENTS.md"));
 
     const KEYWORDS: &[&str] = &[
         "space", "use", "part", "foreign", "state", "stored", "peruser", "append", "deep", "stack",
@@ -57,7 +57,7 @@ fn t_a2_fixture_keywords_are_all_taught_by_the_reference() {
         for kw in KEYWORDS {
             if fixture_words.contains(kw) && !reference_words.contains(kw) {
                 panic!(
-                    "{}: keyword `{}` appears in a fixture but not in reference/ashlar.md \
+                    "{}: keyword `{}` appears in a fixture but not in AGENTS.md \
                      (A2: no construct outside the reference)",
                     f.display(),
                     kw

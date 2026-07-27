@@ -140,7 +140,11 @@ their order arbitrary, the compiler still produces a deterministic result—but
 it confesses the arbitrary choice and supplies the declaration that would make
 the order intentional.
 
-Determinism alone is not enough. A repeatable accident is still an accident.
+Determinism alone is not enough. A repeatable accident is still an accident —
+so a `use` edge that resequences any part's layers raises `W002` naming the
+order before and after, and `ashlar delta` prints the whole report. A silent
+reordering was a real defect here, not a hypothetical
+([ADR-0012](docs/decisions/0012-semantic-freedom-and-derivability.md)).
 
 ## A world may be strange, but it may not deceive
 
@@ -164,9 +168,10 @@ False familiarity is worse than unfamiliarity.
 An unfamiliar language sends the reader to the reference. A deceptively
 familiar one sends the bug to production.
 
-The complete contract lives in
-[`reference/ashlar.md`](reference/ashlar.md) under a hard 40,000-byte ceiling.
-Anything it does not define is a compile error, never a secret feature.
+The complete contract lives in [`AGENTS.md`](AGENTS.md) — one file carrying
+the working contract and the language reference together, under a hard
+40,000-byte ceiling covering both (A1). Anything it does not define is a
+compile error, never a secret feature.
 
 ## Semantic freedom is not free
 
@@ -203,9 +208,16 @@ location, a one-sentence cause, and a correction specific enough to apply
 without judgment.
 
 When the compiler includes machine edits, applying them must remove the error
-without introducing another. That promise is executed as a test. The quality
-of the compiler is measured in compile-to-clean rounds, because every round
-removed is one less occasion for an agent to guess.
+without introducing another **and leave the program meaning what it meant** —
+the stronger half, learned when `ashlar fix` once rewrote an ambiguous name to
+the wrong part and silently changed what a page rendered
+([ADR-0012](docs/decisions/0012-semantic-freedom-and-derivability.md)).
+Both promises are executed as tests. The quality of the compiler is measured in
+compile-to-clean rounds, which converge in a mean of 1.00 — over the 24% of the
+diagnostic corpus that carries a machine-applicable fix at all. The rest name
+every candidate and leave the choice to the author, because picking one would
+be a guess wearing a correction's clothes, and that number is printed on every
+run so it cannot fall quietly.
 
 ```sh
 ashlar check examples/chat
@@ -412,6 +424,7 @@ A metaphysics without a test is marketing.
 | `ashlar run [part] [--port n]` | Build, serve, watch, and hot-reload. |
 | `ashlar fmt` | Produce canonical, comment-preserving, meaning-preserving source. |
 | `ashlar radius <name>` | Report a rename's complete blast radius without changing a byte. |
+| `ashlar delta` | Report what this tree changed about the program's derived state since the last build. |
 | `ashlar rename <name> <new>` | Rename a space, part, property, or field atomically. |
 | `ashlar rekind <part.prop> <kind>` | Change one property's merge kind across all layers. |
 | `ashlar move <part> <space>` | Move a part and repair the visibility graph. |

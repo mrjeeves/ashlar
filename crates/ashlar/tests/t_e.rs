@@ -945,3 +945,71 @@ part cfg.Config {
     let msg = r.err().unwrap().0;
     assert!(msg.contains("rolled back"), "{}", msg);
 }
+
+#[test]
+fn t_c9_a_use_edge_that_resequences_layers_is_reported_not_silent() {
+    // covers: C9
+    //
+    // The defect this pins, driven against the release binary before it
+    // existed: four spaces, `alpha` and `zulu` both layering `base.Chain`.
+    // Adding one line — `use zulu` to `alpha` — flipped the composition order
+    // from base,alpha,zulu to base,zulu,alpha. `ashlar check` exited 0 and
+    // printed NOTHING, and over HTTP the program answered `x|base|zulu|alpha`
+    // where it had answered `x|base|alpha|zulu`. Determinism was never in
+    // question; being told was (ADR-0012's own words, ADR-0012's finding).
+    let dir = std::env::temp_dir().join(format!("ashlar_c9_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let write = |name: &str, body: &str| std::fs::write(dir.join(name), body).unwrap();
+    write("base.ash", "space base\n\npart Chain {\n  steps append: [text] = [\"base\"]\n}\n");
+    write("alpha.ash", "space alpha\nuse base\n\npart base.Chain {\n  steps append: [text] = [\"alpha\"]\n}\n");
+    write("zulu.ash", "space zulu\nuse base\nuse alpha\n\npart base.Chain {\n  steps append: [text] = [\"zulu\"]\n}\n");
+
+    let run = |args: &[&str]| {
+        std::process::Command::new(env!("CARGO_BIN_EXE_ashlar"))
+            .args(args)
+            .current_dir(&dir)
+            .output()
+            .unwrap()
+    };
+
+    // A baseline must exist before anything can be compared to it.
+    assert!(run(&["build"]).status.success());
+    let before = run(&["check"]);
+    assert!(
+        String::from_utf8_lossy(&before.stdout).trim().is_empty(),
+        "a program that did not change has no delta to report"
+    );
+
+    // The reordering edit: zulu becomes base-most, alpha derived.
+    write("alpha.ash", "space alpha\nuse base\nuse zulu\n\npart base.Chain {\n  steps append: [text] = [\"alpha\"]\n}\n");
+    write("zulu.ash", "space zulu\nuse base\n\npart base.Chain {\n  steps append: [text] = [\"zulu\"]\n}\n");
+
+    let after = run(&["check"]);
+    let out = String::from_utf8_lossy(&after.stdout).to_string();
+    assert!(out.contains("\"id\":\"W002\""), "expected W002, got: {}", out);
+    assert!(out.contains("\"req\":\"C9\""), "{}", out);
+    assert!(out.contains("base.Chain"), "{}", out);
+    assert!(out.contains("base, alpha, zulu -> base, zulu, alpha"), "{}", out);
+    // C9 reports; it never blocks. The program is correct, merely different.
+    assert!(after.status.success(), "W002 is a warning, not an error");
+
+    // `ashlar delta` prints the same fact in full, and touches nothing.
+    let delta = run(&["delta"]);
+    let d = String::from_utf8_lossy(&delta.stdout).to_string();
+    assert!(d.contains("composition order changed: 1 part(s)"), "{}", d);
+    assert!(d.contains("before  base -> alpha -> zulu"), "{}", d);
+    assert!(d.contains("after   base -> zulu -> alpha"), "{}", d);
+
+    // No baseline, no delta — a fresh clone must not invent one.
+    std::fs::remove_file(dir.join("ashlar.manifest")).unwrap();
+    let bare = run(&["check"]);
+    assert!(
+        String::from_utf8_lossy(&bare.stdout).trim().is_empty(),
+        "with no manifest there is nothing to compare against, so C9 stays quiet"
+    );
+    let no_base = run(&["delta"]);
+    assert!(String::from_utf8_lossy(&no_base.stdout).contains("no baseline"));
+
+    let _ = std::fs::remove_dir_all(&dir);
+}
