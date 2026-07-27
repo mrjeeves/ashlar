@@ -164,8 +164,16 @@ const browser = await chromium.launch({
   check('slate: a page cut off notices and says so (§9.5)', noticed === true,
     noticed ? 'watchdog fired' : 'still looks live');
   await ctx.setOffline(false);
-  await sleep(4000);
-  const recovered = await a.evaluate(() => document.documentElement.hasAttribute('data-ash-offline'));
+  // Poll rather than sleep a guessed interval. Reconnect lands in about two
+  // seconds, but a fixed window turns machine load into a red check, and a
+  // check that fails for reasons unrelated to the claim teaches people to
+  // re-run instead of to look.
+  let recovered = true;
+  for (let i = 0; i < 40; i++) {
+    await sleep(500);
+    recovered = await a.evaluate(() => document.documentElement.hasAttribute('data-ash-offline'));
+    if (!recovered) break;
+  }
   check('slate: it reconnects when the network returns', recovered === false, String(recovered));
 
   await ctx.close(); srv.kill();
@@ -201,7 +209,17 @@ const browser = await chromium.launch({
   check('slate: two carets on one line, each page names the other',
     sa.includes('on your line') && sb.includes('on your line'), `${JSON.stringify(sa)} / ${JSON.stringify(sb)}`);
 
-  await ctx.close(); await ctx2.close(); srv.kill();
+  // And the check that would have caught the leak: close the page and see
+  // whether its caret leaves with it. The first version of these checks
+  // never closed anything, so they passed 17/17 with a departed
+  // collaborator still reported as being on your line.
+  await ctx2.close();
+  await sleep(1500);
+  const afterClose = await share(a);
+  check('slate: a departed page takes its caret with it',
+    afterClose === '', JSON.stringify(afterClose));
+
+  await ctx.close(); srv.kill();
 }
 
 await browser.close();

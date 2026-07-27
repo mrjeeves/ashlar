@@ -317,6 +317,7 @@ fn t_examples_no_route_blames_the_runtime_for_the_callers_body() {
     // covers: A4, D3, G4
     let mut checked = 0;
     let mut failures: Vec<String> = Vec::new();
+    let mut unreachable: Vec<String> = Vec::new();
 
     for example in example_names() {
         let routes = routes_of(&example);
@@ -324,7 +325,19 @@ fn t_examples_no_route_blames_the_runtime_for_the_callers_body() {
             continue;
         }
         let dir = staged(&example);
+        // A route behind an unbuilt shim answers 500 for every body and the
+        // guard is never exercised. Build it, so ledger is swept like the
+        // rest; if the toolchain cannot, the route is reported unreachable
+        // rather than counted.
+        if example == "ledger" {
+            build_foreign_shim(&dir, "ledger.store", "ledger_store", "sqlite3");
+        }
         let (port, stop, join) = start(dir.clone());
+
+        // Routes behind `allow` answer before the handler runs. A session is
+        // the difference between knowing the sweep is blind there and not
+        // being blind: sign up if the example offers it, and sweep with it.
+        let session = sign_up_anywhere(port);
 
         for route in &routes {
             // A captured segment takes any literal; give it one.
@@ -341,15 +354,26 @@ fn t_examples_no_route_blames_the_runtime_for_the_callers_body() {
             // body — an unbuilt foreign shim, say — and that 500 belongs to
             // the deployment, not the caller. What this test forbids is a
             // route answering WORSE because of the body's shape.
-            let (control_status, _, _) = req(port, "POST", &path, Some("{}"), None);
-            let control_blames = control_status >= 500;
+            let (control_status, _, _) =
+                req(port, "POST", &path, Some("{}"), session.as_deref());
 
-            for body in ["[1,2,3]", "42", "\"hello\"", "not json at all", "null"] {
-                let (status, _, text) = req(port, "POST", &path, Some(body), None);
+            // A route the sweep cannot actually reach is NOT covered, and
+            // silently counting it as covered is how this test came to pass
+            // over two unguarded routes. `allow` answers 403 before the
+            // handler runs, and a missing foreign shim answers 500 for every
+            // body — either way the guard is never exercised, so say so.
+            if control_status >= 500 {
+                unreachable.push(format!(
+                    "{} POST {} — every body answers {} (deployment, not the caller); guard unexercised",
+                    example, path, control_status
+                ));
+                continue;
+            }
+            // An empty body is the commonest malformed request there is.
+            for body in ["[1,2,3]", "42", "\"hello\"", "not json at all", "null", ""] {
+                let (status, _, text) =
+                    req(port, "POST", &path, Some(body), session.as_deref());
                 checked += 1;
-                if control_blames {
-                    continue;
-                }
                 if status >= 500 || text.contains("internal:") {
                     failures.push(format!(
                         "{} POST {} with `{}` -> {} {}\n    (a well-formed `{{}}` body gets {})",
@@ -364,6 +388,17 @@ fn t_examples_no_route_blames_the_runtime_for_the_callers_body() {
     }
 
     assert!(checked > 50, "the sweep found almost nothing to check ({})", checked);
+
+    // Coverage this sweep does not have, named rather than counted. Silence
+    // here would be the lie: the first version of this test passed while two
+    // of the routes it existed to protect were invisible to it.
+    if !unreachable.is_empty() {
+        println!(
+            "t_examples sweep — {} route(s) it cannot reach:\n  {}",
+            unreachable.len(),
+            unreachable.join("\n  ")
+        );
+    }
     assert!(
         failures.is_empty(),
         "{} of {} hostile bodies were answered by blaming the runtime.\n\
@@ -373,6 +408,31 @@ fn t_examples_no_route_blames_the_runtime_for_the_callers_body() {
         checked,
         failures.join("\n")
     );
+}
+
+/// Sign up on whichever route this example offers, and return the session
+/// cookie. Without one, every `allow`-guarded route answers before its
+/// handler and the guard behind it is never tested — which is how the first
+/// version of this sweep passed over an unguarded `locker /api/keep`.
+fn sign_up_anywhere(port: u16) -> Option<String> {
+    let body = "{\"email\":\"sweep@probe.x\",\"password\":\"pw-for-the-sweep\",\"name\":\"sweep\"}";
+    for path in ["/api/signup", "/signup", "/api/join", "/join"] {
+        let (status, head, _) = req(port, "POST", path, Some(body), None);
+        if status >= 400 {
+            continue;
+        }
+        if let Some(c) = head
+            .lines()
+            .find(|l| l.to_ascii_lowercase().starts_with("set-cookie:"))
+            .and_then(|l| l.split("ashsession=").nth(1))
+            .map(|v| v.split(';').next().unwrap_or(v).trim().to_string())
+        {
+            if !c.is_empty() {
+                return Some(c);
+            }
+        }
+    }
+    None
 }
 
 /// Every directory under `examples/` that holds a project.

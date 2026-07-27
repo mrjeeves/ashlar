@@ -1103,12 +1103,13 @@ pub fn serve_with_liveness(
     loop {
         let result = crate::check_project(&root);
         if result.has_errors() {
-            return Err(result
+            let report = result
                 .diags
                 .iter()
                 .map(|d| d.human())
                 .collect::<Vec<_>>()
-                .join("\n"));
+                .join("\n");
+            return Err(report);
         }
 
         // The server root is the part that declares `port` (§9.1): the
@@ -1325,7 +1326,7 @@ pub fn serve_with_liveness(
             }
         }
 
-        let last_mtime = source_mtime(&root);
+        let mut last_mtime = source_mtime(&root);
         let mut last_scan = std::time::Instant::now();
         let mut ws_conns: Vec<WsConn> = Vec::new();
         let mut pending: Vec<PendingConn> = Vec::new();
@@ -1483,7 +1484,15 @@ pub fn serve_with_liveness(
                             drop_conn = true;
                             break;
                         }
-                        Ok(n) => ws_conns[i].buf.extend_from_slice(&tmp[..n]),
+                        Ok(n) => {
+                            // Progress is liveness — the same rule the
+                            // pending-request path states. A peer part-way
+                            // through one large frame is sending, and
+                            // waiting for the frame to COMPLETE before
+                            // believing it sheds a slow uplink mid-edit.
+                            ws_conns[i].last_seen = std::time::Instant::now();
+                            ws_conns[i].buf.extend_from_slice(&tmp[..n]);
+                        }
                         Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
                         Err(_) => {
                             drop_conn = true;
@@ -1503,6 +1512,19 @@ pub fn serve_with_liveness(
                                 if let Some(V::Map(m)) = from_json(&text) {
                                     if let Some(V::Text(p)) = m.get("page") {
                                         ws_conns[i].page = Some(p.clone());
+                                        continue;
+                                    }
+                                    // The answer to a beat is bookkeeping,
+                                    // not a request. Receiving it already
+                                    // marked the peer alive; falling
+                                    // through would dispatch it, and an
+                                    // envelope with no `path` matches `/`
+                                    // — so every heartbeat would mint a
+                                    // view instance and re-run the root's
+                                    // `start`, or call the root handler
+                                    // with its guards and side effects,
+                                    // once per page per beat.
+                                    if m.contains_key("beat") {
                                         continue;
                                     }
                                 }
@@ -1630,6 +1652,25 @@ pub fn serve_with_liveness(
                 last_scan = now;
                 let m = source_mtime(&root);
                 if m != last_mtime {
+                    // §9.1: "If the change fails to compile, diagnostics are
+                    // emitted and the old program keeps running." Deciding
+                    // that in the OUTER loop meant leaving the event loop
+                    // before discovering the breakage, with nothing left
+                    // listening — so a typo saved mid-session took the
+                    // server and every open socket with it. Judge it here,
+                    // while still serving, and leave only when the new
+                    // source actually compiles.
+                    let candidate = crate::check_project(&root);
+                    if candidate.has_errors() {
+                        for d in candidate.diags.iter().filter(|d| d.is_error()) {
+                            eprintln!("{}", d.human());
+                        }
+                        eprintln!("reload refused: the running program is unchanged.");
+                        // Remember the broken state, so this reports once per
+                        // edit rather than twice a second.
+                        last_mtime = m;
+                        continue;
+                    }
                     // No need to store `m`: reloading restarts the outer loop,
                     // which re-reads the mtime from scratch.
                     break 'inner Exit::Reload;

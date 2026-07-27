@@ -69,6 +69,11 @@ part editor {
 
   stop stack reverse = () => {
     slate.data.Store.depart(key, me)
+    // The caret leaves with the page. Without this the roster says someone
+    // is gone while the line below it says they are on your line — two
+    // facts on one screen contradicting each other, which is the failure
+    // this project exists to refuse.
+    slate.data.Store.dropCaret(key, me)
     return none
   }
 
@@ -111,8 +116,15 @@ part editor {
     // Say where this page is working. `caret` is the offset the field
     // already knew (§9.4); the line is what the merge resolves by, so the
     // line is what the pad publishes.
-    let at = number(text(e.data.caret)) ?? 0
-    slate.data.Store.markCaret(key, me, slate.data.Store.lineOf(text(e.data.value), at))
+    //
+    // A client that sends no caret gets no position. `?? 0` here would put
+    // it on line 0 and tell whoever is really there that they have company
+    // — inventing a fact rather than lacking one, which is the laundering
+    // this language argues against everywhere else.
+    let at = number(text(e.data.caret))
+    if at != none {
+      slate.data.Store.markCaret(key, me, slate.data.Store.lineOf(text(e.data.value), at!))
+    }
     if why != "" {
       warned = [...warned, why]
     }

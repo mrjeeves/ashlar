@@ -39,7 +39,7 @@ part roomPage {
 part doSignup {
   route = "/api/signup"
   handle pipe = (req: std.Request) => {
-    let d = fields(req.data) ?? fail(400, "send a JSON object: { email, name, password }}")
+    let d = fields(req.data) ?? fail(400, "send a JSON object: { email, name, password }")
     let who = signup(text(d["email"] ?? ""), text(d["password"] ?? ""))
     commons.data.Store.setProfile(who.id, text(d["name"] ?? ""), text(d["email"] ?? ""))
     return redirect("/")
@@ -49,7 +49,7 @@ part doSignup {
 part doLogin {
   route = "/api/login"
   handle pipe = (req: std.Request) => {
-    let d = fields(req.data) ?? fail(400, "send a JSON object: { email, password }}")
+    let d = fields(req.data) ?? fail(400, "send a JSON object: { email, password }")
     login(text(d["email"] ?? ""), text(d["password"] ?? ""))
     return redirect("/")
   }
@@ -76,10 +76,15 @@ part startDm {
 part makeRoom {
   route = "/api/rooms"
   handle pipe = (req: std.Request) => {
-    let d = fields(req.data) ?? fail(400, "send a JSON object: { name, purpose }}")
+    // Who you are is settled before what you sent. The guard used to sit
+    // above this and turned an anonymous malformed post from a redirect
+    // into a 400 — a silent ordering change, and the wrong order: a
+    // stranger has no business learning the shape of a body they may not
+    // send anyway.
     if req.user == none {
       return redirect("/")
     }
+    let d = fields(req.data) ?? fail(400, "send a JSON object: { name, purpose }")
     return redirect("/c/" + commons.data.Store.createRoom(text(d["name"] ?? ""), text(d["purpose"] ?? "")))
   }
 }

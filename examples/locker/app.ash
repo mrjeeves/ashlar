@@ -82,7 +82,7 @@ part gate {
 part join {
   route = "/join"
   handle pipe = (req: std.Request) => {
-    let d = fields(req.data) ?? fail(400, "send a JSON object: { email, password }}")
+    let d = fields(req.data) ?? fail(400, "send a JSON object: { email, password }")
     signup(text(d["email"] ?? ""), text(d["password"] ?? ""))
     return redirect("/")
   }
@@ -91,7 +91,7 @@ part join {
 part enter {
   route = "/enter"
   handle pipe = (req: std.Request) => {
-    let d = fields(req.data) ?? fail(400, "send a JSON object: { email, password }}")
+    let d = fields(req.data) ?? fail(400, "send a JSON object: { email, password }")
     login(text(d["email"] ?? ""), text(d["password"] ?? ""))
     return redirect("/")
   }
@@ -134,7 +134,7 @@ part add {
   route = "/api/keep"
   allow = (req: std.Request) => req.user != none
   handle pipe = (req: std.Request) => {
-    let d = fields(req.data) ?? fail(400, "send a JSON object: { note }}")
+    let d = fields(req.data) ?? fail(400, "send a JSON object: { note }")
     Store.keep(text(d["note"] ?? ""))
     return "ok"
   }
