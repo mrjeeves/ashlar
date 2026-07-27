@@ -192,28 +192,45 @@ code and a test behind it, and the increments were adversarially
 re-reviewed. The suite is 17 green test binaries in debug and release with
 zero warnings.
 
-One sentence of the reference is currently stricter than the binary, and it is
-left that way on purpose. §5 says a literal is checked against the shape its
-position expects; a `return` is not yet such a position, so a `pipe` layer that
-returns a correct data-shape literal is rejected for returning a map — and, the
-other way round, an incomplete literal returned beside a typed one degrades to
-`Unknown` and reaches the wire as `null`. Both were found by writing a large
-example against hostile input; `examples/slate`'s driving test carries the
-reproduction of the second.
-The requirement stands and the gap is recorded rather than papered over
-([ADR-0025](docs/decisions/0025-a-return-is-a-shape-position.md),
-`docs/roadmap.md`).
+Every sentence of the reference is true of the binary, and the open ledger
+(`docs/roadmap.md`) is empty.
 
-That same example found two silent defects in `ashlar fmt` — an `else if` in
-expression position printed as a block, changing what the program returned and
-then deleting the branch; a comment inside a literal migrating onto the next
-declaration. Both are fixed with regression tests, and the formatter's
-property corpus now covers the examples too
-([ADR-0024](docs/decisions/0024-a-formatter-that-loses-code-is-not-a-formatter.md)).
+That is worth saying only alongside how it got there, because the method is
+the point. Nothing on this list came from a test that would not go green;
+each came from building a whole program and driving it against input nothing
+in this repo wrote:
 
-The ledger (`docs/roadmap.md`) carries those two items and one more: a provably
-cold A3 read needs a reader outside this repository. A note is carried there
-anyway: `25-foreign-reactive` passed run 4 on a 2–1 panel, with the dissent
-localizing to `updates` rather than `watches`. It is recorded instead of acted
-on, because respelling a keyword off one reader would repeat ADR-0015's mistake
-in the opposite direction.
+- A `pipe` layer returning a complete, correctly-shaped literal was
+  **rejected**, with a correction its author had already applied — and the
+  reverse, an incomplete literal returned beside a typed one degraded to
+  `Unknown` and reached the wire missing a required field. One change closed
+  both, and deleted the identity property `examples/guardrails` had been
+  carrying to work around it
+  ([ADR-0025](docs/decisions/0025-a-return-is-a-shape-position.md)).
+- A body that was valid JSON but not an object had **no guard available in
+  the language**, so a caller's choice came back as a 500 saying `internal:`.
+  `fields(x)` asks the question now
+  ([ADR-0026](docs/decisions/0026-data-is-a-union-with-no-discriminator.md)).
+- `ashlar fmt` **changed what a program returned** and then deleted the
+  branch, and handed comments to the wrong declaration — twice, by two
+  different routes. Both fixed; the faithfulness property now compares each
+  comment's *home*, not the comment count that let them through
+  ([ADR-0024](docs/decisions/0024-a-formatter-that-loses-code-is-not-a-formatter.md)).
+- One subscriber's fault **silenced a channel and billed the publisher**
+  ([ADR-0027](docs/decisions/0027-a-subscribers-fault-is-that-subscribers.md)),
+  and a shared pad taking snapshots at face value lost a paragraph with no
+  error anywhere
+  ([ADR-0028](docs/decisions/0028-what-a-snapshot-transport-can-merge.md)).
+
+Each of those passed every test it had. A stuck test can only report a
+requirement that is unsatisfiable; it cannot report one that is wrong and
+perfectly satisfiable, which is why exposure to an uncooperative world is
+part of the method rather than a testing tactic
+([requirements §2](docs/requirements.md)).
+
+The one standing limit is stated rather than papered over: **A3 is met by
+measurement** — 24/25 against a bar of 20 — on runs labelled
+*reduced-contamination* rather than cold, because an in-repo reader receives
+the project instructions before any prompt exists to forbid them. That is
+measured per run and recorded, and `suites/t_a3/PROTOCOL.md` carries the
+instructions for running a provably cold one from outside the repository.

@@ -28,6 +28,14 @@ permission for a requirements revision has failed the same way an agent
 that quietly weakens a test has failed. Both substitute someone's comfort
 for the argument from the layer above.
 
+The requirements are revised by **execution**, not only by stuck tests
+(requirements §2). A test that will not pass reports a requirement that is
+unsatisfiable; it cannot report one that is wrong and perfectly satisfiable,
+and those are the expensive ones. Build whole programs, drive them over real
+transports against input nothing in this repo wrote, and read what comes
+back — that is where every expensive finding here came from. What execution
+finds lands as a requirements revision first, then as code and its test.
+
 So: if a gate you can run says a construct is wrong, fix the construct.
 If a requirement fails the vision, revise the requirement and record why.
 Do not mark a decision "proposed" and wait, when the evidence to decide it
@@ -166,7 +174,7 @@ exemption. It caught this very paragraph on the first run.
 | language behavior | `reference/ashlar.md` + a test + (if user-visible failure) `docs/diagnostics.md` |
 | a diagnostic's cause/fix | its `docs/diagnostics.md` row |
 | a design trade | an ADR — a new `docs/decisions/NNNN-*.md` only when it REVERSES or supersedes an existing one; an ADR that deferred its own implementation is closed in place with a Resolution section, because finishing a decision is not rewriting it. Do not spawn a file to record how you carried out a decision already made. |
-| delivered/new planned work | `docs/roadmap.md` (an empty ledger is a claim — keep it honest) |
+| work you found but did not do | `docs/roadmap.md`, with the requirement it serves and the test that will prove it. Delivered work does NOT go there — `suites/coverage.md`, the ADRs and `git log` each hold that better, and a third prose copy goes stale between them. |
 | anything shown in `README.md` | keep README, AGENTS.md, and reality agreeing |
 | the reference | re-run the gates (T-A1/A2/A5) and eyeball the byte budget |
 
@@ -185,3 +193,9 @@ exemption. It caught this very paragraph on the first run.
   every finding against the built binary before believing it.
 - The honest sentence beats the impressive one — in diagnostics, docs,
   commit messages, and this file.
+- **Prose is not an artifact.** Before adding a file, a section, or a
+  paragraph, find the one that should have said it and fix that instead.
+  Three places describing one fact is three chances to be wrong and one
+  guarantee of drift. A count, a list, or a recital that duplicates
+  something checkable is cruft the moment it is written — either delete
+  it or let a test hold it, never both by hand.
