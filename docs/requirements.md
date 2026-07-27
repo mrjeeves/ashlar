@@ -3,6 +3,14 @@
 ---
 ## 0. What this document is
 A set of requirements — statements of what must be true — for a programming language and runtime whose primary author is a machine and whose primary reader is a human reviewing the machine's work.
+
+These requirements distinguish the language from its first runtime target.
+**Ashlar is an AI-first composition language. Its current runtime builds
+servers and interfaces.** That is delivered scope, not the language's identity
+or a permanent boundary on what its composition model may target. A future
+runtime target is not implied by the current implementation: it earns its own
+requirements and executable proof before it exists.
+
 Requirements are numbered so tests can reference them. Every requirement is verifiable. Nothing here is procedural; where this document appears to say "do X," it has failed and should be rewritten as "X is true."
 **The name of the language is not decided here.** Principle 2 says names matter more than anything. The most-repeated name in the system is the composable unit's keyword — the language's own name appears only in the CLI, the manifest header, the file extension, and diagnostics — so the guessability budget is spent on the unit keyword first.
 ---
@@ -128,7 +136,10 @@ This suite exists before the compiler does and is the primary gate on syntax dec
 **T-META — Coverage.** Parses this document for requirement identifiers, parses the test suites for requirement annotations, asserts every requirement has at least one test. A requirement with no test is not a requirement.
 ---
 ## 10. Non-goals
-- **Not a general-purpose systems language.** It builds servers and interfaces.
+- **Not a claim of a general-purpose systems runtime.** The current runtime
+  builds servers and interfaces. That target states what is delivered now; it
+  does not define Ashlar itself or foreclose another deliberately specified
+  and verified runtime target (ADR-0030).
 - **Not human-optimized.** Where agent legibility and human ergonomics conflict, agent legibility wins.
 - **Not backward compatible.** Foreign-function interface only.
 - **Not extensible at the language level.** See A6.
@@ -167,3 +178,11 @@ The first artifact is therefore the reference under 40,000 characters, and the f
 2026-07-27 — **§11 rewritten** from "Open decisions" to the resolutions. All six had been settled by ADRs 0001–0007 and 0022 while the section still told a reader the language had no name and no compilation target. A load-bearing document that is stale is worse than one that is silent: it is confidently wrong, which is the failure D1 forbids in diagnostics and A4 forbids in syntax, applied to the requirements themselves. **§9's T-C entry** corrected in the same pass: it described a test binary that was never built, because composition is proved in `compose.rs` and `resolve.rs` where it lives.
 
 2026-07-27 — **G3 revised** from "hot reload on source change preserves process state" to what the runtime does and the reference already described: state carries over **by full name**, and open pages reconnect and re-render against the new code, so a view instance's `state` — which belongs to a page — is reborn at its default. Found by the outer loop (§2), not by a stuck test: a real browser held a live socket on `examples/counter`, the source was edited underneath it, and the count went 3 → 0 while the socket reconnected. `reference/ashlar.md` §9.1 has said "state properties carry over by full name" all along; G3's one-line summary was broader than the reference, the code, and the test that proved it, and a reader of the requirements would have predicted the 3. The requirement was wrong and the delivered behavior was right. `t_g3_a_view_instances_state_does_not_survive_reload` now pins the half that was unproved, beside the sibling that proves the other. Revised per §1: requirements are revised when they fail to express the vision.
+
+2026-07-27 — **§0 and §10 revised** to distinguish Ashlar from its first
+runtime target (ADR-0030). The vision defines an AI-first composition
+language; none of its principles makes servers and interfaces the language's
+identity. The old non-goal compressed a true delivered fact — the current
+runtime builds servers and interfaces — into a permanent definition of the
+language. The corrected wording keeps the runtime claim exact without
+foreclosing another target that arrives with its own requirements and proof.

@@ -1,9 +1,10 @@
 # The Ashlar Reference
 
-This is the complete reference for Ashlar, a composition language for servers
-and interfaces. Everything the language does is described here. Anything this
-reference does not define is a compile error, never a silent behavior. Source
-files use the extension `.ash` and are UTF-8.
+This is the complete reference for Ashlar, an AI-first composition language.
+Its current runtime target is servers and interfaces. Everything the language
+and that runtime do is described here. Anything this reference does not define
+is a compile error, never a silent behavior. Source files use the extension
+`.ash` and are UTF-8.
 
 Ashlar programs are built from one composable unit, the **part**. UI elements,
 routes, services, state stores, and data shapes are all parts and compose by
@@ -408,8 +409,8 @@ part app {
 
 ### 9.2 Requests and routing
 
-A part with a `route` property receives requests. `route` is a text pattern
-over the request path; `{name}` segments capture into `params`.
+A part with a `route` property receives requests. `route` is text matched
+against the request path; `{name}` segments capture into `params`.
 
 ```ash
 space chat.api

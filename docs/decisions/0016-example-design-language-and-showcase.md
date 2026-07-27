@@ -4,6 +4,11 @@ Date: 2026-07-24
 
 Status: accepted
 
+**Framing note (2026-07-27):** ADR-0030 distinguishes the language from its
+first runtime target. The phrase “language whose pitch is servers and
+interfaces” below names the pitch of the runtime this ADR was improving, not
+Ashlar's identity or permanent boundary.
+
 ## Context
 
 The examples are corpus and showcase both (`t_examples`, AGENTS.md). Every
