@@ -913,6 +913,94 @@ part page {
 }
 
 #[test]
+#[cfg(unix)]
+fn t_g_a_signal_runs_the_stop_stack_and_its_last_words_are_printed() {
+    // covers: G1, G3 (§9.1). "On shutdown it calls `stop`, then flushes
+    // stored state" was false twice over. Nothing outside the test suite
+    // ever set the stop flag — no signal handling existed — so a `stop`
+    // stack never ran in a deployed program at all; `examples/slate` winds
+    // its pads down there. And once it did run, its `log.*` lines were
+    // pushed into the evaluator's queue that the EVENT LOOP drains, which
+    // shutdown has just left, so they were written and never printed.
+    //
+    // Driven against a real process and a real SIGTERM, because that is the
+    // only thing that proves it.
+    let app = r#"space demo
+
+part Server {
+  port = 8499
+  start stack = () => {
+    log.info("START RAN", {})
+    return none
+  }
+  stop stack reverse = () => {
+    log.info("STOP RAN", {})
+    return none
+  }
+}
+
+part page {
+  route = "/"
+  handle pipe = (req: std.Request) => "up"
+}
+"#;
+    let root = fixture("signal", &[("app.ash", app)]);
+    let bin = env!("CARGO_BIN_EXE_ashlar");
+    let log = root.join("out.log");
+    let out = std::fs::File::create(&log).unwrap();
+    let err = out.try_clone().unwrap();
+    let mut child = std::process::Command::new(bin)
+        .arg("run")
+        .arg(&root)
+        .arg("--port")
+        .arg("8499")
+        .stdout(out)
+        .stderr(err)
+        .spawn()
+        .expect("spawn ashlar run");
+
+    // Wait for it to serve.
+    let mut up = false;
+    for _ in 0..80 {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        if TcpStream::connect(("127.0.0.1", 8499u16)).is_ok() {
+            up = true;
+            break;
+        }
+    }
+    assert!(up, "server never came up");
+
+    // SIGTERM, the way a container stops a process.
+    unsafe {
+        extern "C" {
+            fn kill(pid: i32, sig: i32) -> i32;
+        }
+        kill(child.id() as i32, 15);
+    }
+
+    let mut exited = false;
+    for _ in 0..80 {
+        std::thread::sleep(std::time::Duration::from_millis(150));
+        if matches!(child.try_wait(), Ok(Some(_))) {
+            exited = true;
+            break;
+        }
+    }
+    if !exited {
+        let _ = child.kill();
+        panic!("the process ignored SIGTERM");
+    }
+
+    let text = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(text.contains("START RAN"), "start must have run: {}", text);
+    assert!(
+        text.contains("STOP RAN"),
+        "a signal must run the stop stack, and its lines must reach the log: {}",
+        text
+    );
+}
+
+#[test]
 fn t_g_scheduled_task_runs() {
     // covers: G4 (scheduled tasks), reference 9.7
     let app = r#"space demo

@@ -461,6 +461,47 @@ fn resolve_part_for_shape(ev: &Evaluator, home: &str, name: &str) -> Option<Stri
     })
 }
 
+/// Set by the signal handler, read by the event loop. The only thing a
+/// handler may safely touch.
+static SIGNALLED: AtomicBool = AtomicBool::new(false);
+
+/// Ask the operating system to tell us about SIGINT and SIGTERM.
+///
+/// §9.1 has always said "On shutdown it calls `stop`, then flushes stored
+/// state", and it did not: nothing outside the test suite ever set the stop
+/// flag, so a `stop` stack never ran in a program anyone actually deployed.
+/// `examples/slate` winds its pads down there. Rule 4 says a construct that
+/// does not fully work does not exist — so either `stop` went, or this came
+/// in (ADR-0029).
+///
+/// This is the workspace's second `unsafe`, and it is held to the same shape
+/// as the first: two extern declarations, one call site, `#[cfg(unix)]`, and
+/// a handler that does nothing but store `true` in an `AtomicBool` — the one
+/// action async-signal-safety allows. Off unix the runtime keeps its old
+/// behaviour and the reference says so.
+#[cfg(unix)]
+fn listen_for_shutdown() {
+    const SIGINT: i32 = 2;
+    const SIGTERM: i32 = 15;
+    type Handler = extern "C" fn(i32);
+    extern "C" {
+        fn signal(sig: i32, handler: Handler) -> usize;
+    }
+    extern "C" fn on_signal(_sig: i32) {
+        SIGNALLED.store(true, Ordering::Relaxed);
+    }
+    // SAFETY: `signal` with a plain `extern "C"` handler is the POSIX
+    // contract, and `on_signal` touches nothing but an atomic store, which
+    // is async-signal-safe. Called once, before the loop starts.
+    unsafe {
+        signal(SIGINT, on_signal);
+        signal(SIGTERM, on_signal);
+    }
+}
+
+#[cfg(not(unix))]
+fn listen_for_shutdown() {}
+
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     haystack
         .windows(needle.len())
@@ -1290,6 +1331,7 @@ pub fn serve_with_liveness(
             .unwrap_or(8080);
 
         if listener.is_none() {
+            listen_for_shutdown();
             let l = TcpListener::bind(("127.0.0.1", port))
                 .map_err(|e| format!("bind failed: {}", e))?;
             l.set_nonblocking(true)
@@ -1332,6 +1374,12 @@ pub fn serve_with_liveness(
         let mut pending: Vec<PendingConn> = Vec::new();
         let mut closing: Vec<CloseConn> = Vec::new();
         let exit = 'inner: loop {
+            // A signal is a stop. Setting the caller's flag rather than
+            // breaking directly keeps one shutdown path, so `stop` runs and
+            // state flushes exactly as it does for the library caller.
+            if SIGNALLED.load(Ordering::Relaxed) {
+                stop.store(true, Ordering::Relaxed);
+            }
             if stop.load(Ordering::Relaxed) {
                 break 'inner Exit::Stop;
             }
@@ -1682,6 +1730,19 @@ pub fn serve_with_liveness(
             Exit::Stop => {
                 // Shutdown (§9.1): stop stack reverse, then flush.
                 let _ = ev.run_stack(&port_part, "stop", true);
+                // The last thing a program says is the thing most likely to
+                // be lost. `log.*` queues into `ev.log` and the event loop
+                // drains it each tick — but shutdown leaves that loop, so a
+                // `stop` stack's lines were pushed and never printed, which
+                // is most of what a `stop` stack is for. Drain what it said,
+                // then flush: the CLI exits through `process::exit`, which
+                // runs no destructors.
+                for line in ev.log.drain(..) {
+                    eprintln!("{}", line);
+                }
+                use std::io::Write;
+                let _ = std::io::stdout().flush();
+                let _ = std::io::stderr().flush();
                 flush_state(&state_path, &ev);
                 return Ok(());
             }
@@ -1797,8 +1858,12 @@ fn try_serve_files(ev: &mut Evaluator, root: &std::path::Path, path: &str) -> Op
         let named = root.join("assets").join(&dir);
         let file = if named.is_file() {
             // One file at one path: it answers its own route and nothing
-            // below it, so a sibling route is never shadowed.
-            if path != prefix {
+            // below it, so a sibling route is never shadowed. Compared with
+            // slashes trimmed, because `match_route` trims them too — a
+            // byte-wise compare let `/robots.txt/` past the file and into
+            // the fallthrough, which answered it with something else
+            // entirely.
+            if path.trim_matches('/') != prefix.trim_matches('/') {
                 continue;
             }
             named

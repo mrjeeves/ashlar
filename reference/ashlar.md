@@ -385,7 +385,10 @@ exactly one; `ashlar run chat.app` names one explicitly. The bound port is
 the root's `port`, unless `ashlar run --port 8091` overrides it — a deployment
 fact bound at run time, never written in source (B5). On start the runtime
 loads stored state (§9.3), then calls the root's `start` stack property if
-declared. On shutdown it calls `stop`, then flushes stored state. While
+declared. On shutdown — `SIGINT` or `SIGTERM` on unix — it calls `stop`,
+prints anything that stack logged, then flushes stored state. Elsewhere a
+signal is not caught and only stored state survives, which it does anyway:
+it is flushed whenever it changes, not at exit. While
 running, a source change rebuilds and hot-reloads the program in place;
 state properties carry over by full name, and open pages reconnect and
 re-render themselves. If the change fails to compile, diagnostics are
