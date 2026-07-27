@@ -1086,21 +1086,19 @@ impl<'a> Walk<'a> {
                                     .join(" and ")
                             ),
                         )
+                        // D6: no edits. Which candidate is meant is the
+                        // author's to say — see the note at the other E002
+                        // site below.
                         .with_fix(
                             format!(
-                                "Qualify it; alternatives: {}.",
+                                "Qualify it with the one you mean: {}.",
                                 cands
                                     .iter()
                                     .map(|f| format!("`{}`", f))
                                     .collect::<Vec<_>>()
                                     .join(", ")
                             ),
-                            vec![Edit {
-                                file: self.file.clone(),
-                                start: span.start,
-                                end: span.end,
-                                text: cands[0].clone(),
-                            }],
+                            vec![],
                         ),
                     );
                     return;
@@ -1196,27 +1194,39 @@ impl<'a> Walk<'a> {
                         candidates.join(" or ")
                     ),
                 );
-                if k == segs.len() && part_fulls.len() > 1 && candidates.len() == part_fulls.len()
-                {
-                    d = d.with_fix(
-                        format!(
-                            "Qualify it; alternatives: {}.",
-                            part_fulls
-                                .iter()
-                                .map(|f| format!("`{}`", f))
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        ),
-                        vec![Edit {
-                            file: self.file.clone(),
-                            start: span.start,
-                            end: span.end,
-                            text: part_fulls[0].clone(),
-                        }],
-                    );
+                // D6: an ambiguous name gets a NOTE naming every candidate and
+                // NO machine edit — ever.
+                //
+                // This used to attach an edit rewriting the reference to
+                // `part_fulls[0]`, the alphabetically first candidate. That
+                // satisfies D2 (it compiles) and is still wrong: driving it,
+                // a page rendering `base.Card` was silently rewritten to
+                // `audit.Card` by `ashlar fix` and rendered something else,
+                // clean build to clean build. D2 checks that a fix compiles,
+                // not that it means the same thing, which is the whole reason
+                // D6 exists (ADR-0031).
+                //
+                // The gate was also `k == segs.len()`, so `Card` alone got the
+                // guess while `Card.title` got a note — the same ambiguity,
+                // repairable in the position where a name is merely mentioned
+                // and not in the far commoner one where it is used. Both now
+                // take the same honest answer.
+                let alternatives = if part_fulls.len() > 1 {
+                    &part_fulls
                 } else {
-                    d = d.with_fix("Qualify the name with its space.".to_string(), vec![]);
-                }
+                    &candidates
+                };
+                d = d.with_fix(
+                    format!(
+                        "Qualify it with the one you mean: {}.",
+                        alternatives
+                            .iter()
+                            .map(|f| format!("`{}`", f))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                    vec![],
+                );
                 self.diags.push(d);
                 return;
             }
@@ -1528,7 +1538,14 @@ mod tests {
     }
 
     #[test]
-    fn e002_ambiguous_bare_with_qualify_fix() {
+    fn e002_ambiguous_names_every_candidate_and_never_picks_one() {
+        // covers: D6. This test used to assert the opposite — that the fix
+        // carried an edit rewriting the reference to `chat.data.Message`,
+        // the alphabetically first candidate. That is a guess wearing a
+        // correction's clothes: driving it, `ashlar fix` silently rewrote a
+        // page's `el(Card, ...)` to a DIFFERENT part and the page rendered
+        // something else, clean build to clean build (ADR-0031). The
+        // requirement was wrong, not the test's subject, so the test moved.
         let (_, diags) = resolve_srcs(&[
             ("a.ash", "space chat.data\n\npart Message {\n  x: text\n}\n"),
             ("b.ash", "space note\n\npart Message {\n  y: text\n}\n"),
@@ -1540,9 +1557,34 @@ mod tests {
         assert_eq!(ids(&diags), vec!["E002"]);
         assert!(diags[0].cause.contains("ambiguous"));
         let fix = diags[0].fix.as_ref().unwrap();
-        assert_eq!(fix.edits.len(), 1);
-        assert_eq!(fix.edits[0].text, "chat.data.Message");
-        assert!(fix.note.contains("note.Message"));
+        assert!(
+            fix.edits.is_empty(),
+            "D6: an ambiguous name has no judgment-free edit, so it gets none — got {:?}",
+            fix.edits
+        );
+        assert!(fix.note.contains("chat.data.Message"), "{}", fix.note);
+        assert!(fix.note.contains("note.Message"), "{}", fix.note);
+    }
+
+    #[test]
+    fn e002_is_equally_repairable_whether_the_name_is_mentioned_or_used() {
+        // covers: D6. The old gate was `k == segs.len()`, so a bare `Message`
+        // got a (wrong) machine edit while `Message.x` got only a note — the
+        // same ambiguity treated two ways, and the note-only branch was the
+        // far commoner position. Both now say the same thing.
+        let (_, diags) = resolve_srcs(&[
+            ("a.ash", "space chat.data\n\npart Message {\n  x: text\n}\n"),
+            ("b.ash", "space note\n\npart Message {\n  x: text\n}\n"),
+            (
+                "c.ash",
+                "space app\nuse chat.data\nuse note\n\npart V {\n  go = () => Message.x\n}\n",
+            ),
+        ]);
+        assert_eq!(ids(&diags), vec!["E002"]);
+        let fix = diags[0].fix.as_ref().unwrap();
+        assert!(fix.edits.is_empty(), "{:?}", fix.edits);
+        assert!(fix.note.contains("chat.data.Message"), "{}", fix.note);
+        assert!(fix.note.contains("note.Message"), "{}", fix.note);
     }
 
     #[test]

@@ -5,7 +5,6 @@ the one file to read before touching anything: the contract first, the complete
 language reference second. Humans start at `README.md`; the two must never
 disagree, and fixing a disagreement is part of your task.
 `docs/writing-ashlar.md` collects the traps that catch agents who guess.
-`ashlar` is the binary; `.ash` the extension.
 
 ## The one rule that orders all others
 
@@ -18,14 +17,12 @@ CODE            Whatever makes the tests pass.
 
 Lower layers yield to higher ones — always. "The test is inconvenient" is never
 a reason to change a test; "the test mis-encodes the requirement" is the only
-one. `docs/requirements.md` §1 argues why this grants authority rather than only
-breaking ties, and §2 gives the two loops it is worked by; read them once. What
-they come to: everything below the vision is **yours to change without asking**,
-provided the change serves the layer above and arrives with the evidence and
-tests that show it does — and requirements are revised by **execution**, because
-a stuck test reports a requirement that is unsatisfiable, never one that is
-wrong and perfectly satisfiable. Those are the expensive ones, and only driving
-whole programs against input nothing here wrote surfaces them.
+one. Everything below the vision is **yours to change without asking**, provided
+the change serves the layer above and arrives with the evidence and tests that
+show it does. Requirements are revised by **execution**: a stuck test reports a
+requirement that is unsatisfiable, never one that is wrong and perfectly
+satisfiable, and those are the expensive ones. `docs/requirements.md` §1–2
+argues both points; read it once.
 
 Stop and say so in exactly two cases: **the vision looks wrong** (the user's to
 change — argue, never edit), or **you cannot get the evidence** (a cold read
@@ -49,21 +46,20 @@ record made on older evidence.
    renumbered, with its catalog row in the same commit.
 6. **Diagnostics are corrections.** One-sentence cause, correction specific
    enough to apply without judgment. Machine edits leave the program strictly
-   better (D2) and never change what a name resolves to (D6); corpus mean
-   rounds-to-clean stays at 1.00 (T-D5 gates ≤1.5).
+   better (D2) and never change what a name resolves to (D6). T-D5 watches both
+   numbers: mean rounds-to-clean, and what share of the corpus is fixable at all.
 7. **No false positives.** `Unknown` absorbs what the checker cannot prove. When
    in doubt, stay silent and note the gap.
 8. **Examples are corpus** (`t_examples`): everything under `examples/` compiles
    clean, is formatted, and is DRIVEN over real HTTP/WebSockets — a broken
    example is a failing test, not a discovery. T-BROWSER re-drives it with a
    real browser and a finding closes only THERE. A capability the corpus does
-   not use defends nothing, so sweeps beat instances; the undefended list is in
-   `docs/roadmap.md`.
+   not use defends nothing; the undefended list is in `docs/roadmap.md`.
 9. **Refactors never partially apply** (E-series): radius first, atomic apply,
    post-verify rollback, reversal to the same PROGRAM — same parts, homes and
    composition order, closure only ever WIDENED. Byte-identity is a property
-   specific commands have, not a law (ADR-0018); never weaken an assertion that
-   passes.
+   specific commands have, not a law (ADR-0018); never weaken a passing
+   assertion.
 
 ## The suite is the definition of done
 
@@ -78,10 +74,10 @@ pinned by `t_meta_toolchain_floor_is_declared_and_reachable`; "zero warnings"
 means on the floor too. `suites/coverage.md` maps every requirement to its test
 and T-META checks that map both ways — read it rather than a list here. Two
 suites cannot run in CI: **T-A3**, the cold-read gate
-(`suites/t_a3/PROTOCOL.md`), which must now run from **outside this
-repository**, since this file carries the reference and no in-repo reader can be
-cold; and **T-BROWSER** (`suites/t_browser/`), needing a browser and node. Every
-new behavior lands with the test that catches its regression.
+(`suites/t_a3/PROTOCOL.md`), which must run from **outside this repository**
+since this file carries the reference; and **T-BROWSER**
+(`suites/t_browser/`), needing a browser and node. Every new behavior lands
+with the test that catches its regression.
 
 ## Sync duties — what must move together
 
@@ -89,9 +85,9 @@ new behavior lands with the test that catches its regression.
 |---|---|
 | language behavior | the reference below + a test + (if user-visible failure) `docs/diagnostics.md` |
 | a diagnostic's cause/fix | its `docs/diagnostics.md` row |
-| a design trade | an ADR — a new `docs/decisions/NNNN-*.md` only when it REVERSES or supersedes one; one that deferred its own implementation closes in place with a Resolution section |
-| work you found but did not do | `docs/roadmap.md`, with the requirement and the test that will prove it. Delivered work does NOT go there — `coverage.md`, the ADRs and `git log` hold it better |
-| anything shown in `README.md` | keep README, this file, and reality agreeing |
+| a design trade | an ADR — a new file only when it REVERSES or supersedes one; an ADR that deferred its own implementation closes in place with a Resolution section |
+| work found but not done | `docs/roadmap.md`, with its requirement and the test that will prove it. Delivered work does NOT go there |
+| anything in `README.md` | keep README, this file, and reality agreeing |
 | the reference below | re-run T-A1/A2/A5 and eyeball the budget |
 
 ## Operating discipline
@@ -108,16 +104,15 @@ new behavior lands with the test that catches its regression.
   find the one that should have said it and fix that instead. A count or recital
   duplicating something checkable is cruft the moment it is written.
 
-**Budget: ≤40,000 bytes total, reference included** (T-A1), no single reference
-section over 20% of the reference's bytes (T-A5). Every sentence below is true
-of the binary and every ```ash block compiles clean (T-A2). Spend words like
-money.
+**Budget: ≤40,000 bytes total, reference included** (T-A1), no reference section
+over 20% of the reference's bytes (T-A5). Every sentence below is true of the
+binary and every ```ash block compiles clean (T-A2). Spend words like money.
 
 <!-- REFERENCE:BEGIN -->
 ## The Ashlar Reference
 
-Everything the language does is described below; anything this reference does
-not define is a compile error, never a silent behavior.
+Everything the language does is below; anything this reference does not define
+is a compile error, never a silent behavior.
 
 ## 1. Files and lexical rules
 
@@ -140,30 +135,28 @@ fix. Blocks use `{ }`. Indentation is not significant — `ashlar fmt`
 canonicalizes it to two spaces. Commas separate items inside `( )`, `[ ]`, and
 inline `{ }` literals; a trailing comma is allowed.
 
-Reserved words: `space use part foreign state stored peruser setting append deep stack
-pipe reverse let if else for in return true false none and or not`. A
+Reserved words: `space use part foreign state stored peruser setting append deep
+stack pipe reverse let if else for in return true false none and or not`. A
 reserved word cannot name anything. The shape names of §5 (`text`, `number`,
 `bool`, `data`) are recognized only in shape positions and are ordinary names
-everywhere else — which is how `text(n)` the conversion and `text` the shape
-coexist.
+elsewhere — which is how `text(n)` the conversion and `text` the shape coexist.
 
 Identifiers are letters, digits, and `_`, not starting with a digit. Two names
-in the same scope that differ only by case or by separator convention (for
-example `userName` and `user_name`) are a compile error: the compiler supplies
-naming discipline. Dotted identifiers like `chat.ui.Message` are **names**;
-dots group names for reading and imply no relationship between the dotted
-levels.
+in one scope differing only by case or separator convention (`userName` and
+`user_name`) are a compile error: the compiler supplies naming discipline.
+Dotted identifiers like `chat.ui.Message` are **names**; dots group names for
+reading and imply no relationship between levels.
 
 ## 2. Names, spaces, and use
 
 Every declaration lives in a space, named by the space header. A part's **full
-name** joins the space name to the declared name: `part Message` in
-`space chat.data` declares `chat.data.Message`.
+name** joins the two: `part Message` in `space chat.data` declares
+`chat.data.Message`.
 
 `use` names a space and brings every name it provides into scope — its own
 parts and everything it uses, transitively. There is no import list, no
-aliasing, and no way to bring in a single name. `use` of a part name is a
-compile error whose fix names the part's space.
+aliasing, no way to bring in a single name. `use` of a part name is a compile
+error whose fix names the part's space.
 
 A name resolves against everything in scope, and must resolve to exactly one
 definition:
@@ -175,15 +168,13 @@ definition:
   visible parts could answer to is ambiguous even if one is declared in the
   current space.
 
-A full dotted name always resolves if the part exists and is visible through
-the use graph. Source never contains a location: no paths, no URLs, no
-versions. Where code lives is recorded in the manifest (§10), which the build
-derives.
+A full dotted name resolves if the part exists and is visible through the use
+graph. Source never contains a location — no paths, URLs, or versions. Where
+code lives is in the manifest (§10), which the build derives.
 
-`std` is provided by the runtime and implicitly used by every space; its parts
-and functions (§9) resolve like any other name and may be qualified
-(`std.len`) when a bare name is ambiguous. Declaring a layer on a `std` part is
-a compile error.
+`std` is provided by the runtime and implicitly used everywhere; its parts and
+functions (§9) resolve like any name and may be qualified (`std.len`) when a
+bare name is ambiguous. Declaring a layer on a `std` part is a compile error.
 
 ## 3. Parts
 
@@ -198,11 +189,11 @@ part Message {
 }
 ```
 
-A part declaration is `part Name { properties }`. A bare name introduces a
-part in the current space. A dotted name declares a **layer** on an existing
-part, and must match the full name of a part visible through the use graph —
-a dotted name that matches nothing is a compile error naming the nearest
-match, so a typo can never silently introduce a new part:
+A part declaration is `part Name { properties }`. A bare name introduces a part
+in the current space; a dotted name declares a **layer** on an existing part
+and must match the full name of one visible through the use graph. A dotted
+name matching nothing is a compile error naming the nearest match, so a typo
+can never silently introduce a new part:
 
 ```ash
 space chat.audit
@@ -214,23 +205,22 @@ part chat.data.Message {
 ```
 
 A part is a singleton: its full or bare name yields the one composed part.
-Parts used as views (§9.4) additionally instantiate per use. A part with only
-field properties (name and shape, no value) is a **data shape**, and values of
-that shape are written as plain literals (§6). Each space may declare at most
-one layer of a given part; a second is a compile error whose fix merges the
-blocks.
+Parts used as views (§9.4) also instantiate per use. A part with only field
+properties (name and shape, no value) is a **data shape**, whose values are
+written as plain literals (§6). Each space may declare at most one layer of a
+part; a second is a compile error whose fix merges the blocks.
 
 ### Composition order
 
-Layers flatten in **use order**: if space B uses space A (directly or
-transitively), B's layer sits on A's. The result is deterministic and
-computed from declarations alone; file layout never affects it. A cycle in
-the use graph is a compile error naming the cycle.
+Layers flatten in **use order**: if space B uses space A, directly or
+transitively, B's layer sits on A's. The result is deterministic and computed
+from declarations alone; file layout never affects it. A cycle in the use graph
+is a compile error naming the cycle.
 
 If two spaces layer the same part and neither uses the other, the compiler
-orders them by space name and emits warning `W001` naming both layers and the
-`use` declaration that would order them. Add that `use` to decide the order
-deliberately.
+orders them by space name and emits `W001` naming both layers and the `use`
+that would order them. Add it to decide the order deliberately — and note that
+doing so can resequence layers elsewhere, which `W002` reports (§11).
 
 ## 4. Properties and merge kinds
 
@@ -251,7 +241,7 @@ A property is declared as:
   deployment fact. A shape is required; a storage word is a compile error,
   since a setting is fixed before the program runs.
 
-Within one part, each property name is declared at most once per layer.
+Each property name is declared at most once per layer.
 
 **kind** is how layers of one property combine when the part flattens. There
 are exactly five:
@@ -270,10 +260,9 @@ and every later layer touching that property must restate it: a different kind,
 or none where the identity has one, is a compile error whose fix restates the
 declared kind. (To change a kind, use the `rekind` refactor, §11.)
 
-`append` and `deep` apply to text, lists, and maps; declaring them on a
-number, bool, or function is a compile error. Merging is computed at build
-time and is fully determined by the layered values: no merge outcome depends
-on runtime state.
+`append` and `deep` apply to text, lists, and maps; on a number, bool, or
+function they are a compile error. Merging is computed at build time and fully
+determined by the layered values: no outcome depends on runtime state.
 
 ```ash
 space config
@@ -290,17 +279,16 @@ part Config {
 `stack` and `pipe` properties hold functions. Calling the property runs every
 layer's function in composition order.
 
-- `stack` functions take no parameters. Each must return a map or `none`; a
-  returned map merges one level onto the part's state properties. The call
-  returns the part. Lifecycle is not a separate concept: it is `stack` plus
-  the use order.
+- `stack` functions take no parameters and must return a map or `none`; a
+  returned map merges one level onto the part's state properties, and the call
+  returns the part. Lifecycle is not a separate concept: it is `stack` plus the
+  use order.
 - `pipe` functions take exactly one parameter. The first receives the call's
-  argument; each later one receives the previous return; the call returns the
-  last return. All layers of a `pipe` property must agree in parameter and
-  return shape.
+  argument, each later one the previous return, and the call returns the last.
+  All layers must agree in parameter and return shape.
 
-`reverse` after `stack` or `pipe` runs layers derived-to-base — the correct
-default for teardown. `reverse` is fixed with the kind, restated like it.
+`reverse` after `stack` or `pipe` runs layers derived-to-base — the right
+default for teardown — and is fixed with the kind, restated like it.
 
 ```ash
 space srv
@@ -338,9 +326,9 @@ Every expression has a shape known at build time.
 - `shape?` — optional: the shape or `none`. Plain shapes never hold `none`.
 - `(shapes) -> shape` — a function shape, used in `foreign` (§9.10).
 
-A literal is checked against the shape the position expects. For a data-shape
-part: every field without a default must be present, every present key must
-be a declared field, every value must match the field's shape.
+A literal is checked against the shape its position expects. For a data-shape
+part: every field without a default present, every present key a declared
+field, every value matching the field's shape.
 
 ```ash
 space chat.view
@@ -376,15 +364,15 @@ Operators, loosest to tightest binding:
 | `!` | (postfix) asserts non-`none`: yields the value, fails at runtime on `none` |
 | `.` `[ ]` `( )` | field access, index, call |
 
-Both operands of an operator must share one shape; mixing (for example text
-`+` number) is a compile error, and the fix inserts a conversion such as
-`text(n)`. Conditions must be `bool`: there is no truthiness, and using any
-other shape as a condition is a compile error.
+Both operands must share one shape; mixing (text `+` number) is a compile error
+whose fix inserts a conversion such as `text(n)`. Conditions must be `bool` —
+there is no truthiness, and any other shape as a condition is a compile error.
 
 Access:
 
-- `value.field` — field of a data-shape value or property of a part. Checked
-  at build time; unknown fields are compile errors.
+- `value.field` — field of a data-shape value or property of a part, checked at
+  build time: an unknown field is a compile error. On a `data` value it is a
+  lookup yielding `data?` and is not checked (below).
 - `list[i]` — index from 0; shape `element?` (`none` past the end).
 - `map[key]` — lookup; shape `value?` (`none` when absent). Computed keys are
   data access only: parts, properties, spaces, and every name the compiler
@@ -395,9 +383,11 @@ Access:
 `let label = if read { "seen" } else { "new" }`.
 
 Division by zero and `!` on `none` are the two runtime faults expressions can
-raise; both carry the source location and fail the surrounding request or
-task (§9.2). They are undetectable at build time because they depend on
-runtime values.
+raise; both carry the source location and fail the surrounding request or task
+(§9.2). They are undetectable at build time because they depend on runtime
+values. Field access on a `data` value is the third thing left to runtime, and
+the only one that is silent: a runtime union has no fields to check against, so
+`e.data.valeu` answers `none` rather than failing the build.
 
 ## 7. Statements and functions
 
@@ -417,8 +407,8 @@ part math {
 }
 ```
 
-A block body returns with `return expression`, or `return` (yielding `none`),
-or by falling off the end (yielding `none`). Statements:
+A block body returns with `return expression`, or `return` or falling off the
+end (both `none`). Statements:
 
 - `let name = expression` — local binding, single-assignment. A `let` or
   parameter name already visible — a part, a property of the enclosing part, or
@@ -454,26 +444,27 @@ object per diagnostic, one per line:
 
 ```
 {"id":"E002","req":"B3","level":"error",
- "loc":{"file":"chat/ui.ash","line":4,"col":10},
- "cause":"`Message` resolves to chat.data.Message and note.Message.",
- "fix":{"note":"Qualify the reference.",
-   "edits":[{"file":"chat/ui.ash","line":4,"col":10,"end_col":17,
-     "text":"chat.data.Message"}]}}
+ "loc":{"file":"chat/ui.ash","line":4,"col":10,"end_line":4,"end_col":17},
+ "cause":"`Message` is ambiguous: it could be `chat.data.Message` or `note.Message`.",
+ "fix":{"note":"Qualify it with the one you mean: `chat.data.Message`, `note.Message`.",
+   "edits":[]}}
 ```
 
 Every diagnostic identifies a location, states the cause in one sentence, and
 states the correction specifically enough to apply without judgment. When a
 `fix` with `edits` is present, applying it produces source that compiles past
 that error without introducing a new one, and never changes what a name
-resolves to; `ashlar fix` applies such fixes. `id`s are stable across releases,
-`req` names the requirement enforced, and `ashlar check --human` renders the
-same diagnostics as prose. Warnings never block a build; errors always do.
+resolves to; `ashlar fix` applies such fixes. Where no edit is derivable
+without a judgment the author has not made — an ambiguous name, above —
+`edits` is empty and the note names every candidate. `id`s are stable across
+releases, `req` names the requirement enforced, and `ashlar check --human`
+renders the same diagnostics as prose. Warnings never block a build; errors do.
 
 ## 9. The runtime
 
-One binary, `ashlar`, compiles and runs programs. There is no install step,
-no package manager, and no registry; everything below is built in, and
-everything else enters through `foreign` (§9.10).
+One binary, `ashlar`, compiles and runs programs. No install step, no package
+manager, no registry: everything below is built in, everything else enters
+through `foreign` (§9.10).
 
 ### 9.1 Running
 
@@ -521,9 +512,9 @@ part messages {
 }
 ```
 
-`std.Request` has fields `path: text`, `method: text` (lowercase),
-`params: {text: text}`, `data: data` (the decoded JSON or form body, `none` when
-absent), `headers: {text: text}`, and `user: std.User?` (§9.6).
+`std.Request` has `path: text`, `method: text` (lowercase),
+`params: {text: text}`, `data: data` (the decoded JSON or form body, `none` if
+absent), `headers: {text: text}`, `user: std.User?` (§9.6).
 
 The same handler serves HTTP and WebSocket; transport is not visible in handler
 code. Over HTTP the path is the URL; over the built-in socket a client sends
@@ -555,7 +546,7 @@ part Store {
   full name; survives restarts. Values are validated against the current shape
   at startup: a field added since the value was written is filled from its
   default, one with no default is a startup error naming every gap at once. A
-  defaulted field is a migration; a required one is a refusal to guess.
+  defaulted field is a migration, a required one a refusal to guess.
 - `peruser` — a modifier before `state` or `stored`: the value is scoped to the
   current user, each isolated from every other by construction. Reading or
   writing one with no user in scope — an anonymous request, a scheduled task,
@@ -565,20 +556,19 @@ part Store {
 
 Every state property is reactive, and because views render on the server with
 no client code (§9.4) that reach is universal: any view that read a value
-re-renders when it changes. A shared value reaches every client's views; a
-`peruser` value only its own user's.
+re-renders when it changes — a shared value across every client, a `peruser`
+value only its own user's.
 
-Assignment (`name = expression`) rebinds a state property. Values are immutable:
-to change a list or map, assign a new one (`messages = { ...messages, [id]: m }`
-is not legal — computed keys cannot appear in literals; use `put`:
-`messages = put(messages, id, m)`). Only functions declared in layers of the
-owning part may assign its state properties; other parts read them by name or
-call a function property that assigns.
+Assignment (`name = expression`) rebinds a state property. Values are immutable,
+so to change a list or map assign a new one (`messages = { ...messages, [id]: m }`
+is not legal — computed keys cannot appear in literals; use
+`put(messages, id, m)`). Only functions in layers of the owning part may assign
+its state properties; others read them by name or call a function that assigns.
 
 ### 9.4 Views
 
-A part with a `view` property is a UI element. `view` is a zero-parameter
-function returning `std.Element`, built with `el`:
+A part with a `view` property is a UI element: a zero-parameter function
+returning `std.Element`, built with `el`.
 
 ```
 el(tag: text, attrs: {text: text}?, children: [std.Element]?)
@@ -609,14 +599,14 @@ in attrs (`onclick`, `onsubmit`, `oninput`, carrying `value` and `caret` — the
 caret's offset, or `none` where the target has none — in the event's `data`)
 round-trip over the built-in socket, handlers run server-side, and every view
 that read a changed state property re-renders and patches in place, preserving
-the focused field, its caret, and typing still in flight; a server-side change
-to the value (a cleared draft) still wins. An attr value is text, the name of a
+the focused field, its caret and typing in flight; a server-side change to the
+value (a cleared draft) still wins. An attr value is text, the name of a
 function property, or an inline function of zero or one parameter
 (`(e: std.Event) => ...`; `std.Event` has `name: text` and `data: data`).
 Serving a view part from a `route` wires all of this up; no other setup exists.
 
-A `title` element names the page: it sets the browser tab, and re-renders like
-any other element, so a title that reads state follows it.
+A `title` element names the page: it sets the browser tab and re-renders like
+any other element, so a title reading state follows it.
 
 ```ash
 space site
@@ -631,13 +621,12 @@ part pad {
 }
 ```
 
-Appearance is bound by name, never by a location. Elements carry `class`
-names and a stylesheet supplies the rules. The server root names its sheet —
-`style = "app"` resolves to `assets/app.css` like `files` (§9.8), a missing
-declared sheet is a build error, and the runtime links it into every served
-page. CSS is a foreign language for appearance, the presentation peer of
-`foreign` (§9.10). A `style` string attribute is the wrong tool and
-unchecked; give the element a `class` and write the rule in the sheet.
+Appearance is bound by name, never location. Elements carry `class` names and a
+stylesheet supplies the rules. The server root names its sheet — `style = "app"`
+resolves to `assets/app.css` like `files` (§9.8), a missing declared sheet is a
+build error, and the runtime links it into every page. CSS is a foreign language
+for appearance, the presentation peer of `foreign` (§9.10). A `style` string
+attribute is the wrong tool and unchecked; give the element a `class`.
 
 ### 9.5 Channels
 
@@ -650,23 +639,22 @@ subscribe(channel: text, handler)   // handler: (message: data) => ...
 ```
 
 `subscribe` in a view part's `start stack` subscribes that instance and
-unsubscribes it when the instance unmounts; anywhere else the subscription
-lives for the process. Cross-client reactivity (§9.3) rides the same
-broadcast and needs no explicit channel.
+unsubscribes on unmount; anywhere else the subscription lives for the process.
+Cross-client reactivity (§9.3) rides the same broadcast and needs no channel.
 
 Handlers run in subscription order, and a fault in one is logged without
-stopping the others or failing the caller that published — the rule `spawn`
-follows (§9.9), because a subscriber is someone else's code.
+stopping the others or failing the publisher — the rule `spawn` follows
+(§9.9), because a subscriber is someone else's code.
 
 A socket can die with neither end told and TCP never says so. The runtime
-therefore heartbeats every open socket and sheds a peer that stops answering;
-a page missing the beats it is owed marks `<html>` with `data-ash-offline` and
-reconnects when the server is reachable again. Style that attribute: a stale
-page that looks live is the one failure this language will not leave silent.
+therefore heartbeats every open socket and sheds a peer that stops answering; a
+page missing the beats it is owed marks `<html>` with `data-ash-offline` and
+reconnects when the server returns. Style that attribute: a stale page that
+looks live is the one failure this language will not leave silent.
 
 ### 9.6 Auth
 
-The runtime provides accounts, sessions, and the request identity.
+The runtime provides accounts, sessions, and request identity.
 
 - `signup(email: text, password: text) -> std.User` — creates an account, or
   fails 409 on a duplicate email.
@@ -682,16 +670,16 @@ request arrived over TLS — an `X-Forwarded-Proto: https` from a terminating
 proxy (ADR-0013).
 
 Authorization is the `allow` property (§9.2): any routed part may declare
-`allow = (req: std.Request) => bool`; `false` ends the request with 403
+`allow = (req: std.Request) => bool`, and `false` ends the request with 403
 before `handle` runs. `allow` composes as replace unless a kind is declared.
 
 ### 9.7 Tasks and schedules
 
 `spawn(f)` runs a zero-parameter function in the background; a fault in it is
 logged, not fatal. A part with an `every` property is a scheduled task: the
-runtime calls its `run` function property on that interval. `every` is a text
-duration — digits then `ms`, `s`, `m`, `h`, or `d` — checked at build time, and
-a part with `every` and no `run` is a compile error.
+runtime calls its `run` property on that interval. `every` is a text duration —
+digits then `ms`, `s`, `m`, `h`, or `d` — checked at build time, and `every`
+with no `run` is a compile error.
 
 ```ash
 space jobs
@@ -705,10 +693,10 @@ part sweep {
 ### 9.8 Files
 
 A part with a `files` property serves static assets. Its value names an asset
-under the project's `assets/` root, and what it names decides how the part
-serves: a **directory** mounts under the part's `route` as a prefix, a **file**
-answers that one route exactly and nothing below it. The build records the
-location in the manifest.
+under the project's `assets/` root, and what it names decides how it serves: a
+**directory** mounts under the part's `route` as a prefix, a **file** answers
+that one route exactly and nothing below. The build records the location in the
+manifest.
 
 ```ash
 space site
@@ -724,15 +712,15 @@ part robots {
 }
 ```
 
-The single-file form is how a program answers the absolute paths it does not
-choose — `/favicon.ico`, `/robots.txt`, `/.well-known/...` — without taking
-`/` away from a page.
+The single-file form answers the absolute paths a program does not choose —
+`/favicon.ico`, `/robots.txt`, `/.well-known/...` — without taking `/` from a
+page.
 
 ### 9.9 Logging and failure
 
 `log.debug`, `log.info`, `log.warn`, `log.error` each take a message and an
-optional data map: `log.warn("slow", { ms: elapsed })`. Entries are
-structured (JSON) with timestamp, level, message, data, and source location.
+optional data map: `log.warn("slow", { ms: elapsed })`. Entries are JSON with
+timestamp, level, message, data, and source location.
 
 `fail(message)` or `fail(status, message)` raises a runtime fault: the current
 request ends with that status (500 if unstated), the current task logs it.
@@ -753,14 +741,14 @@ foreign post: (url: text, body: data) -> data
 ```
 
 `foreign name: (shapes) -> shape` declares a CAPABILITY implemented outside
-Ashlar. Arguments and returns cross as data and are shape-checked at the
-boundary at runtime; a mismatch is a fault at the call site.
+Ashlar. Arguments and returns cross as data, shape-checked at the boundary at
+runtime; a mismatch is a fault at the call site.
 
-**How a capability is reached is a deployment fact, never source.** By
-default the build binds space `s` to the host library `foreign/s`
-(`.so`/`.dylib`). An optional `foreign.json` at the project root (or
-at `ASHLAR_FOREIGN`) overrides that, per space; the manifest records
-whichever won, and a key naming no space is `E001`:
+**How a capability is reached is a deployment fact, never source.** By default
+the build binds space `s` to the host library `foreign/s` (`.so`/`.dylib`). An
+optional `foreign.json` at the project root (or at `ASHLAR_FOREIGN`) overrides
+that per space; the manifest records whichever won, and a key naming no space
+is `E001`:
 
 | `via` | reached by | fields |
 |---|---|---|
@@ -784,8 +772,8 @@ one JSON answer, flush.
 
 Reachability is not a build-time fact — the machine that compiles is not the
 machine that deploys — so `ashlar foreign check` proves it on demand against
-the bindings in force, before a request finds out. Foreign calls may block;
-the runtime schedules around them.
+the bindings in force, before a request finds out. Foreign calls may block; the
+runtime schedules around them.
 
 A foreign call may name a reactive collection, so a store behind the boundary
 is live without leaving the language:
@@ -801,12 +789,12 @@ foreign save: (key: text) -> bool updates Row
 foreign all: () -> [Row] watches Row
 ```
 
-`watches <Shape>` makes the call a dependency edge — a view that calls it
+`watches <Shape>` makes the call a dependency edge — a view calling it
 re-renders when the collection changes — and `updates <Shape>` marks that
-collection changed, so every view that read it re-renders and patches, across
+collection changed, so every view that read it re-renders and patches across
 every connected client (§9.3). The collection is the data shape it names.
-`watches`/`updates` are contextual (ordinary names elsewhere); one that resolves
-to no part is E001.
+`watches`/`updates` are contextual (ordinary names elsewhere); one resolving to
+no part is E001.
 
 ### 9.11 std
 
@@ -838,9 +826,9 @@ The builtin space, implicitly used everywhere. Parts: `Request`, `Event`,
 
 ### 9.12 Settings
 
-A program often depends on something it cannot know when it is written — where
-another service is, a key, a limit. `setting` declares that dependency: the
-name and shape are source, the value arrives at deployment.
+A program often depends on what it cannot know when written — where a service
+is, a key, a limit. `setting` declares that: the name and shape are source, the
+value arrives at deployment.
 
 ```ash
 space site
@@ -864,16 +852,16 @@ no declared setting is `E001`, a value of the wrong shape `E006`.
 
 ## 10. The build and the manifest
 
-The build scans the project tree, resolves every name, flattens every part,
-and writes `ashlar.manifest` (JSON): the format version, each space with the
-files that declare into it, each part with its layers in composition order
-(space, file, line), the use graph, foreign bindings, and asset locations.
+The build scans the project tree, resolves every name, flattens every part, and
+writes `ashlar.manifest` (JSON): the format version, each space with the files
+that declare into it, each part with its layers in composition order (space,
+file, line), the use graph, foreign bindings, and asset locations. It is also
+the baseline the next build's semantic delta is measured against (§11).
 
 The manifest is state, the source is intent: fully derived, never hand-edited,
 and deleting it and rebuilding reproduces it exactly. Moving a source file
-changes nothing but its recorded locations, because no meaning attaches to
-where a file is. The build is incremental — a single-file change re-checks in
-under 100ms at a thousand files, fast enough to run on every edit.
+changes nothing but its recorded locations. The build is incremental — a
+single-file change re-checks in under 100ms at a thousand files.
 
 ## 11. The toolchain
 
@@ -888,6 +876,7 @@ under 100ms at a thousand files, fast enough to run on every edit.
 | `ashlar rekind <part.prop> <kind>` | change a property's merge kind across all layers |
 | `ashlar move <part> <space>` | move a part's home declaration to another space, adding the `use` lines both sides need |
 | `ashlar radius <full-name>` | print every location a rename of the name would touch |
+| `ashlar delta` | print what this working tree changed about the program's derived state since the last `ashlar build` |
 | `ashlar vendor <source>` | copy an external tree into the project so its spaces resolve |
 
 Refactors are commands, not text edits. Each computes and reports its complete
@@ -899,6 +888,12 @@ byte-identically, while `move` adds the `use` lines both sides need and never
 removes one, so reversing it returns the same program with those lines present
 (ADR-0018). Every added line appears in the radius, and `radius` answers "what
 would this touch" without touching it.
+
+Adding a `use` has no command and the widest reach of any edit: it can
+resequence composition order anywhere downstream (§3). So it is reported rather
+than commanded. Against the previous build's manifest, an edit that resequences
+any part's layers raises `W002` naming the part and its order before and after;
+`ashlar delta` prints the full report. No manifest, no baseline, no claim.
 
 ## 12. What programs cannot do
 

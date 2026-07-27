@@ -25,6 +25,7 @@ mod cli {
         ashlar rekind <part.prop> <kind> [path] [--plan]\n  \
         ashlar move <part> <space> [path] [--plan]\n  \
         ashlar radius <full-name> [path]\n  \
+    ashlar delta [path]\n  \
         ashlar vendor <source> [path]\n  \
         ashlar foreign check [space] [path]\n";
 
@@ -39,6 +40,7 @@ mod cli {
         Rekind { target: String, kind: String, path: String, plan_only: bool },
         Move { part: String, space: String, path: String, plan_only: bool },
         Radius { target: String, path: String },
+        Delta { path: String },
         Vendor { source: String, path: String },
         ForeignCheck { space: Option<String>, path: String },
     }
@@ -150,6 +152,21 @@ mod cli {
                 Ok(Cmd::Radius {
                     target: positionals[0].clone(),
                     path: positionals.get(1).cloned().unwrap_or_else(default_path),
+                })
+            }
+            "delta" => {
+                let mut positionals: Vec<String> = Vec::new();
+                for a in rest {
+                    if a.starts_with("--") {
+                        return Err(format!("unknown flag `{}`", a));
+                    }
+                    positionals.push(a.clone());
+                }
+                if positionals.len() > 1 {
+                    return Err("`delta` takes an optional path".to_string());
+                }
+                Ok(Cmd::Delta {
+                    path: positionals.first().cloned().unwrap_or_else(default_path),
                 })
             }
             "vendor" => {
@@ -318,6 +335,7 @@ mod cli {
                 })
             }
             Cmd::Radius { target, path } => run_radius(&path, &target),
+        Cmd::Delta { path } => run_delta(&path),
             Cmd::Vendor { source, path } => run_vendor(&path, &source),
             Cmd::ForeignCheck { space, path } => run_foreign_check(&path, space.as_deref()),
         }
@@ -358,6 +376,45 @@ mod cli {
     /// rename of the name would touch, touching nothing. Implemented as
     /// the real plan against a fresh probe name, so the printed radius is
     /// exactly the rename's radius — same code path, no drift.
+    /// `ashlar delta` — what the working tree changed about the program's
+    /// derived state since the last `ashlar build` (C9).
+    ///
+    /// The question `check` cannot answer on its own: an edit that resequences
+    /// composition order is deterministic, correct, and invisible, so W002
+    /// flags it and this prints it in full. Touches nothing.
+    fn run_delta(path: &str) -> i32 {
+        let root = Path::new(path);
+        let Some(base) = ashlar::delta::load(root) else {
+            println!(
+                "no baseline: `ashlar.manifest` is absent or unreadable, so there is nothing to \
+                 compare against. Run `ashlar build` to record one."
+            );
+            return 0;
+        };
+        let result = ashlar::check_project(root);
+        if result.has_errors() {
+            eprintln!("the program does not compile; `ashlar check` first.");
+            print_diags(&result.diags, false);
+            return 1;
+        }
+        let changes = ashlar::delta::order_changes(&base, &result.program);
+        if changes.is_empty() {
+            println!("no change to composition order since the last build.");
+            return 0;
+        }
+        println!("composition order changed: {} part(s)", changes.len());
+        for c in &changes {
+            println!("  {}", c.part);
+            println!("    before  {}", c.before.join(" -> "));
+            println!("    after   {}", c.after.join(" -> "));
+        }
+        println!(
+            "\nEvery `stack`, `pipe`, `append` and `deep` property on those parts composes in the \
+             new order. Nothing is broken; this is the report, not a refusal."
+        );
+        0
+    }
+
     fn run_radius(path: &str, target: &str) -> i32 {
         let root = Path::new(path);
         let mut sources: Vec<(String, String)> = Vec::new();

@@ -11,7 +11,7 @@ direction; `docs/decisions/` holds what was decided and why, and `git log`
 holds what changed and when. A third prose copy went stale between the other
 two, and a ledger nobody can trust is worse than none.
 
-## Open — one item
+## Open
 
 **Capabilities with no corpus site.** An adversarial read listed ten. Four
 now have one — the directory form of `files`, `log.debug`, `log.warn`, and
@@ -22,6 +22,37 @@ and the `native` and `http` foreign transports — those two were driven by
 hand and work, so they are uncovered rather than broken. Nothing in the
 corpus would notice any of them breaking. Serves **A2, G4**. Proven by:
 examples that use them, and the driving tests that come with those.
+
+**Scale evidence tests no graph.** `t_f1.rs` builds its 1,000 files as 100 star
+clusters of depth 1: 1,000 parts, zero layers, zero collisions, zero merged
+properties, every closure at most `{std, hub}`. That is an honest test of
+single-file re-check latency and says nothing about the derived-state work the
+whole transitive-visibility trade rests on — closure size, layer flattening,
+collision density. Serves **F1, C9**. Proven by: a generator with controlled
+depth, fan-out, layer density and collision rate, and a measured gate on the
+derived-state work rather than only on parse throughput (ADR-0031).
+
+**The semantic delta covers order only.** `delta.rs` compares composition order.
+Names entering or leaving a space's closure, and names that newly become
+ambiguous, are equally derivable — `SpaceInfo::closure` is computed on every
+build and never serialized — and are not reported. Serves **C9**. Proven by:
+`ashlar delta` reporting visibility and ambiguity changes, with the driving test
+that a widened `use` names what it made visible.
+
+**Diagnostics multiply with symptoms.** One upstream collision produced 12
+identical `E002`s. Each site does need its own distinct edit, so this is not 12
+copies of one diagnostic — but nothing reports the single cause and its extent,
+which is what an agent needs to decide whether to qualify twelve references or
+rename one part. Serves **D5**. Proven by: a cause-level report naming the
+collision once with its downstream sites, and a rounds-to-clean measurement over
+a multi-site fixture.
+
+**The reviewer's comparison programme is not attempted.** Judging whole-space
+`use` against selective-import, separate-ordering and fully-explicit variants at
+10 to 10,000 spaces would mean building three more languages and running agent
+trials across them. Recorded so the absence is deliberate rather than forgotten.
+Serves **the ADR-0012 research questions**. Proven by: nothing here — it is a
+research programme, not an increment.
 
 ## Standing method notes
 

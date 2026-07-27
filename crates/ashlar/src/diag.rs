@@ -39,6 +39,7 @@ pub const E028_UNMERGEABLE: Code = ("E028", "C4");
 pub const E029_PERUSER_NEEDS_STORAGE: Code = ("E029", "A4");
 pub const E030_SETTING_RULES: Code = ("E030", "A4");
 pub const W001_UNORDERED_LAYERS: Code = ("W001", "C3");
+pub const W002_ORDER_CHANGED: Code = ("W002", "C9");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Level {

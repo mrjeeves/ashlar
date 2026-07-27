@@ -116,6 +116,7 @@ Every command in the reference's toolchain table exists and is tested:
 | `ashlar rekind <part.prop> <kind>` | change a merge kind across every layer |
 | `ashlar move <part> <space>` | relocate a part, `use` graph rewritten |
 | `ashlar radius <name>` | print a rename's complete blast radius, touching nothing |
+| `ashlar delta` | print what this tree changed about the program's derived state since the last build |
 | `ashlar vendor <source>` | copy a tree in so its spaces resolve (no registry, ever) |
 | `ashlar foreign check` | prove every declared foreign name is reachable before a request finds out |
 
@@ -144,13 +145,20 @@ mechanical, and each has teeth:
   which run 5 then scored 4/4 clean. How the gate is run, and what counts as a
   cold reader, is `suites/t_a3/PROTOCOL.md`; the per-run results and the
   decisions they produced live beside it and in `docs/decisions/`.
-- **Derivable.** Ashlar minimizes semantic freedom so the toolchain can
-  compute and explain what names mean, which implementations run, and what
-  a change affects ([ADR-0012](docs/decisions/0012-semantic-freedom-and-derivability.md)).
-- **Diagnostics are corrections.** Stable ids, precise spans, and machine
-  edits that always leave the program better: the round-trip metric
-  (check → apply fixes → check) converges in a mean of **1.00 rounds**
-  over the whole error corpus.
+- **Derivable, and it tells you.** Ashlar minimizes semantic freedom so the
+  toolchain can compute and explain what names mean, which implementations run,
+  and what a change affects ([ADR-0012](docs/decisions/0012-semantic-freedom-and-derivability.md)).
+  Determinism alone is not enough: one `use` line can resequence composition
+  order anywhere downstream, so `W002` reports any part whose layers moved since
+  the last build and `ashlar delta` prints the whole before/after.
+- **Diagnostics are corrections.** Stable ids, precise spans, and machine edits
+  that leave the program better *and mean the same thing* — a fix may never
+  change what a name resolves to, which is stronger than "it compiles" and was
+  learned the hard way ([ADR-0031](docs/decisions/0031-observability-was-decided-and-never-built.md)).
+  The round-trip metric converges in a mean of **1.00 rounds**, over the **24%**
+  of the corpus that carries a machine-applicable fix at all; the rest name
+  every candidate and leave the choice to the author, because picking one would
+  be a guess wearing a correction's clothes.
 - **Refactors are commands, not text edits.** Blast radius reported first,
   applied atomically or not at all, and reversing one restores the same
   program. Renaming in place restores every byte; a refactor that must add a
