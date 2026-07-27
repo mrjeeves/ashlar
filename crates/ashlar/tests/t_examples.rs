@@ -1025,6 +1025,14 @@ fn t_examples_slate_merges_two_people_typing_at_once() {
     // Two browsers open the same pad. No login, no invite: the URL is it.
     let (status, _, page_a) = req(port, "GET", "/p/welcome", None, None);
     assert_eq!(status, 200);
+    // The pad names its own tab (§9.4). Found by driving this example with a
+    // real browser: every page it served had a blank title, and nothing in
+    // the reference said a view could set one — though a view always could.
+    assert!(
+        page_a.contains("<title>welcome to slate · slate</title>"),
+        "the pad must name its tab after itself: {}",
+        page_a
+    );
     let (_, _, page_b) = req(port, "GET", "/p/welcome", None, None);
     let id_a = attr_of(&page_a, "data-ash-page").unwrap();
     let id_b = attr_of(&page_b, "data-ash-page").unwrap();

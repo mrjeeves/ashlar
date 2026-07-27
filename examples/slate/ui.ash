@@ -10,6 +10,7 @@ use slate.history
 part index {
   state draft: text = ""
   view = () => el("div", { class: "app" }, [
+    el("title", {}, ["slate"]),
     el("header", { class: "top" }, [
       el("p", { class: "wordmark" }, ["slate"]),
       el("p", { class: "tagline" }, ["a shared pad · the URL is the invitation"]),
@@ -70,6 +71,9 @@ part editor {
   }
 
   view = () => el("div", { class: "app" }, [
+    // The tab is named after the pad, and because a title re-renders like
+    // any other element (§9.4), renaming the pad renames the tab.
+    el("title", {}, [slate.data.Store.titleOf(key) + " · slate"]),
     el("header", { class: "top" }, [
       el("a", { class: "back", href: "/" }, ["← every pad"]),
       el("h1", { class: "title" }, [slate.data.Store.titleOf(key)]),
