@@ -103,6 +103,20 @@ and superseding one is ordinary work.
    real one, and a finding is not closed until it is closed THERE. Its
    first run proved the point: the favicon capability had landed and no
    example served one.
+   **A capability the corpus does not use is a capability nothing defends.**
+   Twice a fix landed in the language and stayed missing from the examples —
+   the favicon, and `fields` guarding a hostile body, which slate had and
+   eleven others did not, four of them handling passwords. So sweeps beat
+   instances: `t_examples_no_route_blames_the_runtime_for_the_callers_body`
+   posts hostile bodies at every route in every example, enumerated from
+   source so a new example is covered the day it is written, and it names
+   the routes it cannot reach rather than counting them as covered.
+   This is a pressure, not a law: an adversarial read found the directory
+   form of `files`, `log.warn`/`error`, one-argument `fail`, `range`, `json`,
+   `peruser state`, the `native` and `http` transports, `pipe reverse` and
+   most duration units with no corpus site at all. Stating it as a law while
+   that list exists would be the confident lie this file keeps warning about
+   — it is in `docs/roadmap.md` as open work.
 9. **Refactors never partially apply** (E-series): blast radius first,
    atomic apply, post-verify rollback, and reversal to the same PROGRAM
    — same parts and homes, same composition order, and a visibility

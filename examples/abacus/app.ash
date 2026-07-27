@@ -48,5 +48,11 @@ part board {
 // The same capability over HTTP, so a client gets it too (§9.2).
 part api {
   route = "/api/summary"
-  handle pipe = (req: std.Request) => summarize(text(req.data.entry))
+  handle pipe = (req: std.Request) => {
+    // Everything from outside is `data`, a union (§5). `fields` is the
+    // question that keeps a caller's malformed body from becoming the
+    // server's 500 (ADR-0026).
+    let d = fields(req.data) ?? fail(400, "send a JSON object: { entry }")
+    return summarize(text(d["entry"] ?? ""))
+  }
 }

@@ -28,7 +28,8 @@ part Queue {
 part submit {
   route = "/api/jobs"
   handle pipe = (req: std.Request) => {
-    let brief = text(req.data.brief)
+    let d = fields(req.data) ?? fail(400, "send a JSON object: { brief }")
+    let brief = text(d["brief"] ?? "")
     Queue.accept(brief)
     return { accepted: brief }
   }

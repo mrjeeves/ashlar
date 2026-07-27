@@ -153,6 +153,72 @@ const browser = await chromium.launch({
     alone.here.length === 1, JSON.stringify(alone.here));
 
   check('slate: the browser console is clean', errors.length === 0, errors.join(' | '));
+
+  // A socket can die with neither end told. The page must notice on its own,
+  // because a stale page that looks live is the failure this refuses.
+  const liveAtRest = await a.evaluate(() => document.documentElement.hasAttribute('data-ash-offline'));
+  check('slate: a live page is not marked offline', liveAtRest === false, String(liveAtRest));
+  await ctx.setOffline(true);
+  await sleep(55000);
+  const noticed = await a.evaluate(() => document.documentElement.hasAttribute('data-ash-offline'));
+  check('slate: a page cut off notices and says so (§9.5)', noticed === true,
+    noticed ? 'watchdog fired' : 'still looks live');
+  await ctx.setOffline(false);
+  // Poll rather than sleep a guessed interval. Reconnect lands in about two
+  // seconds, but a fixed window turns machine load into a red check, and a
+  // check that fails for reasons unrelated to the claim teaches people to
+  // re-run instead of to look.
+  let recovered = true;
+  for (let i = 0; i < 40; i++) {
+    await sleep(500);
+    recovered = await a.evaluate(() => document.documentElement.hasAttribute('data-ash-offline'));
+    if (!recovered) break;
+  }
+  check('slate: it reconnects when the network returns', recovered === false, String(recovered));
+
+  await ctx.close(); srv.kill();
+}
+
+// ---- slate: collaborator cursors, at the granularity the merge uses -----
+{
+  const srv = await serve('slate', 8403);
+  const ctx = await browser.newContext();
+  const a = await ctx.newPage();
+  const ctx2 = await browser.newContext();
+  const b2 = await ctx2.newPage();
+  await a.goto('http://127.0.0.1:8403/p/welcome', { waitUntil: 'load' });
+  await b2.goto('http://127.0.0.1:8403/p/welcome', { waitUntil: 'load' });
+  await sleep(1200);
+  const ta = p => p.locator('textarea').first();
+  const share = async p => (await p.locator('.sharing').first().textContent().catch(() => '')).trim();
+
+  await ta(a).click(); await ta(a).fill('');
+  await a.keyboard.type('line one\nline two\nline three', { delay: 25 });
+  await sleep(1200);
+  await ta(b2).click(); await b2.keyboard.press('Control+Home');
+  await b2.keyboard.type('X', { delay: 25 });
+  await sleep(1200);
+  check('slate: different lines, nobody is warned',
+    (await share(a)) === '' && (await share(b2)) === '',
+    `${JSON.stringify(await share(a))} / ${JSON.stringify(await share(b2))}`);
+
+  await ta(b2).click(); await b2.keyboard.press('Control+End');
+  await b2.keyboard.type('!', { delay: 25 });
+  await sleep(1400);
+  const sa = await share(a), sb = await share(b2);
+  check('slate: two carets on one line, each page names the other',
+    sa.includes('on your line') && sb.includes('on your line'), `${JSON.stringify(sa)} / ${JSON.stringify(sb)}`);
+
+  // And the check that would have caught the leak: close the page and see
+  // whether its caret leaves with it. The first version of these checks
+  // never closed anything, so they passed 17/17 with a departed
+  // collaborator still reported as being on your line.
+  await ctx2.close();
+  await sleep(1500);
+  const afterClose = await share(a);
+  check('slate: a departed page takes its caret with it',
+    afterClose === '', JSON.stringify(afterClose));
+
   await ctx.close(); srv.kill();
 }
 

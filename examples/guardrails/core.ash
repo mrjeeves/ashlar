@@ -52,8 +52,9 @@ part Gate {
 part inspect {
   route = "/api/review"
   handle pipe = (req: std.Request) => {
+    let d = fields(req.data) ?? fail(400, "send a JSON object: { body }")
     return Gate.review({
-      body: text(req.data.body),
+      body: text(d["body"] ?? ""),
       allowed: true,
       notes: [],
     })

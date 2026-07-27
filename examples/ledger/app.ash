@@ -52,7 +52,8 @@ part board {
 part add {
   route = "/add"
   handle pipe = (req: std.Request) => {
-    record(text(req.data.who), text(req.data.note), number(text(req.data.amount)) ?? 0)
+    let d = fields(req.data) ?? fail(400, "send a JSON object: { who, note, amount }")
+    record(text(d["who"] ?? ""), text(d["note"] ?? ""), number(text(d["amount"] ?? "")) ?? 0)
     return redirect("/")
   }
 }

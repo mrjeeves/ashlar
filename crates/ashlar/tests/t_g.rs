@@ -50,6 +50,25 @@ fn start_expecting_failure(root: PathBuf) -> String {
     }
 }
 
+/// `start`, with the socket-liveness windows narrowed for one server only.
+/// Per-server because these tests are threads in one process.
+fn start_with_liveness(
+    root: PathBuf,
+    live: http::Liveness,
+) -> (u16, Arc<AtomicBool>, std::thread::JoinHandle<()>) {
+    let stop = Arc::new(AtomicBool::new(false));
+    let stop2 = stop.clone();
+    let (tx, rx) = mpsc::channel();
+    let join = std::thread::spawn(move || {
+        let r = http::serve_with_liveness(root, None, Some(0), move |port| tx.send(port).unwrap(), stop2, live);
+        if let Err(e) = r {
+            panic!("serve failed: {}", e);
+        }
+    });
+    let port = rx.recv_timeout(std::time::Duration::from_secs(10)).unwrap();
+    (port, stop, join)
+}
+
 fn http_get(port: u16, path: &str) -> (u16, String) {
     http_req(port, "GET", path, None)
 }
@@ -667,6 +686,230 @@ part api {
         "startup must name the gap: {}",
         refused
     );
+}
+
+#[test]
+fn t_g_a_socket_that_stops_answering_is_shed_and_the_page_is_told() {
+    // covers: G2, G4 (§9.5) — reported from a real session: "connection
+    // state is silent and deadly."
+    //
+    // A socket can die with neither end told. A NAT table forgets it, a
+    // proxy times it out, a laptop sleeps: TCP says nothing, the browser
+    // goes on reporting OPEN, sends vanish and patches never arrive. The
+    // page looks live and is wrong, and stays wrong until someone thinks to
+    // reload — which is the exact failure A4 exists to refuse, arriving by
+    // a route the type system cannot reach.
+    //
+    // So the runtime asks. It beats, and it sheds a peer that stops
+    // answering, and the shim watches for the beats it is owed.
+    let app = r#"space demo
+
+part Server {
+  port = 0
+}
+
+part page {
+  route = "/"
+  state n: number = 0
+  view = () => el("button", { onclick: bump }, ["n " + text(n)])
+  bump = () => {
+    n = n + 1
+  }
+}
+"#;
+    let root = fixture("liveness", &[("app.ash", app)]);
+    let (port, stop, join) = start_with_liveness(
+        root,
+        http::Liveness {
+            beat: std::time::Duration::from_millis(150),
+            silent: std::time::Duration::from_millis(900),
+        },
+    );
+
+    // The shim carries the watchdog, so the page can notice on its own.
+    let (_, _, html) = http_req_full(port, "GET", "/", None, None);
+    assert!(html.contains("data-ash-offline"), "the shim must mark a stale page: {}", html);
+    assert!(html.contains("d.beat"), "and answer the beats it is sent: {}", html);
+
+    // A socket that says nothing still gets asked.
+    let mut s = ws_open(port);
+    s.set_read_timeout(Some(std::time::Duration::from_secs(3))).unwrap();
+    let first = ws_read_frame(&mut s);
+    assert!(first.contains("beat"), "the runtime must ask whether the peer is there: {}", first);
+
+    // And is let go when it never answers. Reading past the close returns
+    // nothing — the peer has been shed rather than published to forever.
+    // The silent peer is shed: the socket reaches EOF. `read_to_end`
+    // returning Ok with the connection closed is the proof — an earlier
+    // version asserted `!tail.is_empty() || sink.is_empty()`, which is
+    // `!x || x` and could not fail.
+    let shed_by = std::time::Instant::now();
+    let mut sink = Vec::new();
+    let read = std::io::Read::read_to_end(&mut s, &mut sink);
+    assert!(
+        read.is_ok(),
+        "a silent peer must be closed, not left hanging: {:?}",
+        read
+    );
+    assert!(
+        shed_by.elapsed() < std::time::Duration::from_secs(3),
+        "and shed promptly, not at some later tick"
+    );
+
+    // A peer that DOES answer is kept: the beat is a question, not a cull.
+    // It has to outlive the silence window by a clear margin, or the check
+    // cannot tell "kept because it answered" from "not waited out" — which
+    // is how an earlier version passed against a build where NO peer was
+    // ever kept.
+    let mut alive = ws_open(port);
+    alive.set_read_timeout(Some(std::time::Duration::from_secs(3))).unwrap();
+    let began = std::time::Instant::now();
+    let mut answered = 0;
+    while began.elapsed() < std::time::Duration::from_millis(2500) {
+        let beat = ws_read_frame(&mut alive);
+        assert!(
+            beat.contains("beat"),
+            "an answering peer keeps its socket; got {}",
+            beat
+        );
+        ws_send_frame(&mut alive, "{\"beat\":1}");
+        answered += 1;
+    }
+    assert!(
+        answered >= 8,
+        "the peer answered {} beats and should have outlived the 900ms \
+         silence window several times over",
+        answered
+    );
+
+    // A beat answer is transport bookkeeping. Falling through would
+    // dispatch it, and an envelope with no `path` matches `/` — so every
+    // heartbeat would mint a view instance and re-run the root's `start`.
+    // The peer above answered many beats; the page must be untouched.
+    let (_, _, after) = http_req_full(port, "GET", "/", None, None);
+    assert!(
+        after.contains("n 0"),
+        "answering beats must not run the root route: {}",
+        after
+    );
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}
+
+#[test]
+fn t_g_an_event_carries_the_caret_and_a_missing_one_stays_missing() {
+    // covers: G4 (§9.4). The caret shipped with no CI coverage at all —
+    // only the hand-run browser gate, which AGENTS.md says never runs in CI,
+    // and which passed 17/17 with a real leak present because its checks
+    // never closed a page. A capability with no test in the suite is a
+    // capability nothing defends.
+    let app = r#"space demo
+
+part Server {
+  port = 0
+}
+
+part page {
+  route = "/"
+  state saw: text = "nothing"
+  view = () => el("input", { oninput: typed, value: saw }, [])
+  typed = (e: std.Event) => {
+    let at = number(text(e.data.caret))
+    saw = if at != none { "caret " + text(at!) } else { "no caret" }
+  }
+}
+"#;
+    let root = fixture("caret", &[("app.ash", app)]);
+    let (port, stop, join) = start(root);
+    let (_, _, html) = http_req_full(port, "GET", "/", None, None);
+    assert!(
+        html.contains("caret:c") || html.contains("caret:"),
+        "the shim must report the caret it already knows: {}",
+        html
+    );
+    let instance = attr_of(&html, "data-ash-instance").unwrap();
+    let hid = attr_of(&html, "data-ash-h").unwrap();
+
+    // A caret sent arrives.
+    let with = format!(
+        r#"{{"event":{{"instance":"{}","h":"{}","name":"oninput","value":"abc","caret":2}}}}"#,
+        instance, hid
+    );
+    let r = ws_roundtrip(port, &with);
+    assert!(r.contains("caret 2"), "the caret must reach the handler: {}", r);
+
+    // A caret NOT sent stays absent. `?? 0` here would place a client that
+    // said nothing at the top of the document and tell whoever is really
+    // there that they have company — inventing a fact rather than lacking
+    // one, which is the laundering this language argues against.
+    let html2 = r.replace("\\\"", "\"");
+    let hid2 = attr_of(&html2, "data-ash-h").unwrap_or(hid);
+    let without = format!(
+        r#"{{"event":{{"instance":"{}","h":"{}","name":"oninput","value":"abc"}}}}"#,
+        instance, hid2
+    );
+    let r2 = ws_roundtrip(port, &without);
+    assert!(
+        r2.contains("no caret"),
+        "a missing caret must stay missing, not become 0: {}",
+        r2
+    );
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}
+
+#[test]
+fn t_g_a_reload_that_will_not_compile_leaves_the_program_running() {
+    // covers: G3 (§9.1). The reference has always said "If the change fails
+    // to compile, diagnostics are emitted and the old program keeps
+    // running." It did not: the outer loop re-checked, returned Err, and the
+    // process exited — a typo saved mid-session took the server and every
+    // open socket with it. Found by an adversarial reader testing the
+    // sentence rather than the code.
+    let v1 = r#"space demo
+
+part Server {
+  port = 0
+}
+
+part page {
+  route = "/"
+  handle pipe = (req: std.Request) => "one"
+}
+"#;
+    let root = fixture("badreload", &[("app.ash", v1)]);
+    let (port, stop, join) = start(root.clone());
+    let (_, _, first) = http_req_full(port, "GET", "/", None, None);
+    assert_eq!(first.trim(), "one");
+
+    // Save something that will not compile.
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    std::fs::write(root.join("app.ash"), v1.replace("\"one\"", "typo_here")).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(1500));
+
+    let (status, _, still) = http_req_full(port, "GET", "/", None, None);
+    assert_eq!(status, 200, "the running program must survive a broken save");
+    assert_eq!(still.trim(), "one", "and keep serving what it was serving");
+
+    // And a later, valid save is still picked up — refusing a reload must
+    // not wedge the watcher.
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    std::fs::write(root.join("app.ash"), v1.replace("\"one\"", "\"two\"")).unwrap();
+    let mut got = String::new();
+    for _ in 0..40 {
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        let (_, _, body) = http_req_full(port, "GET", "/", None, None);
+        got = body.trim().to_string();
+        if got == "two" {
+            break;
+        }
+    }
+    assert_eq!(got, "two", "a good save after a bad one must still reload");
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
 }
 
 #[test]

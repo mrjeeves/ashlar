@@ -511,8 +511,9 @@ part counter {
 ```
 
 Views render on the server. The browser runs no program code: events named
-in attrs (`onclick`, `onsubmit`, `oninput`, with `value` in the event's
-`data`) round-trip over the built-in socket, handlers run server-side, and
+in attrs (`onclick`, `onsubmit`, `oninput`, with `value` and `caret` — the
+caret's offset, or `none` where the target has none — in the event's `data`)
+round-trip over the built-in socket, handlers run server-side, and
 every view that read a changed state property re-renders and patches in
 place. Patching preserves the focused field, its caret, and typing still
 in flight; a server-side change to the field's value (a cleared draft)
@@ -566,6 +567,14 @@ Handlers run in subscription order, and a fault in one is logged and does
 not stop the others or fail the caller that published — the same rule
 `spawn` follows (§9.9), for the same reason: a subscriber is someone
 else's code, running because an event happened.
+
+A socket can die with neither end told — a proxy times it out, a laptop
+sleeps — and nothing in TCP says so. The runtime therefore asks: it beats on
+every open socket, sheds a peer that stops answering, and the page watches
+for the beats it is owed. A page that misses them marks itself with
+`data-ash-offline` on `<html>` and reconnects when the server is reachable
+again. Style that attribute to say so; a page that has gone stale and looks
+live is the one failure the language will not leave silent.
 
 ### 9.6 Auth
 

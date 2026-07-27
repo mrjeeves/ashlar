@@ -23,10 +23,11 @@ part list {
 part post {
   route = "/api/post"
   handle pipe = (req: std.Request) => {
+    let d = fields(req.data) ?? fail(400, "send a JSON object: { author, body }")
     Store.add({
       id: id(),
-      author: text(req.data.author),
-      body: Store.prepare(text(req.data.body)),
+      author: text(d["author"] ?? ""),
+      body: Store.prepare(text(d["body"] ?? "")),
       sent: now(),
     })
     return "ok"
@@ -37,10 +38,16 @@ part post {
 // session cookie themselves (§9.6).
 part register {
   route = "/api/signup"
-  handle pipe = (req: std.Request) => signup(text(req.data.email), text(req.data.password))
+  handle pipe = (req: std.Request) => {
+    let d = fields(req.data) ?? fail(400, "send a JSON object: { email, password }")
+    return signup(text(d["email"] ?? ""), text(d["password"] ?? ""))
+  }
 }
 
 part session {
   route = "/api/login"
-  handle pipe = (req: std.Request) => login(text(req.data.email), text(req.data.password))
+  handle pipe = (req: std.Request) => {
+    let d = fields(req.data) ?? fail(400, "send a JSON object: { email, password }")
+    return login(text(d["email"] ?? ""), text(d["password"] ?? ""))
+  }
 }

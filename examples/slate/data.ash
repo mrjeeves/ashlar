@@ -54,6 +54,13 @@ part Store {
   // Who is on which pad, by page. Presence is memory: it is true while a
   // socket is open and meaningless afterwards.
   state here: {text: {text: text}} = {}
+
+  // Which line each person's caret is on, per pad. Lines, not offsets: the
+  // merge works line by line (ADR-0028), so the line is the granularity at
+  // which "where are you working" is a true answer rather than a decorative
+  // one. Two carets on one line is exactly the collision the merge will have
+  // to resolve, which makes it worth showing BEFORE it happens.
+  state carets: {text: {text: number}} = {}
   state seq: number = 0
   state clashes: {text: number} = {}
 
@@ -308,6 +315,29 @@ part Store {
   }
 
   peopleOn = (key: text) => map(keys(here[key] ?? {}), (w: text) => (here[key] ?? {})[w] ?? "")
+
+  // The caret's offset counts characters; the line counts the newlines
+  // before it, which is what the merge cares about.
+  lineOf = (body: text, at: number) => len(split(slice(body, 0, at), "\n")) - 1
+
+  markCaret = (key: text, who: text, at: number) => {
+    let onPad = carets[key] ?? {}
+    carets = put(carets, key, put(onPad, who, at))
+    publish("slate.carets." + key, at)
+  }
+
+  caretsOn = (key: text) => carets[key] ?? {}
+
+  // Everyone whose caret sits on the same line as `who`, excluding them.
+  sharingLine = (key: text, who: text) => {
+    let all = carets[key] ?? {}
+    let mine = all[who] ?? 0 - 1
+    return filter(keys(all), (w: text) => w != who and all[w] ?? 0 - 1 == mine)
+  }
+
+  dropCaret = (key: text, who: text) => {
+    carets = put(carets, key, drop(carets[key] ?? {}, who))
+  }
 
   countOn = (key: text) => len(keys(here[key] ?? {}))
 }

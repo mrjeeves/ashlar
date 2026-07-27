@@ -769,9 +769,21 @@ var sent={},queue=[];
 // Clicks before the socket opens must not vanish: queue and flush.
 function send(o){var t=JSON.stringify(o);
  if(ws.readyState===1)ws.send(t);else queue.push(t);}
+// A socket can die with neither end told: a NAT table forgets it, a proxy
+// times it out, a laptop sleeps. TCP says nothing, readyState stays OPEN,
+// sends vanish and patches never arrive — the page looks live and is wrong,
+// which is the one failure this language is built to refuse. So the server
+// beats and the page watches: three missed beats and we treat the socket as
+// gone, which routes into the reconnect below.
+var beat=null;
+function alive(){clearTimeout(beat);
+ document.documentElement.removeAttribute('data-ash-offline');
+ beat=setTimeout(function(){
+  document.documentElement.setAttribute('data-ash-offline','');
+  try{ws.close();}catch(_){}} ,50000);}
 ws.onopen=function(){
  ws.send(JSON.stringify({page:document.body.getAttribute('data-ash-page')}));
- queue.forEach(function(t){ws.send(t)});queue=[];};
+ queue.forEach(function(t){ws.send(t)});queue=[];alive();};
 function fieldKey(inst,el){var box=document.querySelector('[data-ash-instance="'+inst+'"]');
  if(!box)return null;var all=box.querySelectorAll(el.tagName);
  return inst+':'+el.tagName+':'+Array.prototype.indexOf.call(all,el);}
@@ -779,13 +791,18 @@ function fire(kind,e){var t=e.target.closest('[data-ash-h]');
  if(!t||t.getAttribute('data-ash-on')!==kind)return;
  if(kind==='onsubmit')e.preventDefault();
  var v=(e.target&&'value'in e.target)?e.target.value:null;
+ // Where the caret is, when the target has one. A shared editor cannot
+ // say who is working where without it, and the field already knows.
+ var c=null;try{if(e.target&&e.target.selectionStart!=null)c=e.target.selectionStart;}catch(_){}
  var inst=t.closest('[data-ash-instance]').getAttribute('data-ash-instance');
  if(v!==null){var k=fieldKey(inst,e.target);if(k)sent[k]=v;}
- send({event:{instance:inst,h:t.getAttribute('data-ash-h'),name:kind,value:v}});}
+ send({event:{instance:inst,h:t.getAttribute('data-ash-h'),name:kind,value:v,caret:c}});}
 document.addEventListener('click',function(e){fire('onclick',e)});
 document.addEventListener('input',function(e){fire('oninput',e)});
 document.addEventListener('submit',function(e){fire('onsubmit',e)});
 ws.onclose=function(){
+ clearTimeout(beat);
+ document.documentElement.setAttribute('data-ash-offline','');
  (function again(){fetch('/',{cache:'no-store'}).then(function(){location.reload();})
   .catch(function(){setTimeout(again,400);});})();};
 // A patch must not eat the user's focus, caret, or typing still in
@@ -821,6 +838,8 @@ function release(){held=null;
 document.addEventListener('pointerup',release);
 document.addEventListener('pointercancel',release);
 ws.onmessage=function(m){var d=JSON.parse(m.data);
+ alive();
+ if(d.beat){send({beat:1});return;}
  if(d.error&&/no (instance|handler)/.test(d.error)){ws.close();return;}
  if(!d.patches)return;
  d.patches.forEach(function(p){
@@ -1002,6 +1021,7 @@ pub fn dispatch_event(
     hid: &str,
     name: &str,
     value: V,
+    caret: V,
 ) -> Result<Vec<(String, String)>, Fault> {
     let Some(f) = ev.handlers.get(&(instance.to_string(), hid.to_string())).cloned() else {
         return Err(Fault {
@@ -1018,6 +1038,7 @@ pub fn dispatch_event(
     } else {
         let mut data = std::collections::BTreeMap::new();
         data.insert("value".to_string(), value);
+        data.insert("caret".to_string(), caret);
         let mut event = std::collections::BTreeMap::new();
         event.insert("name".to_string(), V::Text(name.to_string()));
         event.insert("data".to_string(), V::Map(data));
@@ -1062,6 +1083,19 @@ pub fn serve(
     ready: impl FnOnce(u16),
     stop: Arc<AtomicBool>,
 ) -> Result<(), String> {
+    serve_with_liveness(root, root_part, override_port, ready, stop, Liveness::default())
+}
+
+/// `serve`, with the socket-liveness windows stated. Only a test narrows
+/// them; every deployment gets the defaults.
+pub fn serve_with_liveness(
+    root: PathBuf,
+    root_part: Option<String>,
+    override_port: Option<u16>,
+    ready: impl FnOnce(u16),
+    stop: Arc<AtomicBool>,
+    live: Liveness,
+) -> Result<(), String> {
     let mut carry: Option<BTreeMap<String, V>> = None;
     let mut ready = Some(ready);
     let mut listener: Option<TcpListener> = None;
@@ -1069,12 +1103,13 @@ pub fn serve(
     loop {
         let result = crate::check_project(&root);
         if result.has_errors() {
-            return Err(result
+            let report = result
                 .diags
                 .iter()
                 .map(|d| d.human())
                 .collect::<Vec<_>>()
-                .join("\n"));
+                .join("\n");
+            return Err(report);
         }
 
         // The server root is the part that declares `port` (§9.1): the
@@ -1291,7 +1326,7 @@ pub fn serve(
             }
         }
 
-        let last_mtime = source_mtime(&root);
+        let mut last_mtime = source_mtime(&root);
         let mut last_scan = std::time::Instant::now();
         let mut ws_conns: Vec<WsConn> = Vec::new();
         let mut pending: Vec<PendingConn> = Vec::new();
@@ -1449,7 +1484,15 @@ pub fn serve(
                             drop_conn = true;
                             break;
                         }
-                        Ok(n) => ws_conns[i].buf.extend_from_slice(&tmp[..n]),
+                        Ok(n) => {
+                            // Progress is liveness — the same rule the
+                            // pending-request path states. A peer part-way
+                            // through one large frame is sending, and
+                            // waiting for the frame to COMPLETE before
+                            // believing it sheds a slow uplink mid-edit.
+                            ws_conns[i].last_seen = std::time::Instant::now();
+                            ws_conns[i].buf.extend_from_slice(&tmp[..n]);
+                        }
                         Err(ref e) if e.kind() == std::io::ErrorKind::WouldBlock => break,
                         Err(_) => {
                             drop_conn = true;
@@ -1458,6 +1501,9 @@ pub fn serve(
                     }
                 }
                 while let Some((opcode, payload)) = ws_frame_from_buf(&mut ws_conns[i].buf) {
+                    // Any frame at all — a beat's answer, a pong, an event —
+                    // is this peer saying it is still there.
+                    ws_conns[i].last_seen = std::time::Instant::now();
                     match opcode {
                         1 => {
                             if let Ok(text) = String::from_utf8(payload) {
@@ -1466,6 +1512,19 @@ pub fn serve(
                                 if let Some(V::Map(m)) = from_json(&text) {
                                     if let Some(V::Text(p)) = m.get("page") {
                                         ws_conns[i].page = Some(p.clone());
+                                        continue;
+                                    }
+                                    // The answer to a beat is bookkeeping,
+                                    // not a request. Receiving it already
+                                    // marked the peer alive; falling
+                                    // through would dispatch it, and an
+                                    // envelope with no `path` matches `/`
+                                    // — so every heartbeat would mint a
+                                    // view instance and re-run the root's
+                                    // `start`, or call the root handler
+                                    // with its guards and side effects,
+                                    // once per page per beat.
+                                    if m.contains_key("beat") {
                                         continue;
                                     }
                                 }
@@ -1557,9 +1616,20 @@ pub fn serve(
             // (a suspended laptop, a half-open socket) is dropped rather
             // than ever stalling the loop; its page unmounts like any
             // other close.
+            // Ask each socket whether it is still there, and shed the ones
+            // that stopped answering. Without this a half-open socket is
+            // published to forever while its page sits stale and confident.
+            let now = std::time::Instant::now();
+            for c in ws_conns.iter_mut() {
+                if now.duration_since(c.last_beat) >= live.beat {
+                    c.last_beat = now;
+                    ws_enqueue_frame(c, 1, b"{\"beat\":1}");
+                }
+            }
             let mut f = 0;
             while f < ws_conns.len() {
-                if ws_flush(&mut ws_conns[f]) {
+                let silent = now.duration_since(ws_conns[f].last_seen) >= live.silent;
+                if ws_flush(&mut ws_conns[f]) && !silent {
                     f += 1;
                 } else {
                     if let Some(page) = ws_conns[f].page.clone() {
@@ -1582,6 +1652,25 @@ pub fn serve(
                 last_scan = now;
                 let m = source_mtime(&root);
                 if m != last_mtime {
+                    // §9.1: "If the change fails to compile, diagnostics are
+                    // emitted and the old program keeps running." Deciding
+                    // that in the OUTER loop meant leaving the event loop
+                    // before discovering the breakage, with nothing left
+                    // listening — so a typo saved mid-session took the
+                    // server and every open socket with it. Judge it here,
+                    // while still serving, and leave only when the new
+                    // source actually compiles.
+                    let candidate = crate::check_project(&root);
+                    if candidate.has_errors() {
+                        for d in candidate.diags.iter().filter(|d| d.is_error()) {
+                            eprintln!("{}", d.human());
+                        }
+                        eprintln!("reload refused: the running program is unchanged.");
+                        // Remember the broken state, so this reports once per
+                        // edit rather than twice a second.
+                        last_mtime = m;
+                        continue;
+                    }
                     // No need to store `m`: reloading restarts the outer loop,
                     // which re-reads the mtime from scratch.
                     break 'inner Exit::Reload;
@@ -1780,6 +1869,15 @@ pub struct WsConn {
     /// The page render this socket belongs to (the shim announces it on
     /// open); its instances unmount when the socket closes (§9.5).
     pub page: Option<String>,
+    /// Last frame of any kind received from this peer. A socket can die
+    /// without either end being told — a NAT table forgets it, a proxy
+    /// times it out, a laptop sleeps — and TCP will not say so. The
+    /// browser goes on reporting OPEN, sends vanish, patches never
+    /// arrive, and the page looks live while being wrong. Liveness has to
+    /// be asked for.
+    pub last_seen: std::time::Instant,
+    /// Last heartbeat written to this peer.
+    pub last_beat: std::time::Instant,
 }
 
 /// An accepted socket that has not yet delivered a complete request.
@@ -1867,6 +1965,8 @@ fn handle_request(
             last_drain: std::time::Instant::now(),
             overflow: false,
             page: None,
+            last_seen: std::time::Instant::now(),
+            last_beat: std::time::Instant::now(),
         });
     }
 
@@ -1982,7 +2082,8 @@ fn process_ws_text(
             let hid = e.get("h").map(to_text).unwrap_or_default();
             let name = e.get("name").map(to_text).unwrap_or_default();
             let value = e.get("value").cloned().unwrap_or(V::None);
-            return match dispatch_event(ev, &instance, &hid, &name, value) {
+            let caret = e.get("caret").cloned().unwrap_or(V::None);
+            return match dispatch_event(ev, &instance, &hid, &name, value, caret) {
                 Ok(patches) => (patches_json(&patches), patches),
                 Err(f) => {
                     let mut m = BTreeMap::new();
@@ -2040,6 +2141,38 @@ fn patches_json(patches: &[(String, String)]) -> String {
 /// progress — not queue size — is the test, so one huge patch to a
 /// healthy client never gets it disconnected.
 const WS_STALL: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// How often the runtime asks a socket whether it is still there. Sent as a
+/// text frame rather than a protocol ping because a browser answers pings in
+/// the network stack, where the page's own script cannot see them — and the
+/// page is the half that has to notice it has gone stale.
+const WS_BEAT: std::time::Duration = std::time::Duration::from_secs(15);
+
+/// The beat and silence windows this server runs with. Defaults are the
+/// contract; `serve_with_liveness` narrows them so a test can prove the
+/// policy without waiting out the real one.
+///
+/// Deliberately per-server rather than a process global: test binaries run
+/// their tests as threads in ONE process, so an env var or a static would
+/// leak into every other socket test — which is exactly what the first
+/// version of this seam did, shedding a peer in
+/// `t_g_stalled_ws_reader_never_stalls_others` that was meant to survive.
+#[derive(Clone, Copy)]
+pub struct Liveness {
+    pub beat: std::time::Duration,
+    pub silent: std::time::Duration,
+}
+
+impl Default for Liveness {
+    fn default() -> Liveness {
+        Liveness { beat: WS_BEAT, silent: WS_SILENT }
+    }
+}
+
+/// A socket that has produced no frame in this long is gone, whatever TCP
+/// believes. Three missed beats: long enough that a slow phone is not shed
+/// mid-scroll, short enough that a dead page stops being published to.
+const WS_SILENT: std::time::Duration = std::time::Duration::from_secs(50);
 
 /// Absolute outbound queue bound: a runaway backlog is shed at once so
 /// one dead peer can never hold this much of the server's memory.
