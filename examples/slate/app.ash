@@ -42,11 +42,8 @@ part make {
     // for every member of it that is not a map. One guard covers a missing
     // body, a body that is not JSON, and a body that is JSON but not an
     // object — and the refusal is the caller's 400, not the server's 500.
-    let form = fields(req.data)
-    if form == none {
-      return fail(400, "a title, please")
-    }
-    let title = text(form!["title"] ?? "")
+    let form = fields(req.data) ?? fail(400, "a title, please")
+    let title = text(form["title"] ?? "")
     let key = slug(if title != "" { title } else { "pad" })
     slate.data.Store.ensurePad(key, if title != "" { title } else { key })
     return redirect("/p/" + key)
@@ -108,11 +105,7 @@ part padApi {
 part editApi {
   route = "/api/edit/{key}"
   handle pipe = (req: std.Request) => {
-    let edit = fields(req.data)
-    if edit == none {
-      return fail(400, "an edit is a JSON object: { base, body, who }")
-    }
-    let e = edit!
+    let e = fields(req.data) ?? fail(400, "an edit is a JSON object: { base, body, who }")
     let key = req.params["key"]!
     if slate.data.Store.pads[key] == none {
       return fail(404, "no such pad")

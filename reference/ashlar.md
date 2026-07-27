@@ -609,7 +609,9 @@ structured (JSON) with timestamp, level, message, data, and source location.
 `fail(message)` or `fail(status, message)` raises a runtime fault: the
 current request ends with that status (500 if unstated), the current task
 logs it. There is no catching; a condition worth recovering from is worth a
-`none`-returning function and a `??`.
+`none`-returning function and a `??`. `fail` never returns, so it fits any
+shape and refusing costs one call: `number(t) ?? fail(400, "not a number")`
+rejects where `?? 0` would invent.
 
 ### 9.10 Foreign functions
 

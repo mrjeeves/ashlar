@@ -51,8 +51,18 @@ finding to raise against the language, not the test.
    Ashlar syntax or semantics, the run is void — fix the leak and re-run.
    Knowing the project's name and that it is a composition language is an
    unavoidable consequence of running inside the repo; a run so isolated is
-   **reduced-contamination** and must be labelled that way, not "cold". A
-   provably cold read needs a reader outside this working directory.
+   **reduced-contamination** and must be labelled that way, not "cold".
+
+   **To run a provably cold one**, the reader's working directory must not
+   be this repository — no in-repo agent can produce it, because the
+   project instructions are injected before any prompt exists to forbid
+   them. Copy the 25 snippets out (they are self-contained text), open a
+   chat or a session rooted anywhere else, and paste them one per clean
+   turn with the question below. Record the run with `cold` in its filename
+   and the isolation report showing project instructions that mention no
+   project. Every scored run to date is reduced-contamination, and the
+   scores have been reproducible across three of them — a cold run is a
+   stronger proof of the same claim, not a different claim.
 2. **One snippet at a time.** For each of the 25 `.ash` files, in a clean
    turn (no memory of previous snippets in the run — treat each as an
    independent cold read), paste the file's contents verbatim and ask

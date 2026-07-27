@@ -9,91 +9,59 @@ with no passing test is not a satisfied requirement (T-META). An empty open
 section is a claim, so it is kept honest: an item leaves it only when its
 test runs for real.
 
-## Open — three items
+## Open — none
 
-**The boundary idiom still runs downhill toward being wrong**
-([ADR-0026](decisions/0026-data-is-a-union-with-no-discriminator.md), whose
-other two halves are resolved). `number(text(x)) ?? 0` is the shortest thing
-that type-checks where a program meets input it did not write, and it launders
-bad input into a plausible value — a reading of zero nothing downstream can
-tell from a real one. `??` is the operator the checker pushes you toward: an
-optional must be dealt with, and inventing a default is the cheapest way to
-deal with it. Refusing costs a `let`, a comparison, and a `fail` — three times
-the characters. For an AI-first language that is a design defect and not a
-user error, because the short program is the one that gets written. Serves
-**A4, D5**. No decision yet on what changes: the honest options (a conversion
-that carries its own refusal, or making `??` at a boundary say what it
-swallowed) both trade surface for a gradient, and neither has been measured
-against the corpus. Proven, when it lands, by a corpus program whose refusing
-form is not longer than its laundering form.
+Every item this page has carried is delivered, and the section is empty
+because the work is done, not because it was moved. The rule that keeps
+that honest is unchanged: an item leaves only when its test runs for real,
+and anything found from here lands back here first.
 
-**A comment between the parts of a one-line expression still has nowhere to
-go.** [ADR-0024](decisions/0024-a-formatter-that-loses-code-is-not-a-formatter.md)
-closed comment loss inside multi-line list and map literals — the comment now
-prints at the item it was written above, and trailing comments stay on their
-item's line. What remains is a comment written inside an expression that
-prints on ONE line: there is no line to put it back on, so it still moves to
-the next construct. Unlike the closed case it is visible rather than silent
-(the comment lands somewhere a reader can see), which is why it is an item
-here and not a defect. Serves **G1** (the formatter's meaning- and
-comment-preserving claim). Proven by: an `assert_fmt_faithful` fixture whose
-comment sits mid-expression, with the property extended from comment COUNT
-to comment position.
+One standing method note, which is not an open item: **A3 is met by
+measurement** (run 5, 24/25 against a bar of 20/25) on runs labelled
+*reduced-contamination* rather than cold, because an in-repo reader
+receives the project instructions before any prompt exists to forbid them.
+`suites/t_a3/PROTOCOL.md` now carries the instructions for running a
+provably cold one from outside this working directory. It would be a
+stronger proof of the same claim — the scores have reproduced across three
+runs — not a different claim, and not a requirement waiting to be met.
 
-**A provably cold A3 read needs a reader outside this repository.** Run 5
-(2026-07-25, `suites/t_a3/results/2026-07-25-sonnet-run5.md`) scored **24/25**
-against a bar of 20/25, so **A3 is satisfied** — but it is honestly labelled
-*reduced-contamination*, not cold, because an in-repo reader still receives
-`AGENTS.md` and so still learns the project's name and that it composes. That
-residual cannot be closed from inside: the file is injected before any prompt.
-Closing it needs a reader whose working directory is not this repo — a fresh
-chat, or a session started elsewhere with the snippet pasted in. Per §1 of the
-requirements, that is a case where an agent says what evidence it would need
-rather than manufacturing it, so the item stays here.
+Two A3 findings stay recorded there rather than here, because neither has a
+change to make: **A3-F1**, cross-file layering does not cold-read (0 of 11
+readers across a 2×2 over the merge-kind word and its position — so it is
+the construct, not the word), and **A3-F7**, `{text: number}` read as a
+one-field record rather than a map.
 
-What run 5 did close:
+Delivered 2026-07-27 — **the formatter stops handing a comment to the wrong
+declaration**, and **refusing costs one call**. Two ends of the same
+complaint: a note that says something true about the wrong thing.
 
-- **A3 is met by measurement, on the current corpus.** 20 of 25 snippets scored
-  4/4 clean; the one failure was unanimous across three lenses.
-- **A3-F5 is closed.** `peruser` and `watches`/`updates` — the constructs
-  ADR-0019 respelled, whose validation ADR-0021 withdrew — both scored 4/4
-  clean, on a run whose isolation was measured and recorded.
-- **ADR-0021's argument became evidence.** `08-handle-pipe` is the one fixture
-  whose fact the removed AGENTS.md section stated, and it is the one fixture
-  that flipped to PASS in run 3 and back to FAIL in run 5. See
-  [ADR-0023](decisions/0023-a3-run5-and-the-word-order-behind-f1.md).
-- **The isolation rule got sharper because the probes contradicted it.** All
-  three found AGENTS.md still stating language facts (refactor command names,
-  transports, two banned words). None touches a rubric, so no score moved — but
-  the honest rule is narrower than "no language facts": AGENTS.md must not hand
-  a reader a fact an A3 rubric asks that reader to produce. That is now what
-  `t_meta_agents_md_does_not_teach_the_language` asserts, by intersecting
-  AGENTS.md's inline-code spans with the rubrics' vocabulary.
+The formatter half. A comment written between the parts of an expression
+that PRINTS on one line had no line to go back to, so it stayed queued until
+the next declaration opened and documented that instead — `// the second
+term is the offset`, written inside `base`, coming out above `other`.
+Anything still queued from inside a construct now belongs to that construct:
+the first leaves as its trailing comment, the rest follow at the same
+indent. **And the faithfulness property moved from comment COUNT to comment
+HOME** — the declaration whose source extent contains it, or the one it sits
+above — because count was what let both this and the literal case through.
+Verified with teeth: reverting the fix fails the property with
+`W.base` -> `part W`.
 
-**A3-F1 remains open as a design finding**, now failed in every run whose readers
-were not handed the answer (1, 2, 5) — and its cause is finally identified,
-because the candidate read **refuted the hypothesis ADR-0023 proposed.** A 2×2
-over the merge-kind word and its position, three readers per cell, produced
-**0 of 11 readers stating that both functions run** — every cell, both word
-orders. So it is not the word and not its position: *cross-file layering itself
-does not cold-read*, which is also why `24-composed-program` fails the same way
-with no kind word at all. No grammar change follows; the pre-commitment in
-ADR-0023 was made before the data arrived and it holds.
+The idiom half. `number(text(x)) ?? 0` was called the shortest thing that
+type-checks at a boundary, with refusing said to cost a `let`, a comparison
+and a `fail`. That was never measured, and it was wrong: `fail` never
+returns, so it already fits any shape, and
+`number(t) ?? fail(400, "not a number")` refuses in the same one call that
+`?? 0` invents in. The gap was that nothing taught it — §9.9 named `??` as
+the recovery idiom and never as the refusing one. It does now, in 84 bytes,
+and `slate`'s two write routes dropped a `let`, an `if`, a `fail` and a `!`
+each by using it.
 
-One lead is recorded rather than acted on: `handle chain =` produced 0/3 wrong
-claims and 3/3 explicit abstention where the control produced 3/3 wrong claims.
-Better failure mode, not comprehension, on three readers — respelling a core
-keyword on that is the over-fit ADR-0015 committed with `owned`. A future attempt
-should test **the layering construct**, not the kind word.
-
-Also recorded, not acted on: **A3-F7**, `{text: number}` read as a one-field
-record rather than a map (`17-optional-index`, 3/4, still passing) — a different
-misread of the construct ADR-0008 fixed, worth having in hand if a future run
-fails there.
-
-One thing stays true regardless and needs no decision: **cold-read the
-construct, never the word** (ADR-0015 scored `personal` 3/3 on the bare word; in
-its slot it reads as `private`).
+Serves **A4, D5, G1**. Proven by
+`a_comment_inside_a_one_line_expression_stays_with_its_property` and the
+extended home property across every `assert_fmt_faithful` fixture, plus the
+corpus and reference surviving formatting; and by `slate` compiling and
+driving with the shorter refusing form.
 
 Delivered 2026-07-27 — **a boundary can ask what arrived**
 ([ADR-0026](decisions/0026-data-is-a-union-with-no-discriminator.md), closed in
