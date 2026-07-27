@@ -1,0 +1,2 @@
+# `ashlar fmt` emits LF. Keep source canonical on Windows checkouts too.
+*.ash text eol=lf
