@@ -69,7 +69,7 @@ parse-time structural property.
 tie-break). C9 is `delta.rs`: composition order compared against the previous
 manifest, with W002 naming any part whose layers were resequenced by an edit
 elsewhere in the use graph — the check that turns C2's determinism into
-something an author is actually told about (ADR-0031). C4–C8 are `compose.rs`: the five merge kinds against every value
+something an author is actually told about (ADR-0032). C4–C8 are `compose.rs`: the five merge kinds against every value
 shape, kind identity across layers, storage identity, and lifecycle-as-`stack`.
 `rekind` — the escape hatch from C5's identity rule — is proven in `t_e.rs`.
 

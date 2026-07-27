@@ -118,7 +118,7 @@ pub fn check_project(root: &Path) -> CheckResult {
     // measured against, and like the two files above it is on disk — which is
     // why this belongs here and not in `check_sources`. A `use` edge that
     // resequenced a part's layers is a behavioral change no diagnostic used to
-    // mention (ADR-0031). Absent manifest, no baseline, no delta.
+    // mention (ADR-0032). Absent manifest, no baseline, no delta.
     let mut order_diags = match delta::load(root) {
         Some(base) => delta::diagnostics(&base, &result.program),
         None => Vec::new(),

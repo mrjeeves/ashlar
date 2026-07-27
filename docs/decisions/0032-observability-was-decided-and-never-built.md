@@ -1,4 +1,4 @@
-# 0031 — Observability was decided and never built
+# 0032 — Observability was decided and never built
 
 Date: 2026-07-27. Status: accepted.
 

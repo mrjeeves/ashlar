@@ -3,6 +3,14 @@
 ---
 ## 0. What this document is
 A set of requirements — statements of what must be true — for a programming language and runtime whose primary author is a machine and whose primary reader is a human reviewing the machine's work.
+
+These requirements distinguish the language from its first runtime target.
+**Ashlar is an AI-first composition language. Its current runtime builds
+servers and interfaces.** That is delivered scope, not the language's identity
+or a permanent boundary on what its composition model may target. A future
+runtime target is not implied by the current implementation: it earns its own
+requirements and executable proof before it exists.
+
 Requirements are numbered so tests can reference them. Every requirement is verifiable. Nothing here is procedural; where this document appears to say "do X," it has failed and should be rewritten as "X is true."
 **The name of the language is not decided here.** Principle 2 says names matter more than anything. The most-repeated name in the system is the composable unit's keyword — the language's own name appears only in the CLI, the manifest header, the file extension, and diagnostics — so the guessability budget is spent on the unit keyword first.
 ---
@@ -130,7 +138,10 @@ This suite exists before the compiler does and is the primary gate on syntax dec
 **T-META — Coverage.** Parses this document for requirement identifiers, parses the test suites for requirement annotations, asserts every requirement has at least one test. A requirement with no test is not a requirement.
 ---
 ## 10. Non-goals
-- **Not a general-purpose systems language.** It builds servers and interfaces.
+- **Not a claim of a general-purpose systems runtime.** The current runtime
+  builds servers and interfaces. That target states what is delivered now; it
+  does not define Ashlar itself or foreclose another deliberately specified
+  and verified runtime target (ADR-0030).
 - **Not human-optimized.** Where agent legibility and human ergonomics conflict, agent legibility wins.
 - **Not backward compatible.** Foreign-function interface only.
 - **Not extensible at the language level.** See A6.
@@ -170,4 +181,12 @@ The first artifact is therefore the reference under 40,000 characters, and the f
 
 2026-07-27 — **G3 revised** from "hot reload on source change preserves process state" to what the runtime does and the reference already described: state carries over **by full name**, and open pages reconnect and re-render against the new code, so a view instance's `state` — which belongs to a page — is reborn at its default. Found by the outer loop (§2), not by a stuck test: a real browser held a live socket on `examples/counter`, the source was edited underneath it, and the count went 3 → 0 while the socket reconnected. `reference/ashlar.md` §9.1 has said "state properties carry over by full name" all along; G3's one-line summary was broader than the reference, the code, and the test that proved it, and a reader of the requirements would have predicted the 3. The requirement was wrong and the delivered behavior was right. `t_g3_a_view_instances_state_does_not_survive_reload` now pins the half that was unproved, beside the sibling that proves the other. Revised per §1: requirements are revised when they fail to express the vision.
 
-2026-07-27 — **C9 and D6 added; D5 revised.** ADR-0012 accepted four properties in 2026-07: determinism, observability, stability, repairability. Only determinism had requirement ids behind it (C2, C6, F2), so only determinism had tests, so only determinism was built — and the suite stayed green over three live defects. Driving the release binary found them: one `use` line resequenced a part's layers with `check` exiting 0 and printing nothing; `ashlar fix` rewrote `el(Card, ...)` to a different part and the page rendered something else, clean build to clean build; and the same ambiguity was machine-fixable where a name was mentioned and not where it was used. C9 encodes observability of order changes, D6 encodes that a fix preserves meaning and not merely compilability — D2 was satisfied throughout the second defect, which is the proof D2 alone is insufficient. D5 is revised to measure the whole corpus after its reported mean survived the corpus shrinking underneath it. See docs/decisions/0031-observability-was-decided-and-never-built.md. Revised per §1: requirements are revised when they fail to express the vision.
+2026-07-27 — **§0 and §10 revised** to distinguish Ashlar from its first
+runtime target (ADR-0030). The vision defines an AI-first composition
+language; none of its principles makes servers and interfaces the language's
+identity. The old non-goal compressed a true delivered fact — the current
+runtime builds servers and interfaces — into a permanent definition of the
+language. The corrected wording keeps the runtime claim exact without
+foreclosing another target that arrives with its own requirements and proof.
+
+2026-07-27 — **C9 and D6 added; D5 revised.** ADR-0012 accepted four properties in 2026-07: determinism, observability, stability, repairability. Only determinism had requirement ids behind it (C2, C6, F2), so only determinism had tests, so only determinism was built — and the suite stayed green over three live defects. Driving the release binary found them: one `use` line resequenced a part's layers with `check` exiting 0 and printing nothing; `ashlar fix` rewrote `el(Card, ...)` to a different part and the page rendered something else, clean build to clean build; and the same ambiguity was machine-fixable where a name was mentioned and not where it was used. C9 encodes observability of order changes, D6 encodes that a fix preserves meaning and not merely compilability — D2 was satisfied throughout the second defect, which is the proof D2 alone is insufficient. D5 is revised to measure the whole corpus after its reported mean survived the corpus shrinking underneath it. See docs/decisions/0032-observability-was-decided-and-never-built.md. Revised per §1: requirements are revised when they fail to express the vision.

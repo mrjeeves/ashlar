@@ -1204,7 +1204,7 @@ impl<'a> Walk<'a> {
                 // `audit.Card` by `ashlar fix` and rendered something else,
                 // clean build to clean build. D2 checks that a fix compiles,
                 // not that it means the same thing, which is the whole reason
-                // D6 exists (ADR-0031).
+                // D6 exists (ADR-0032).
                 //
                 // The gate was also `k == segs.len()`, so `Card` alone got the
                 // guess while `Card.title` got a note — the same ambiguity,
@@ -1544,7 +1544,7 @@ mod tests {
         // the alphabetically first candidate. That is a guess wearing a
         // correction's clothes: driving it, `ashlar fix` silently rewrote a
         // page's `el(Card, ...)` to a DIFFERENT part and the page rendered
-        // something else, clean build to clean build (ADR-0031). The
+        // something else, clean build to clean build (ADR-0032). The
         // requirement was wrong, not the test's subject, so the test moved.
         let (_, diags) = resolve_srcs(&[
             ("a.ash", "space chat.data\n\npart Message {\n  x: text\n}\n"),

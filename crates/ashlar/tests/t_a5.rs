@@ -22,7 +22,7 @@ fn t_a5_section_budget_distribution() {
     // A5 governs CONSTRUCTS, so it measures the reference half of AGENTS.md
     // only: the working contract's sections are rules, not language surface,
     // and counting them would both dilute every construct's share and put a
-    // workflow paragraph on trial for a language budget (ADR-0030).
+    // workflow paragraph on trial for a language budget (ADR-0031).
     const MARKER: &str = "<!-- REFERENCE:BEGIN -->";
     let start = whole
         .find(MARKER)

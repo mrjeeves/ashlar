@@ -697,12 +697,18 @@ fn t_e_space_rename_carries_foreign_lib_and_only_stored_migrations() {
     // The derivation rule names a library per probed extension (ADR-0017), so
     // each is radius — a `.dylib` shim is no less bound by space name than a
     // `.so` one. The list is POSIX-only because the `native` transport is.
+    #[cfg(unix)]
     assert_eq!(
         plan.foreign_renames,
         vec![
             ("foreign/old.so".to_string(), "foreign/fresh.so".to_string()),
             ("foreign/old.dylib".to_string(), "foreign/fresh.dylib".to_string()),
         ]
+    );
+    #[cfg(not(unix))]
+    assert!(
+        plan.foreign_renames.is_empty(),
+        "a platform without the native transport has no derived library radius"
     );
     // The binding file keys by space name too, so the key moves with it (E2).
     assert_eq!(
@@ -806,6 +812,7 @@ fn t_e_space_rename_carries_the_foreign_binding_key() {
         radius_out
     );
     // The derivation rule probes each POSIX extension; all are radius.
+    #[cfg(unix)]
     for ext in [".so", ".dylib"] {
         assert!(
             radius_out.contains(&format!("foreign/tools{}", ext)),
@@ -949,7 +956,7 @@ fn t_c9_a_use_edge_that_resequences_layers_is_reported_not_silent() {
     // from base,alpha,zulu to base,zulu,alpha. `ashlar check` exited 0 and
     // printed NOTHING, and over HTTP the program answered `x|base|zulu|alpha`
     // where it had answered `x|base|alpha|zulu`. Determinism was never in
-    // question; being told was (ADR-0012's own words, ADR-0031's finding).
+    // question; being told was (ADR-0012's own words, ADR-0032's finding).
     let dir = std::env::temp_dir().join(format!("ashlar_c9_{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();

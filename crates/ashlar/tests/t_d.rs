@@ -93,7 +93,7 @@ fn t_d6_a_machine_fix_never_changes_what_a_name_resolves_to() {
     // — rewrote the call to `audit.Card` because it was alphabetically first,
     // and the page rendered something else. Clean build before, clean build
     // after. D2 was satisfied the whole way: it asks whether a fix COMPILES,
-    // never whether it means the same thing (ADR-0031).
+    // never whether it means the same thing (ADR-0032).
     //
     // The honest correction is no correction: name every candidate, edit
     // nothing, and let the author say which they meant.

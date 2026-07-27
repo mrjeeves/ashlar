@@ -1740,7 +1740,6 @@ pub fn serve_with_liveness(
                 for line in ev.log.drain(..) {
                     eprintln!("{}", line);
                 }
-                use std::io::Write;
                 let _ = std::io::stdout().flush();
                 let _ = std::io::stderr().flush();
                 flush_state(&state_path, &ev);

@@ -30,7 +30,7 @@ single-file re-check latency and says nothing about the derived-state work the
 whole transitive-visibility trade rests on — closure size, layer flattening,
 collision density. Serves **F1, C9**. Proven by: a generator with controlled
 depth, fan-out, layer density and collision rate, and a measured gate on the
-derived-state work rather than only on parse throughput (ADR-0031).
+derived-state work rather than only on parse throughput (ADR-0032).
 
 **The semantic delta covers order only.** `delta.rs` compares composition order.
 Names entering or leaving a space's closure, and names that newly become

@@ -1,7 +1,7 @@
 # AGENTS.md — the working contract, and the language
 
-You are working on **Ashlar**, an agent-authored composition language. This is
-the one file to read before touching anything: the contract first, the complete
+You are working on **Ashlar**, an AI-first composition language. This is the
+one file to read before touching anything: the contract first, the complete
 language reference second. Humans start at `README.md`; the two must never
 disagree, and fixing a disagreement is part of your task.
 `docs/writing-ashlar.md` collects the traps that catch agents who guess.
@@ -111,8 +111,10 @@ binary and every ```ash block compiles clean (T-A2). Spend words like money.
 <!-- REFERENCE:BEGIN -->
 ## The Ashlar Reference
 
-Everything the language does is below; anything this reference does not define
-is a compile error, never a silent behavior.
+Servers and interfaces are Ashlar's current runtime target — delivered scope,
+not the language's identity (ADR-0030). Everything the language and that
+runtime do is below; anything this reference does not define is a compile
+error, never a silent behavior.
 
 ## 1. Files and lexical rules
 
@@ -281,8 +283,8 @@ layer's function in composition order.
 
 - `stack` functions take no parameters and must return a map or `none`; a
   returned map merges one level onto the part's state properties, and the call
-  returns the part. Lifecycle is not a separate concept: it is `stack` plus the
-  use order.
+  returns the part. Lifecycle is not a separate concept: it is `stack` plus
+  the use order.
 - `pipe` functions take exactly one parameter. The first receives the call's
   argument, each later one the previous return, and the call returns the last.
   All layers must agree in parameter and return shape.
@@ -376,7 +378,7 @@ Access:
 - `list[i]` — index from 0; shape `element?` (`none` past the end).
 - `map[key]` — lookup; shape `value?` (`none` when absent). Computed keys are
   data access only: parts, properties, spaces, and every name the compiler
-  reasons about cannot be reached by computed key.
+  reasons about cannot be reached by a computed key.
 - `f(args)` — call. Arity and shapes checked.
 
 `if` is an expression when both branches are present and yield one shape:
@@ -385,9 +387,9 @@ Access:
 Division by zero and `!` on `none` are the two runtime faults expressions can
 raise; both carry the source location and fail the surrounding request or task
 (§9.2). They are undetectable at build time because they depend on runtime
-values. Field access on a `data` value is the third thing left to runtime, and
-the only one that is silent: a runtime union has no fields to check against, so
-`e.data.valeu` answers `none` rather than failing the build.
+values. Field access on a `data` value is the third thing left to runtime and
+the only silent one: a runtime union has no fields to check, so `e.data.valeu`
+answers `none` rather than failing the build.
 
 ## 7. Statements and functions
 
@@ -453,12 +455,12 @@ object per diagnostic, one per line:
 Every diagnostic identifies a location, states the cause in one sentence, and
 states the correction specifically enough to apply without judgment. When a
 `fix` with `edits` is present, applying it produces source that compiles past
-that error without introducing a new one, and never changes what a name
-resolves to; `ashlar fix` applies such fixes. Where no edit is derivable
-without a judgment the author has not made — an ambiguous name, above —
-`edits` is empty and the note names every candidate. `id`s are stable across
-releases, `req` names the requirement enforced, and `ashlar check --human`
-renders the same diagnostics as prose. Warnings never block a build; errors do.
+that error without introducing a new one and never changes what a name resolves
+to; `ashlar fix` applies such fixes. Where no edit is derivable without a
+judgment the author has not made — an ambiguous name, above — `edits` is empty
+and the note names every candidate. `id`s are stable, `req` names the
+requirement enforced, and `ashlar check --human` renders the same diagnostics
+as prose. Warnings never block a build; errors do.
 
 ## 9. The runtime
 
@@ -495,8 +497,8 @@ part app {
 
 ### 9.2 Requests and routing
 
-A part with a `route` property receives requests. `route` is a text pattern
-over the request path; `{name}` segments capture into `params`.
+A part with a `route` property receives requests. `route` is text matched
+against the request path; `{name}` segments capture into `params`.
 
 ```ash
 space chat.api
@@ -522,8 +524,7 @@ code. Over HTTP the path is the URL; over the built-in socket a client sends
 a data value renders as JSON, text as plain text, an `Element` (§9.4) as an
 HTML document, `redirect(path)` as a redirect. `fail(status, message)` ends the
 request with that status; an uncaught runtime fault ends it with 500 and a
-structured log entry. Two routes matching one path is a compile error naming
-both.
+structured log entry. Two routes matching one path is a compile error naming both.
 
 ### 9.3 State
 
@@ -695,8 +696,7 @@ part sweep {
 A part with a `files` property serves static assets. Its value names an asset
 under the project's `assets/` root, and what it names decides how it serves: a
 **directory** mounts under the part's `route` as a prefix, a **file** answers
-that one route exactly and nothing below. The build records the location in the
-manifest.
+that one route exactly and nothing below.
 
 ```ash
 space site
@@ -725,9 +725,9 @@ timestamp, level, message, data, and source location.
 `fail(message)` or `fail(status, message)` raises a runtime fault: the current
 request ends with that status (500 if unstated), the current task logs it.
 There is no catching — a condition worth recovering from is worth a
-`none`-returning function and a `??`. `fail` never returns, so it fits any
-shape and refusing costs one call: `number(t) ?? fail(400, "not a number")`
-rejects where `?? 0` would invent.
+`none`-returning function and a `??`. `fail` never returns, so it fits any shape
+and refusing costs one call: `number(t) ?? fail(400, "not a number")` rejects
+where `?? 0` would invent.
 
 ### 9.10 Foreign functions
 
@@ -766,13 +766,13 @@ is `E001`:
 library keeps its own names. Every transport carries one envelope: a request is
 `{"call": name, "args": [...]}`, an answer is a bare value, `{"ok": value}`, or
 `{"error": text}` — the last a fault carrying that message. A `native` library
-may export `ashlar_free(char*)` to take its buffer back. A whole worker is
-therefore a loop in any language: read a line, decode `call` and `args`, print
-one JSON answer, flush.
+may export `ashlar_free(char*)` to take its buffer back. A worker is therefore
+a loop in any language: read a line, decode `call` and `args`, print one JSON
+answer, flush.
 
 Reachability is not a build-time fact — the machine that compiles is not the
-machine that deploys — so `ashlar foreign check` proves it on demand against
-the bindings in force, before a request finds out. Foreign calls may block; the
+machine that deploys — so `ashlar foreign check` proves it on demand against the
+bindings in force, before a request finds out. Foreign calls may block; the
 runtime schedules around them.
 
 A foreign call may name a reactive collection, so a store behind the boundary
@@ -828,7 +828,7 @@ The builtin space, implicitly used everywhere. Parts: `Request`, `Event`,
 
 A program often depends on what it cannot know when written — where a service
 is, a key, a limit. `setting` declares that: the name and shape are source, the
-value arrives at deployment.
+value a deployment fact.
 
 ```ash
 space site
@@ -844,11 +844,11 @@ Values live in `settings.json` at the project root (or at `ASHLAR_SETTINGS`), a
 JSON object keyed by full property name — `{"site.app.endpoint": "..."}`. One
 with a default is optional; one without is required, and starting without it
 fails before the first request, naming every missing setting and its shape at
-once. A supplied value that does not fit its declared shape fails the same way.
-Read a setting like any other property; it is immutable, so it cannot be
-assigned. This is how a location reaches a program without being written in
-source (B5): the name binds, the value is deployment's to supply. A key naming
-no declared setting is `E001`, a value of the wrong shape `E006`.
+once. A supplied value that does not fit its shape fails the same way. Read a
+setting like any other property; it is immutable, so cannot be assigned. This
+is how a location reaches a program without being written in source (B5): the
+name binds, the value is deployment's. A key naming no declared setting is
+`E001`, a value of the wrong shape `E006`.
 
 ## 10. The build and the manifest
 
@@ -856,7 +856,7 @@ The build scans the project tree, resolves every name, flattens every part, and
 writes `ashlar.manifest` (JSON): the format version, each space with the files
 that declare into it, each part with its layers in composition order (space,
 file, line), the use graph, foreign bindings, and asset locations. It is also
-the baseline the next build's semantic delta is measured against (§11).
+the baseline the next build's delta is measured against (§11).
 
 The manifest is state, the source is intent: fully derived, never hand-edited,
 and deleting it and rebuilding reproduces it exactly. Moving a source file
@@ -890,10 +890,10 @@ removes one, so reversing it returns the same program with those lines present
 would this touch" without touching it.
 
 Adding a `use` has no command and the widest reach of any edit: it can
-resequence composition order anywhere downstream (§3). So it is reported rather
+resequence composition order anywhere downstream (§3), so it is reported rather
 than commanded. Against the previous build's manifest, an edit that resequences
 any part's layers raises `W002` naming the part and its order before and after;
-`ashlar delta` prints the full report. No manifest, no baseline, no claim.
+`ashlar delta` prints the report. No manifest, no baseline, no claim.
 
 ## 12. What programs cannot do
 

@@ -26,7 +26,7 @@ fn t_d5_round_trips_to_clean_are_bounded_and_reported() {
     // already good, because a fixture with no machine edit hits the `continue`
     // below and leaves the corpus entirely. That is the metric grading its own
     // easy half — and it moved when D6 landed, dropping `16-ambiguous` from 11
-    // cases to 10 while the mean sat unchanged at 1.00 (ADR-0031). The
+    // cases to 10 while the mean sat unchanged at 1.00 (ADR-0032). The
     // machine-applicable FRACTION is the number that notices.
     let mut judgment_required: Vec<String> = Vec::new();
 

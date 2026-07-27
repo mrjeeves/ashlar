@@ -1,4 +1,4 @@
-# 0030 — One file: the reference lives in AGENTS.md
+# 0031 — One file: the reference lives in AGENTS.md
 
 Date: 2026-07-27. Status: accepted. Supersedes the isolation half of ADR-0021
 and ADR-0023.
