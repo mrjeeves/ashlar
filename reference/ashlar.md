@@ -604,18 +604,29 @@ part sweep {
 
 ### 9.8 Files
 
-A part with a `files` property serves static assets. Its value names a
-directory under the project's `assets/` root; the build records the actual
-location in the manifest, and the route prefix is the part's `route`.
+A part with a `files` property serves static assets. Its value names an
+asset under the project's `assets/` root, and what it names decides how the
+part serves: a **directory** mounts under the part's `route` as a prefix, a
+**file** answers that one route exactly and nothing below it. The build
+records the location in the manifest.
 
 ```ash
 space site
 
 part static {
   route = "/static"
-  files = "public"     // serves assets/public at /static/...
+  files = "public"          // assets/public/ at /static/...
+}
+
+part robots {
+  route = "/robots.txt"
+  files = "robots.txt"      // that one file, at that one path
 }
 ```
+
+The single-file form is how a program answers the absolute paths it does not
+choose — `/favicon.ico`, `/robots.txt`, `/.well-known/...` — without taking
+`/` away from a page.
 
 ### 9.9 Logging and failure
 
