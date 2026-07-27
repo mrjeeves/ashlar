@@ -239,12 +239,12 @@ does. Needs `python3`; the driving test skips loudly without it.
 
 ## enclave
 
-A site nobody outside its mesh can see (ADR-0013's second edge). Two vendored
-spaces carry it: `mesh` — who else is running this program — and `mesh.sites`,
-what they are serving. Both are `foreign`, so the language grows nothing; both
-derive to `ashlar mesh worker`, which speaks the control sockets the mesh's own
-daemons already expose — so a project that wants a roster writes no binding,
-and the mesh ships nothing on Ashlar's behalf. `mesh.grid` is that roster as an
+A site nobody outside its mesh can see (ADR-0013's second edge). One vendored
+space carries it: `mesh` — who else is running this program, and what they are
+serving. It is `foreign`, so the language grows nothing, and it derives to
+`ashlar mesh worker`, which drives the control socket the mesh node already
+exposes to its own clients — so a project that wants a roster writes no
+binding, and the mesh ships nothing on Ashlar's behalf. `mesh.grid` is that roster as an
 element, `mesh.panel` states the settings in force, and this app layers one
 setting to take its OWN mesh rather than share the shared one — the ordinary
 replace, applied to a dependency's default. The roster is live without a poll

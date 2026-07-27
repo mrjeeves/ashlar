@@ -1,15 +1,16 @@
 """A stand-in for the mesh, so this example runs on a machine that has none.
 
-It speaks the whole `mesh` and `mesh.sites` contract (§9.10) over JSON Lines
-and answers truthfully about a mesh of one: this node, and whichever peers
+It speaks the whole `mesh` contract (§9.10) over JSON Lines and answers
+truthfully about a mesh of one: this node, and whichever peers
 `foreign/peers.json` says are on it. There are none unless something wrote
 that file, so the shipped example shows the empty roster rather than a
 pretend one.
 
-The real binding is the mesh daemon this machine runs, which is what the two
-space names derive to with no `foreign.json` at all. Delete this file and its
-binding and the same program talks to the real thing — that is the whole
-point of a capability whose transport is a deployment fact (ADR-0017).
+The real binding is `ashlar mesh worker`, which is what the space derives to
+with no `foreign.json` at all: it drives the control socket this machine's mesh
+node already exposes. Delete this file and its binding and the same program
+talks to it — that is the whole point of a capability whose transport is a
+deployment fact (ADR-0017).
 """
 
 import json

@@ -1188,7 +1188,7 @@ fn t_examples_enclave_vendors_the_mesh_library_verbatim() {
     // the two are compared byte for byte rather than trusted.
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
     let mut compared = 0;
-    for file in ["mesh.ash", "sites.ash"] {
+    for file in ["mesh.ash"] {
         let lib = std::fs::read(root.join("lib/mesh").join(file))
             .unwrap_or_else(|e| panic!("lib/mesh/{} is missing: {}", file, e));
         let vendored = std::fs::read(root.join("examples/enclave/vendor/mesh").join(file))
@@ -1202,7 +1202,7 @@ fn t_examples_enclave_vendors_the_mesh_library_verbatim() {
         );
         compared += 1;
     }
-    assert_eq!(compared, 2, "the mesh library is two spaces; both are vendored");
+    assert_eq!(compared, 1, "the mesh library is one space, vendored whole");
 }
 
 #[test]

@@ -1,6 +1,5 @@
 space enclave
 use mesh
-use mesh.sites
 
 // enclave — a site that is only reachable to the people on its own mesh.
 //
@@ -37,7 +36,7 @@ part page {
       el("h2", {}, ["Who is here"]),
       el(mesh.grid, {}),
       el("h2", {}, ["What they are running"]),
-      el(mesh.sites.browser, {}),
+      el(mesh.browser, {}),
       el("h2", {}, ["This node"]),
       el(mesh.panel, {}),
     ]),

@@ -149,62 +149,60 @@ A worker is spawned lazily on first call and kept alive. If it dies, the call
 faults loudly and the *next* call respawns it. That is process lifecycle, not
 failover.
 
-### 5b. Two names whose default is the machine's, not the project's (2026-07-27)
+### 5b. One name whose default is the machine's, not the project's (2026-07-27)
 
 The derivation rule answers "where does this capability live" with a path
 *inside the project* — `foreign/<space>` — which is right for a capability the
-project supplies and wrong for one the machine already runs. The mesh daemon is
+project supplies and wrong for one the machine already runs. The mesh node is
 the second kind: installed once, shared by every program on the box, exactly
 like the proxy ADR-0013 puts in front of the origin. Deriving `mesh` to
 `foreign/mesh.so` would have meant every project that wanted a roster shipped a
 shim to a daemon it did not own.
 
-So exactly two space names — `mesh` (who else is on the private network this
-machine joined) and `mesh.sites` (what they serve) — derive to a co-process
-instead of a library.
+So exactly one space name — `mesh` — derives to a co-process instead of a
+library. **And the co-process is this toolchain.**
 
-**And the co-process is this toolchain.** The first cut of this section
-answered the derivation question by adding an Ashlar-shaped subcommand to each
-mesh daemon's own repository, so that `mesh` derived to `myownmesh ashlar` and
-`mesh.sites` to `allmystuff-ashlar`. That is precisely the failure this ADR
+Two wrong answers were built first, and both are worth recording because each
+looked reasonable while it lasted.
+
+**The first put the adapter in the mesh's own repositories**, adding an
+Ashlar-shaped subcommand to each so that `mesh` derived to `myownmesh ashlar`
+and `mesh.sites` to `allmystuff-ashlar`. That is precisely the failure this ADR
 exists to end, wearing a different face: the `ledger` shim required a foreign
 library to be re-authored for us, and this required a foreign *product* to be.
-Every property that made it look reasonable — the adapter lives with the thing
-it adapts, it moves when that thing moves — is bought with the one thing a
-boundary may not cost, which is that the integration does not exist until
-somebody else ships a change for you.
+Every property that made it look right — the adapter lives with the thing it
+adapts, it moves when that thing moves — is bought with the one cost a boundary
+may not carry, which is that the integration does not exist until somebody else
+ships a change for you. The node already has a client: a control socket
+carrying JSON, driven by its own GUI and by every app on that stack. Being that
+client is what a boundary means.
 
-The daemons already have clients. Each exposes a control socket carrying JSON,
-driven by its own CLI and GUI: one JSON object per line keyed by `op` for the
-mesh daemon, length-prefixed `{cmd, args}` frames for the node. `ashlar mesh
-worker` speaks both. Nothing outside this repository changes, the adapter is
-maintained by the side that needs it, and a mesh that alters its socket breaks
-one file here rather than stranding a subcommand in someone else's release.
+**The second split the capability across two sockets** — the roster from the
+mesh daemon directly, the sites from the node — which meant two wire protocols
+and, since one of them was reached a way `std` could not open on Windows, a
+platform where the whole feature was a message explaining its own absence. Both
+were self-inflicted. The node forwards the roster ops (`mesh_identity`,
+`mesh_peers`, `mesh_networks`, `mesh_network_add`) to the daemon it already
+supervises, so one socket answers everything; and a Windows named pipe opens
+with `std::fs::OpenOptions`, so the second platform costs four lines and no
+dependency. A capability that works on one operating system is not a
+capability, and "the runtime is zero-dependency" was doing the arguing for a
+conclusion that was never true.
 
-The cost is real and worth naming: this repository now tracks two wire
-protocols it does not own. That is the ordinary cost of being a client, which
-is what a boundary makes you. It is bounded — the ops used are the ones those
-products' own front ends drive, which is the most stable surface they have —
-and it is visible, because it lives in one module with the sockets named in its
-header.
+The cost that remains is real and worth naming: this repository tracks one wire
+protocol it does not own. That is the ordinary cost of being a client. It is
+bounded — the ops used are the ones that node's own front end drives, the most
+stable surface it has — and it is visible, in one module with the socket named
+in its header.
 
-Everything else about the two names is unchanged: a `foreign.json` entry
-overrides either, `check` still reports a key naming no space, the manifest
-still records the transport that won, and the mechanism is the ordinary worker
-transport, so the mesh is reached exactly the way any third-party co-process is.
-The rule this ADR closed with holds here too, and cost one more thing to notice:
-**a name that IS the binding has no file for a rename to carry.** Renaming a
-space onto or off one of these two silently swaps its transport, with no key to
-rewrite and no library to move — so `rename` reports it as radius (E3) even
-though it changes nothing on disk.
-
-Why two names rather than one: the roster and the site proxy are separate
-capabilities with separate requirements. A machine with only the mesh daemon
-can answer `mesh` — who is here — and genuinely cannot answer `mesh.sites`,
-which needs a proxy able to carry a TCP connection to a peer. One space would
-have made "the mesh is installed" and "sites can be published" the same claim,
-and a program would discover the difference at the call site rather than from
-`ashlar mesh`.
+Everything else is unchanged: a `foreign.json` entry overrides the name, `check`
+still reports a key naming no space, the manifest still records the transport
+that won, and the mechanism is the ordinary worker transport, so the mesh is
+reached exactly the way any third-party co-process is. The rule this ADR closed
+with holds here too, and cost one more thing to notice: **a name that IS the
+binding has no file for a rename to carry.** Renaming a space onto or off this
+one silently swaps its transport, with no key to rewrite and no library to move
+— so `rename` reports it as radius (E3) even though it changes nothing on disk.
 
 ### 5. `ashlar foreign check`
 

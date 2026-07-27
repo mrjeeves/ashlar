@@ -765,13 +765,13 @@ machine that deploys — so `ashlar foreign check` proves it on demand against t
 bindings in force, before a request finds out. Foreign calls may block; the
 runtime schedules around them.
 
-Two space names derive to a co-process rather than a library, and that
+One space name derives to a co-process rather than a library, and that
 co-process is this toolchain: `mesh` — who else is on the private network this
-machine joined — and `mesh.sites`, the sites they serve. `ashlar mesh worker`
-speaks the control sockets the mesh's daemons already expose, so nothing
-outside the project changes to make the boundary work. `ashlar run --mesh`
-publishes the port it is serving through `mesh.sites`, reaching that network
-and nobody else; `ashlar mesh` says what both answer.
+machine joined, and the sites they serve. `ashlar mesh worker` speaks the
+control socket the mesh already exposes to its own clients, so nothing outside
+the project changes to make the boundary work. `ashlar run --mesh` publishes
+the port it is serving through it, reaching that network and nobody else;
+`ashlar mesh` says what it answers.
 
 A foreign call may name a reactive collection, so a store behind the boundary
 is live without leaving the language:

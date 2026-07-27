@@ -1,31 +1,29 @@
-//! `ashlar mesh worker` — the adapter behind the two mesh spaces (§9.10).
+//! `ashlar mesh worker` — the adapter behind the `mesh` space (§9.10).
 //!
-//! The mesh is a capability, and the daemons that provide it already have
-//! clients: a control socket each, carrying JSON, driven by their own CLIs and
-//! GUIs. This module speaks those two sockets. **Nothing outside this
-//! repository changes to make that work**, which is the whole point — ADR-0017
-//! exists because a boundary that requires the foreign system to be re-authored
-//! for us is not a boundary, and shipping an Ashlar-shaped adapter into someone
-//! else's daemon would have been exactly that mistake with a different face.
+//! The mesh is a capability, and the node that provides it already has a
+//! client: one control socket, carrying JSON, driven by its own GUI and by
+//! every app built on that stack. This module speaks that socket. **Nothing
+//! outside this repository changes to make that work**, which is the whole
+//! point — ADR-0017 exists because a boundary that requires the foreign system
+//! to be re-authored for us is not a boundary, and shipping an Ashlar-shaped
+//! adapter into someone else's daemon would have been that mistake with a
+//! different face.
 //!
-//! Two sockets, because the mesh is two capabilities:
+//! One socket, because the node already answers both halves: the roster
+//! (`mesh_identity`, `mesh_peers`, `mesh_networks`, `mesh_network_add`, which
+//! it forwards to the mesh daemon it supervises) and the sites (`site_exposed`,
+//! `site_set_exposed`, `site_map`, `site_mappings`, `session_snapshot`, which
+//! need its proxy). Talking to the daemon separately would be a second wire
+//! protocol for facts one already answers.
 //!
-//! - **the roster** (`mesh`) — the mesh daemon's own socket, one JSON object
-//!   per line, keyed by `op`. Identity, joined networks, peers.
-//! - **the sites** (`mesh.sites`) — the node's socket, length-prefixed frames
-//!   (`[u32 BE len][tag][JSON]`) carrying `{cmd, args}`. Publishing a local
-//!   port to the mesh's members and reaching theirs needs a proxy, which the
-//!   node has and the mesh daemon alone does not.
+//! It is reached as a sidecar: reuse whatever is already running on this
+//! machine, and bring it up if nothing is. That is how every app on this stack
+//! already behaves, and it is why an Ashlar site needs no setup beyond the
+//! mesh being installed.
 //!
-//! Both are reached as a sidecar: reuse whatever is already running on this
-//! machine, and bring it up if nothing is. That is how a program built on this
-//! stack is already expected to behave, and it is why an Ashlar site needs no
-//! setup beyond the mesh being installed.
-//!
-//! Unix only. The sockets are named pipes on Windows, and a zero-dependency
-//! runtime has no client for those (§9.10 already says `native` needs a POSIX
-//! loader); the failure is one sentence at the boundary rather than a silent
-//! empty roster.
+//! The socket is a Unix socket or a Windows named pipe, and both are opened
+//! with `std` alone — a pipe answers the ordinary file API, so there is no
+//! platform where this is a stub.
 
 use crate::eval::{from_json, to_json, V};
 use std::collections::BTreeMap;
@@ -146,7 +144,7 @@ impl Session {
     // -- the roster ---------------------------------------------------------
 
     fn here(&mut self) -> Result<V, String> {
-        let identity = daemon("identity_show", BTreeMap::new())?;
+        let identity = node("mesh_identity", V::Map(BTreeMap::new()))?;
         let peers = self.peers().unwrap_or_default();
         Ok(map(&[
             ("id", V::Text(field(&identity, "device_id"))),
@@ -159,7 +157,7 @@ impl Session {
     fn peers(&self) -> Result<Vec<V>, String> {
         let mut args = BTreeMap::new();
         args.insert("network".to_string(), V::Text(self.network()));
-        let answer = daemon("peers_list", args)?;
+        let answer = node("mesh_peers", V::Map(args))?;
         let Some(V::List(list)) = at(&answer, "peers") else {
             return Ok(Vec::new());
         };
@@ -172,13 +170,13 @@ impl Session {
             // the roster works by id, and the name is cosmetic.
             let mut args = BTreeMap::new();
             args.insert("label".to_string(), V::Text(label.trim().to_string()));
-            let _ = daemon("identity_set_label", args);
+            let _ = node("mesh_identity_set_label", V::Map(args));
         }
-        let joined = daemon("networks_list", BTreeMap::new())
+        let joined = node("mesh_networks", V::Map(BTreeMap::new()))
             .map(|v| already_joined(&v, network))
             .unwrap_or(false);
         if !joined {
-            daemon("network_add", network_config(network, label))?;
+            node("mesh_network_add", V::Map(network_config(network, label)))?;
         }
         self.network = Some(network.to_string());
         self.fingerprint = None;
@@ -222,12 +220,7 @@ impl Session {
             .map(|v| already_joined(&v, network))
             .unwrap_or(false);
         if !joined {
-            let mut args = BTreeMap::new();
-            args.insert(
-                "config".to_string(),
-                V::Map(network_config(network, label)),
-            );
-            node("mesh_network_add", V::Map(args))?;
+            node("mesh_network_add", V::Map(network_config(network, label)))?;
         }
         // Add one port to the owner's exposed selection and leave the rest
         // alone. The node's proxy refuses every port outside that selection,
@@ -545,64 +538,25 @@ fn port_arg(args: &[V], index: usize) -> Result<u16, String> {
 // The two sockets
 // ---------------------------------------------------------------------------
 
-/// Where each daemon keeps its socket.
-///
-/// `MYOWNMESH_HOME` moves a whole stack, which is how a second install runs
-/// beside a first without either finding the other's socket. Both daemons read
-/// it and they do NOT read it the same way: the mesh daemon treats it as its
-/// data directory outright, while the node joins `.myownmesh` onto it. With
-/// the variable unset — the ordinary case — both land in `~/.myownmesh`.
-///
-/// Each socket is therefore derived exactly as its owner derives it. Guessing
-/// one rule for both would work on every developer's machine and fail on the
-/// side-by-side install the variable exists for, which is the worst shape a
-/// bug can have.
-fn home(joins_dot_dir: bool) -> Option<PathBuf> {
-    match std::env::var("MYOWNMESH_HOME") {
-        Ok(h) if !h.trim().is_empty() => {
-            let base = PathBuf::from(h.trim());
-            Some(if joins_dot_dir { base.join(".myownmesh") } else { base })
-        }
-        _ => std::env::var("HOME")
-            .ok()
-            .filter(|h| !h.is_empty())
-            .map(|h| PathBuf::from(h).join(".myownmesh")),
+/// Where the node listens. `MYOWNMESH_HOME` moves a whole stack, which is how
+/// a second install runs beside a first without either finding the other's
+/// socket; the node reads it as the parent of its `.myownmesh` directory, and
+/// this reads it the same way rather than inventing a second convention.
+pub fn node_socket() -> Option<PathBuf> {
+    #[cfg(windows)]
+    {
+        // A named pipe has no directory; the name is the address.
+        return Some(PathBuf::from(r"\\.\pipe\allmystuff-node"));
     }
-}
-
-/// The mesh daemon's directory (`MYOWNMESH_HOME` is the directory itself).
-pub fn daemon_home() -> Option<PathBuf> {
-    home(false)
-}
-
-/// The node's directory (`MYOWNMESH_HOME` is its parent).
-pub fn node_home() -> Option<PathBuf> {
-    home(true)
-}
-
-/// One request to the mesh daemon: one JSON line out, one line back. Its wire
-/// is `{"op": …}` plus the op's own fields, answering `{ok, data, error}` —
-/// the socket `myownmesh ctl` and its GUI already drive.
-pub fn daemon(op: &str, args: BTreeMap<String, V>) -> Result<V, String> {
-    let mut request = args;
-    request.insert("op".to_string(), V::Text(op.to_string()));
-    let line = to_json(&V::Map(request));
-    let answer = unix::line_round_trip(
-        &socket_path(daemon_home(), "daemon.sock")?,
-        &line,
-        "myownmesh",
-        &["myownmesh", "serve"],
-    )?;
-    let Some(value) = from_json(&answer) else {
-        return Err(format!("the mesh daemon's answer to `{}` was not JSON", op));
-    };
-    if matches!(at(&value, "ok"), Some(V::Bool(true))) {
-        return Ok(at(&value, "data").unwrap_or(V::None));
+    #[cfg(not(windows))]
+    {
+        let home = match std::env::var("MYOWNMESH_HOME") {
+            Ok(h) if !h.trim().is_empty() => PathBuf::from(h.trim()).join(".myownmesh"),
+            _ => PathBuf::from(std::env::var("HOME").ok().filter(|h| !h.is_empty())?)
+                .join(".myownmesh"),
+        };
+        Some(home.join("allmystuff-node.sock"))
     }
-    Err(match at(&value, "error") {
-        Some(V::Text(e)) => e,
-        _ => format!("the mesh daemon refused `{}` without saying why", op),
-    })
 }
 
 /// One request to the node: a length-prefixed JSON frame out, one frame back.
@@ -613,12 +567,9 @@ pub fn node(cmd: &str, args: V) -> Result<V, String> {
     body.insert("cmd".to_string(), V::Text(cmd.to_string()));
     body.insert("args".to_string(), args);
     let payload = to_json(&V::Map(body));
-    let answer = unix::frame_round_trip(
-        &socket_path(node_home(), "allmystuff-node.sock")?,
-        &payload,
-        "allmystuff-serve",
-        &["allmystuff-serve"],
-    )?;
+    let socket =
+        node_socket().ok_or_else(|| "no home directory, so no node socket to find".to_string())?;
+    let answer = wire::round_trip(&socket, &payload, "allmystuff-serve", &["allmystuff-serve"])?;
     let Some(value) = from_json(&answer) else {
         return Err(format!("the node's answer to `{}` was not JSON", cmd));
     };
@@ -631,24 +582,40 @@ pub fn node(cmd: &str, args: V) -> Result<V, String> {
     })
 }
 
-fn socket_path(home: Option<PathBuf>, name: &str) -> Result<PathBuf, String> {
-    home.map(|h| h.join(name))
-        .ok_or_else(|| "no home directory, so no mesh socket to find".to_string())
-}
-
-/// The framing both round trips share, and the sidecar bring-up in front of
-/// them. Unix only — see the module header.
-#[cfg(unix)]
-mod unix {
-    use std::io::{BufRead, BufReader, Read, Write};
-    use std::os::unix::net::UnixStream;
+/// The node's wire, and the sidecar bring-up in front of it.
+///
+/// A frame is `[u32 BE len][tag][payload]`, where the length counts the tag
+/// and tag 0 is JSON. The socket is a Unix socket or a Windows named pipe, and
+/// the only difference between them here is how it opens: a pipe answers
+/// `File`'s read/write, so both sides of this module are `std` and neither is
+/// a stub.
+mod wire {
+    use std::io::{Read, Write};
     use std::path::Path;
 
+    #[cfg(not(windows))]
+    type Socket = std::os::unix::net::UnixStream;
+    #[cfg(windows)]
+    type Socket = std::fs::File;
+
+    #[cfg(not(windows))]
+    fn open(socket: &Path) -> std::io::Result<Socket> {
+        std::os::unix::net::UnixStream::connect(socket)
+    }
+
+    /// A named pipe is opened like a file, read-write, with no crate and no
+    /// `unsafe` — which is why Windows is a supported platform here and not a
+    /// message explaining why it is not.
+    #[cfg(windows)]
+    fn open(socket: &Path) -> std::io::Result<Socket> {
+        std::fs::OpenOptions::new().read(true).write(true).open(socket)
+    }
+
     /// Connect, or bring the sidecar up and connect. Reusing what is already
-    /// running is the first move: a machine with the app open already has both
-    /// daemons, and a second copy would fight the first over one identity.
-    fn connect(socket: &Path, binary: &str, run: &[&str]) -> Result<UnixStream, String> {
-        if let Ok(s) = UnixStream::connect(socket) {
+    /// running is the first move: a machine with the app open already has the
+    /// node, and a second copy would fight the first over one identity.
+    fn connect(socket: &Path, binary: &str, run: &[&str]) -> Result<Socket, String> {
+        if let Ok(s) = open(socket) {
             return Ok(s);
         }
         let spawned = std::process::Command::new(run[0])
@@ -664,11 +631,11 @@ mod unix {
                 binary
             ));
         }
-        // A daemon takes a moment to bind. Wait in short steps rather than one
+        // A node takes a moment to bind. Wait in short steps rather than one
         // long sleep, so the common case — it is up almost at once — is fast.
-        for _ in 0..40 {
+        for _ in 0..60 {
             std::thread::sleep(std::time::Duration::from_millis(50));
-            if let Ok(s) = UnixStream::connect(socket) {
+            if let Ok(s) = open(socket) {
                 return Ok(s);
             }
         }
@@ -679,32 +646,8 @@ mod unix {
         ))
     }
 
-    /// One line out, one line back (the mesh daemon).
-    pub fn line_round_trip(
-        socket: &Path,
-        line: &str,
-        binary: &str,
-        run: &[&str],
-    ) -> Result<String, String> {
-        let mut stream = connect(socket, binary, run)?;
-        stream
-            .write_all(line.as_bytes())
-            .and_then(|_| stream.write_all(b"\n"))
-            .and_then(|_| stream.flush())
-            .map_err(|e| format!("could not write to {}: {}", binary, e))?;
-        let mut answer = String::new();
-        BufReader::new(&stream)
-            .read_line(&mut answer)
-            .map_err(|e| format!("could not read from {}: {}", binary, e))?;
-        if answer.trim().is_empty() {
-            return Err(format!("{} closed without answering", binary));
-        }
-        Ok(answer)
-    }
-
-    /// One frame out, one frame back (the node). `[u32 BE len][tag][payload]`,
-    /// where the length counts the tag byte and tag 0 is JSON.
-    pub fn frame_round_trip(
+    /// One frame out, one frame back.
+    pub fn round_trip(
         socket: &Path,
         payload: &str,
         binary: &str,
@@ -729,7 +672,7 @@ mod unix {
             return Err(format!("{} sent an empty frame", binary));
         }
         // A frame ceiling before allocating: a length is untrusted input even
-        // from a local socket.
+        // on a local socket.
         if len > 64 * 1024 * 1024 {
             return Err(format!("{} sent a frame past the 64MB ceiling", binary));
         }
@@ -743,22 +686,17 @@ mod unix {
         String::from_utf8(body[1..].to_vec())
             .map_err(|_| format!("{}'s answer was not UTF-8", binary))
     }
-}
 
-#[cfg(not(unix))]
-mod unix {
-    use std::path::Path;
-
-    const WHY: &str = "the mesh sockets are named pipes on this platform, and \
-                       this runtime has no client for them; bind the space in \
-                       foreign.json to a worker that does.";
-
-    pub fn line_round_trip(_: &Path, _: &str, _: &str, _: &[&str]) -> Result<String, String> {
-        Err(WHY.to_string())
-    }
-
-    pub fn frame_round_trip(_: &Path, _: &str, _: &str, _: &[&str]) -> Result<String, String> {
-        Err(WHY.to_string())
+    /// The bytes a request becomes, so the framing is checkable without a node.
+    #[cfg(test)]
+    pub fn frame(payload: &str) -> Vec<u8> {
+        let bytes = payload.as_bytes();
+        let len = (bytes.len() as u32) + 1;
+        let mut out = Vec::with_capacity(bytes.len() + 5);
+        out.extend_from_slice(&len.to_be_bytes());
+        out.push(0u8);
+        out.extend_from_slice(bytes);
+        out
     }
 }
 
@@ -945,23 +883,40 @@ mod tests {
     }
 
     #[test]
-    fn each_socket_is_derived_the_way_its_owner_derives_it() {
-        // The two daemons read MYOWNMESH_HOME differently, and a client that
-        // invented one rule for both would work everywhere except the
-        // side-by-side install the variable exists for.
-        let both = (daemon_home(), node_home());
-        match std::env::var("MYOWNMESH_HOME") {
-            Ok(h) if !h.trim().is_empty() => {
-                let base = std::path::PathBuf::from(h.trim());
-                assert_eq!(both.0, Some(base.clone()));
-                assert_eq!(both.1, Some(base.join(".myownmesh")));
-            }
-            _ => {
-                // Unset: both land in the same place, which is why this is
-                // easy to get wrong and only wrong where it matters.
-                assert_eq!(both.0, both.1);
-                assert!(both.0.is_some() || std::env::var("HOME").is_err());
-            }
+    fn the_socket_is_derived_the_way_the_node_derives_it() {
+        // `MYOWNMESH_HOME` is how a second install runs beside a first. Reading
+        // it the way the node reads it is what makes this a client of what is
+        // already there rather than a second convention.
+        let socket = node_socket();
+        if cfg!(windows) {
+            assert!(socket.is_some(), "a named pipe needs no home directory");
+            return;
         }
+        match std::env::var("MYOWNMESH_HOME") {
+            Ok(h) if !h.trim().is_empty() => assert_eq!(
+                socket,
+                Some(
+                    std::path::PathBuf::from(h.trim())
+                        .join(".myownmesh")
+                        .join("allmystuff-node.sock")
+                )
+            ),
+            _ => assert!(socket.is_some() || std::env::var("HOME").is_err()),
+        }
+    }
+
+    #[test]
+    fn a_request_frames_the_way_the_node_reads_it() {
+        // `[u32 BE len][tag][JSON]`, length counting the tag. This is the whole
+        // contract with the node's socket; if it drifts, this fails rather than
+        // a user's first request.
+        let bytes = wire::frame(r#"{"cmd":"site_exposed","args":{}}"#);
+        let len = u32::from_be_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as usize;
+        assert_eq!(len, bytes.len() - 4, "len covers tag + payload");
+        assert_eq!(bytes[4], 0, "tag 0 is JSON");
+        assert_eq!(
+            String::from_utf8(bytes[5..].to_vec()).unwrap(),
+            r#"{"cmd":"site_exposed","args":{}}"#
+        );
     }
 }

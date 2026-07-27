@@ -5,8 +5,9 @@
 //! deployment fact — a proxy terminating TLS, a port published to a mesh.
 //! This module is the second of those. It adds no builtin and no language
 //! surface: the mesh is a capability reached across the one boundary
-//! (§9.10), and the two space names that carry it derive to the co-process
-//! the machine already runs (`foreign::derived_worker`).
+//! (§9.10), and the space that carries it derives to a co-process this
+//! toolchain provides (`foreign::derived_worker`), which drives the socket
+//! the mesh node already exposes to its own clients.
 //!
 //! So `ashlar run --mesh` is exactly `--port`'s sibling. `--port` says where
 //! this origin listens; `--mesh` says who else can reach it. Neither is
@@ -14,7 +15,7 @@
 //! prints when it comes up.
 
 use crate::eval::{to_text, V};
-use crate::foreign::{Boundary, MESH_SPACE, SITES_SPACE};
+use crate::foreign::{Boundary, MESH_SPACE};
 use std::collections::BTreeMap;
 use std::path::Path;
 
@@ -75,8 +76,7 @@ impl Link {
     }
 
     /// Publish the port this origin is serving to the mesh. `network` empty
-    /// means the mesh the machine's daemon calls its own default — the shared
-    /// area every unconfigured Ashlar site lands on.
+    /// means the shared area every unconfigured Ashlar site lands on.
     pub fn publish(
         &mut self,
         root: &Path,
@@ -86,7 +86,7 @@ impl Link {
     ) -> Result<Published, String> {
         let answer = self.boundary.call(
             root,
-            SITES_SPACE,
+            MESH_SPACE,
             "expose",
             vec![
                 V::Number(port as f64),
@@ -102,15 +102,15 @@ impl Link {
     /// process is leaving anyway and the daemon drops what it cannot reach.
     pub fn withdraw(&mut self, root: &Path, port: u16) -> Result<(), String> {
         self.boundary
-            .call(root, SITES_SPACE, "unexpose", vec![V::Number(port as f64)])
+            .call(root, MESH_SPACE, "unexpose", vec![V::Number(port as f64)])
             .map(|_| ())
     }
 
-    /// What this machine's mesh looks like from here: identity and roster from
-    /// `mesh`, published sites from `mesh.sites`. Each space is asked
-    /// separately and reported separately, because a machine with the mesh
-    /// daemon but no site proxy is a real deployment — the roster works,
-    /// publishing does not, and one line each says so.
+    /// What this machine's mesh looks like from here: who this node is, the
+    /// mesh it is on, how many peers share it, and what it publishes. Each
+    /// question is asked separately and reported separately, so a node that
+    /// answers identity and refuses sites says which rather than failing as
+    /// one opaque outage.
     pub fn report(&mut self, root: &Path) -> Report {
         let mut out = Report::default();
         let b = &mut self.boundary;
@@ -126,7 +126,7 @@ impl Link {
             Err(e) => out.problems.push(format!("{}: {}", MESH_SPACE, e)),
         }
 
-        match b.call(root, SITES_SPACE, "published", vec![]) {
+        match b.call(root, MESH_SPACE, "published", vec![]) {
             Ok(V::List(sites)) => {
                 if sites.is_empty() {
                     out.facts
@@ -140,12 +140,15 @@ impl Link {
             }
             Ok(other) => out.problems.push(format!(
                 "{}: `published` answered {}, not a list of sites.",
-                SITES_SPACE,
+                MESH_SPACE,
                 shape_word(&other)
             )),
-            Err(e) => out.problems.push(format!("{}: {}", SITES_SPACE, e)),
+            Err(e) => out.problems.push(format!("{}: {}", MESH_SPACE, e)),
         }
 
+        // Two questions, one unreachable node: say it once. A reader counting
+        // lines to judge how bad it is should be counting causes.
+        out.problems.dedup();
         out
     }
 }
@@ -224,6 +227,19 @@ mod tests {
                 .map(|(k, v)| (k.to_string(), v.clone()))
                 .collect(),
         )
+    }
+
+    #[test]
+    fn one_unreachable_node_is_one_problem() {
+        // `report` asks the mesh two questions. When the node is not there,
+        // both fail the same way, and printing it twice reads as two faults.
+        let mut r = Report {
+            facts: vec![],
+            problems: vec!["mesh: not running".to_string(), "mesh: not running".to_string()],
+        };
+        r.problems.dedup();
+        assert_eq!(r.problems.len(), 1);
+        assert!(!r.ok());
     }
 
     #[test]

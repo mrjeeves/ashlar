@@ -5,16 +5,17 @@ space mesh
 // site gains a live roster in two lines — one in the root's `start`, one
 // `el(mesh.grid, {})` wherever the people belong.
 //
-// Everything here crosses the one boundary (§9.10). The mesh daemon is
-// installed once per machine and shared by everything on it, so the space name
-// binds it: `mesh` derives to `ashlar mesh worker`, which speaks the daemon's
-// own control socket. A `foreign.json` entry overrides that like any other
-// space, and the mesh ships nothing on Ashlar's behalf.
+// Everything here crosses the one boundary (§9.10). The mesh node is installed
+// once per machine and shared by everything on it, so the space name binds it:
+// `mesh` derives to `ashlar mesh worker`, which drives the one control socket
+// that node already exposes to its own clients. A `foreign.json` entry
+// overrides that like any other space, and the mesh ships nothing on Ashlar's
+// behalf.
 
 // One other node on this mesh. `here` is connected right now, as against
 // merely known — a roster remembers, presence does not. Three fields, and
-// deliberately not a site count: what a peer SERVES is `mesh.sites`, which a
-// machine can be unable to answer while answering this perfectly well.
+// deliberately not a site count: what a peer SERVES is a separate question
+// with a separate answer, below.
 part Peer {
   id: text
   label: text
@@ -130,4 +131,57 @@ part panel {
     el("span", { class: "mesh-key" }, [name]),
     el("span", { class: "mesh-value" }, [value]),
   ])
+}
+
+// -- Sites --------------------------------------------------------------------
+//
+// The other half of what the mesh answers: this site, published to the peers,
+// and theirs, reachable from here. `ashlar run --mesh` publishes the port it is
+// already serving through the same capability; a program calls the names below
+// when it wants to SHOW what is out there.
+
+// One openable site. `url` is where this machine reaches it — a local
+// address the proxy already bound, never something source wrote down (B5).
+part Site {
+  peer: text
+  label: text
+  url: text
+}
+
+// Where a site landed: the node peers address it by, and the mesh they must
+// be on to reach it.
+part Published {
+  node: text
+  network: text
+  label: text
+}
+
+// Both lists move with the roster: a site appears when the peer serving it
+// does, so `mesh.Peer` is the collection that marks them changed (§9.10).
+foreign published: () -> [mesh.Site] watches mesh.Peer
+foreign nearby: () -> [mesh.Site] watches mesh.Peer
+
+// `ashlar run --mesh` calls these two on the program's behalf, which is why
+// they are declared here rather than living only inside the runtime: the
+// contract is source, readable and shape-checked, and `ashlar foreign check`
+// covers it. A program may call them itself to publish a port the runtime did
+// not bind. `network` empty means the shared area.
+foreign expose: (port: number, label: text, network: text) -> mesh.Published updates mesh.Peer
+foreign unexpose: (port: number) -> bool updates mesh.Peer
+
+// The browser: every site the peers are running, as links that open. Classes
+// are the contract with the app's stylesheet (ADR-0010): `mesh-sites-list`,
+// `mesh-site`, `mesh-site-peer`, `mesh-empty`.
+part browser {
+  view = () => el("div", { class: "mesh-sites-list" }, links())
+  links = () => {
+    let all = nearby()
+    if len(all) == 0 {
+      return [el("p", { class: "mesh-empty" }, ["No sites on this mesh yet."])]
+    }
+    return map(all, (s: mesh.Site) => el("a", { class: "mesh-site", href: s.url }, [
+      el("span", {}, [s.label]),
+      el("span", { class: "mesh-site-peer" }, [s.peer]),
+    ]))
+  }
 }

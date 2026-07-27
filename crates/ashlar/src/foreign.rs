@@ -48,9 +48,9 @@ impl Via {
         }
     }
 
-    /// The derived default for one space. Two names derive to a co-process
-    /// instead of a library, because the capability they name ships with the
-    /// mesh rather than with the project (see [`derived_worker`]).
+    /// The derived default for one space. One name derives to a co-process
+    /// instead of a library, because the capability it names belongs to the
+    /// machine rather than to the project (see [`derived_worker`]).
     pub fn derived_for(space: &str) -> Via {
         match derived_worker(space) {
             Some(run) => Via::Worker { run },
@@ -67,34 +67,30 @@ impl Via {
     }
 }
 
-/// The space naming the mesh a site is published on: identity, the peers
-/// sharing it, and the broadcast that reaches them.
+/// The one space naming the mesh: who else is on the private network this
+/// machine joined, and the sites they serve.
 pub const MESH_SPACE: &str = "mesh";
 
-/// The space naming the sites on that mesh: publishing this origin to the
-/// peers, and reaching theirs.
-pub const SITES_SPACE: &str = "mesh.sites";
-
-/// The two spaces whose derived default is a co-process rather than a native
+/// The space whose derived default is a co-process rather than a native
 /// library — and the command is this toolchain, in worker mode.
 ///
 /// The derivation rule (ADR-0017) answers "where does this capability live"
 /// with a path inside the project, which is right for a capability the project
-/// supplies and wrong for one the machine already runs. The mesh daemon is the
+/// supplies and wrong for one the machine already runs. The mesh node is the
 /// second kind, installed once and shared by everything on the box, exactly
 /// like the proxy that terminates TLS in front of the origin (ADR-0013).
 ///
 /// What it must NOT do is make the mesh ship an Ashlar-shaped adapter. That is
 /// the failure this whole ADR exists to end: a boundary that only works once
 /// the foreign system has been re-authored for us is not a boundary. So the
-/// adapter is ours — `ashlar mesh worker` speaks the control sockets those
-/// daemons already expose to their own clients (§9.10) — and the mechanism is
-/// the ordinary worker transport, so a `foreign.json` entry still overrides
-/// it, `check` still reports an unknown key, and the manifest still records
+/// adapter is ours — `ashlar mesh worker` speaks the one control socket that
+/// node already exposes to its own clients (§9.10) — and the mechanism is the
+/// ordinary worker transport, so a `foreign.json` entry still overrides it,
+/// `check` still reports an unknown key, and the manifest still records
 /// whichever won.
 pub fn derived_worker(space: &str) -> Option<Vec<String>> {
     match space {
-        MESH_SPACE | SITES_SPACE => Some(vec![
+        MESH_SPACE => Some(vec![
             "ashlar".to_string(),
             "mesh".to_string(),
             "worker".to_string(),
@@ -1063,11 +1059,11 @@ mod tests {
     }
 
     #[test]
-    fn the_two_mesh_spaces_derive_to_a_co_process() {
+    fn the_mesh_space_derives_to_a_co_process() {
         // covers: B5, G4
-        // And the co-process is US. The mesh daemons do not ship an
-        // Ashlar-shaped adapter and must not have to: this toolchain speaks
-        // the sockets they already expose.
+        // And the co-process is US. The mesh does not ship an Ashlar-shaped
+        // adapter and must not have to: this toolchain speaks the socket it
+        // already exposes.
         let mut b = Boundary::new();
         let root = std::env::temp_dir();
         let ours = Via::Worker {
@@ -1078,10 +1074,9 @@ mod tests {
             ],
         };
         assert_eq!(b.via(&root, MESH_SPACE).unwrap(), ours);
-        assert_eq!(b.via(&root, SITES_SPACE).unwrap(), ours);
-        // A neighbouring name is not one of them: the rule is two names, not
-        // a prefix, so `mesh.anything` stays an ordinary space.
-        assert_eq!(b.via(&root, "mesh.demo").unwrap(), Via::derived());
+        // A neighbouring name is not it: the rule is one name, not a prefix,
+        // so `mesh.anything` stays an ordinary space.
+        assert_eq!(b.via(&root, "mesh.sites").unwrap(), Via::derived());
         assert_eq!(b.via(&root, "meshx").unwrap(), Via::derived());
     }
 
@@ -1090,10 +1085,10 @@ mod tests {
         // The derived worker is a default, not a law: deployment names the
         // transport, exactly as it does for every other space (ADR-0017).
         let bindings =
-            parse_bindings(r#"{"mesh.sites":{"via":"http","url":"http://127.0.0.1:9000/rpc"}}"#)
+            parse_bindings(r#"{"mesh":{"via":"http","url":"http://127.0.0.1:9000/rpc"}}"#)
                 .unwrap();
         assert_eq!(
-            bindings.get(SITES_SPACE),
+            bindings.get(MESH_SPACE),
             Some(&Via::Http {
                 url: "http://127.0.0.1:9000/rpc".to_string()
             })
@@ -1104,12 +1099,10 @@ mod tests {
     fn renaming_onto_or_off_a_mesh_name_is_reported() {
         // covers: E3
         assert_eq!(derived_worker_radius("tools", "chat.data"), None);
-        let off = derived_worker_radius(SITES_SPACE, "tools").expect("leaving a mesh name reports");
+        let off = derived_worker_radius(MESH_SPACE, "tools").expect("leaving the mesh name reports");
         assert!(off.contains("ashlar mesh worker") && off.contains("foreign/tools"), "{}", off);
-        let onto = derived_worker_radius("tools", MESH_SPACE).expect("entering a mesh name reports");
+        let onto = derived_worker_radius("tools", MESH_SPACE).expect("entering it reports");
         assert!(onto.contains("ashlar mesh worker"), "{}", onto);
-        let across = derived_worker_radius(MESH_SPACE, SITES_SPACE).expect("both ends report");
-        assert!(across.contains("ashlar mesh worker"), "{}", across);
     }
 
     #[test]
