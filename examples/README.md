@@ -237,6 +237,26 @@ data. Typing re-runs the worker over the socket and patches the figures, and
 `ashlar foreign check` proves the worker speaks the protocol before any request
 does. Needs `python3`; the driving test skips loudly without it.
 
+## enclave
+
+A site nobody outside its mesh can see (ADR-0013's second edge). Two vendored
+spaces carry it: `mesh` — who else is running this program — and `mesh.sites`,
+what they are serving. Both are `foreign`, so the language grows nothing; both
+derive to the co-process the machine's mesh daemon installs, so a project that
+wants a roster writes no binding at all. `mesh.grid` is that roster as an
+element, `mesh.panel` states the settings in force, and this app layers one
+setting to take its OWN mesh rather than share the shared one — the ordinary
+replace, applied to a dependency's default. The roster is live without a poll
+in the browser: a schedule in the library notices the revision move, `updates`
+marks the collection, and every view that read it re-renders over the socket.
+
+`ashlar run --mesh` publishes the port the origin is serving to that mesh, and
+`ashlar mesh` says what the machine can answer. The example binds both spaces
+to a stand-in that speaks the whole contract for a mesh of one, so it runs
+anywhere; delete `foreign.json` and the same program talks to the real daemon.
+Needs `python3` for the stand-in; the driving test skips loudly without it.
+What two machines would prove is open in `docs/roadmap.md`, not implied here.
+
 ## locker
 
 Per-user storage in one keyword (ADR-0015, spelled by ADR-0019).

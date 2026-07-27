@@ -47,6 +47,7 @@ $examples = @(
   @{ name = 'locker';     port = 8091 }
   @{ name = 'ledger';     port = 8092 }
   @{ name = 'abacus';     port = 8095 }
+  @{ name = 'enclave';    port = 8096 }
   @{ name = 'commons';    port = 8093 }
   @{ name = 'hello';      port = 8094 }
   @{ name = 'slate';      port = 8097 }

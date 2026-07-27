@@ -1,0 +1,171 @@
+/* enclave — a private mesh, in the house style. `style = "enclave"` (§9.4);
+   every class here meets a view by name, including the ones the vendored
+   `mesh` space renders (ADR-0010: appearance binds by name, and a library
+   ships classes, never a sheet). */
+
+:root {
+  --bg: #0f1115;
+  --panel: #171a21;
+  --panel-2: #1e222b;
+  --line: #262b36;
+  --ink: #e6e9ef;
+  --muted: #8b93a7;
+  --accent: #5b8cff;
+  --live: #46d17f;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+
+body {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--ink);
+  font-size: 15px;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+.stage {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 40px 20px;
+}
+
+.card {
+  width: 100%;
+  max-width: 32rem;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  padding: 28px 28px 30px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+}
+
+.kicker {
+  margin: 0;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--muted);
+}
+
+.card h1 {
+  margin: 6px 0 8px;
+  font-size: 24px;
+  font-weight: 650;
+  letter-spacing: -0.2px;
+}
+
+.card h2 {
+  margin: 26px 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.8px;
+  color: var(--muted);
+}
+
+.lede { margin: 0 0 22px; color: var(--muted); }
+
+/* -- the roster the `mesh` space renders --------------------------------- */
+
+.mesh-grid {
+  display: grid;
+  gap: 8px;
+}
+
+.mesh-peer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.mesh-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--line);
+  flex: none;
+}
+
+.mesh-dot-here {
+  background: var(--live);
+  box-shadow: 0 0 0 3px rgba(70, 209, 127, 0.16);
+}
+
+.mesh-name { font-weight: 600; }
+
+.mesh-sites {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.mesh-empty {
+  margin: 0;
+  padding: 14px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  color: var(--muted);
+}
+
+/* -- the sites browser the `mesh.sites` space renders --------------------- */
+
+.mesh-sites-list {
+  display: grid;
+  gap: 8px;
+}
+
+.mesh-site {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.mesh-site:hover { border-color: var(--accent); }
+
+.mesh-site-peer {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+/* -- the settings panel --------------------------------------------------- */
+
+.mesh-panel {
+  display: grid;
+  gap: 2px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.mesh-row {
+  display: flex;
+  gap: 12px;
+  padding: 9px 12px;
+  background: var(--panel-2);
+  font-size: 14px;
+}
+
+.mesh-key { color: var(--muted); min-width: 6.5rem; }
+
+.mesh-value {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}

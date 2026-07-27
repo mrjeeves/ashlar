@@ -21,6 +21,17 @@ that exact baseline after the reference moved into the contract. Serves **A3**.
 Proven by: a 25-fixture run under `suites/t_a3/PROTOCOL.md`, recorded with the
 agent surface and revision it used.
 
+**The mesh is driven against a stand-in, never a mesh.** `examples/enclave`
+binds `mesh` and `mesh.sites` to a co-process that speaks the whole contract
+and answers for a mesh of one, so `t_examples` drives the roster, the schedule,
+the `updates` re-render and the socket patch on a machine with no daemon. What
+that cannot prove is the half that needs two machines: that `run --mesh`
+publishes a port a *peer* can open, that a peer's site arrives with a reachable
+address, and that a roster changes when a node actually leaves. Serves **B5,
+G4**. Proven by: a hand-run gate against two machines running the mesh daemon,
+recorded like T-BROWSER's — a second node's site opened from the first, and
+`ashlar mesh` agreeing with the daemon on both.
+
 **Capabilities with no corpus site.** An adversarial read listed ten. Four
 now have one — the directory form of `files`, `log.debug`, `log.warn`, and
 duration units beyond `ms`, all in `examples/ticker`. Still undefended:

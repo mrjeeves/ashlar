@@ -48,12 +48,49 @@ impl Via {
         }
     }
 
+    /// The derived default for one space. Two names derive to a co-process
+    /// instead of a library, because the capability they name ships with the
+    /// mesh rather than with the project (see [`derived_worker`]).
+    pub fn derived_for(space: &str) -> Via {
+        match derived_worker(space) {
+            Some(run) => Via::Worker { run },
+            None => Via::derived(),
+        }
+    }
+
     pub fn label(&self) -> &'static str {
         match self {
             Via::Native { .. } => "native",
             Via::Worker { .. } => "worker",
             Via::Http { .. } => "http",
         }
+    }
+}
+
+/// The space naming the mesh a site is published on: identity, the peers
+/// sharing it, and the broadcast that reaches them.
+pub const MESH_SPACE: &str = "mesh";
+
+/// The space naming the sites on that mesh: publishing this origin to the
+/// peers, and reaching theirs.
+pub const SITES_SPACE: &str = "mesh.sites";
+
+/// The two spaces whose derived default is a co-process rather than a native
+/// library, and the command each derives to.
+///
+/// The derivation rule (ADR-0017) answers "where does this capability live"
+/// with a path inside the project, which is right for a capability the
+/// project supplies and wrong for one the machine already runs: the mesh
+/// daemon is installed once and shared by everything on the box, exactly like
+/// the proxy that terminates TLS in front of the origin (ADR-0013). So these
+/// two names derive to the commands that speak for it. Everything else is
+/// unchanged — a `foreign.json` entry still overrides them, `check` still
+/// reports an unknown key, and the manifest still records whichever won.
+pub fn derived_worker(space: &str) -> Option<Vec<String>> {
+    match space {
+        MESH_SPACE => Some(vec!["myownmesh".to_string(), "ashlar".to_string()]),
+        SITES_SPACE => Some(vec!["allmystuff-ashlar".to_string()]),
+        _ => None,
     }
 }
 
@@ -259,7 +296,7 @@ fn key_span(text: &str, key: &str) -> Span {
 pub fn describe(root: &Path, space: &str) -> (String, String) {
     let via = Boundary::new()
         .via(root, space)
-        .unwrap_or_else(|_| Via::derived());
+        .unwrap_or_else(|_| Via::derived_for(space));
     let detail = match &via {
         Via::Native { library, .. } => library
             .clone()
@@ -277,6 +314,42 @@ pub fn derived_library_paths(space: &str) -> Vec<String> {
         .iter()
         .map(|ext| format!("foreign/{}{}", space, ext))
         .collect()
+}
+
+/// What a rename must SAY when it moves a space onto or off one of the two
+/// derived-worker names (E3). Nothing moves on disk — the binding is the name
+/// itself — so a rename that says nothing would silently swap which transport
+/// a capability is reached by, which is the failure ADR-0017 recorded for the
+/// binding file's keys. `None` when neither end is one of those names.
+pub fn derived_worker_radius(old: &str, new: &str) -> Option<String> {
+    match (derived_worker(old), derived_worker(new)) {
+        (None, None) => None,
+        (Some(run), None) => Some(format!(
+            "`{}` derives to the co-process `{}`; `{}` derives to a native library at `foreign/{}`. \
+             Bind `{}` in foreign.json to keep the co-process.",
+            old,
+            run.join(" "),
+            new,
+            new,
+            new
+        )),
+        (None, Some(run)) => Some(format!(
+            "`{}` derives to a native library at `foreign/{}`; `{}` derives to the co-process `{}`. \
+             Bind `{}` in foreign.json to keep the library.",
+            old,
+            old,
+            new,
+            run.join(" "),
+            new
+        )),
+        (Some(old_run), Some(new_run)) => Some(format!(
+            "`{}` derives to the co-process `{}`; `{}` derives to `{}`.",
+            old,
+            old_run.join(" "),
+            new,
+            new_run.join(" ")
+        )),
+    }
 }
 
 /// Diagnose the binding file against the program's spaces. Two conditions,
@@ -427,7 +500,7 @@ impl Boundary {
             .bindings(root)?
             .get(space)
             .cloned()
-            .unwrap_or_else(Via::derived))
+            .unwrap_or_else(|| Via::derived_for(space)))
     }
 
     /// Call `space.name` with `args`, returning the decoded result. The
@@ -960,6 +1033,56 @@ mod tests {
         let mut b = Boundary::new();
         let root = std::env::temp_dir();
         assert_eq!(b.via(&root, "anything").unwrap(), Via::derived());
+    }
+
+    #[test]
+    fn the_two_mesh_spaces_derive_to_a_co_process() {
+        // covers: B5, G4
+        let mut b = Boundary::new();
+        let root = std::env::temp_dir();
+        assert_eq!(
+            b.via(&root, MESH_SPACE).unwrap(),
+            Via::Worker {
+                run: vec!["myownmesh".to_string(), "ashlar".to_string()]
+            }
+        );
+        assert_eq!(
+            b.via(&root, SITES_SPACE).unwrap(),
+            Via::Worker {
+                run: vec!["allmystuff-ashlar".to_string()]
+            }
+        );
+        // A neighbouring name is not one of them: the rule is two names, not
+        // a prefix, so `mesh.anything` stays an ordinary space.
+        assert_eq!(b.via(&root, "mesh.demo").unwrap(), Via::derived());
+        assert_eq!(b.via(&root, "meshx").unwrap(), Via::derived());
+    }
+
+    #[test]
+    fn a_binding_file_still_overrides_the_mesh_derivation() {
+        // The derived worker is a default, not a law: deployment names the
+        // transport, exactly as it does for every other space (ADR-0017).
+        let bindings =
+            parse_bindings(r#"{"mesh.sites":{"via":"http","url":"http://127.0.0.1:9000/rpc"}}"#)
+                .unwrap();
+        assert_eq!(
+            bindings.get(SITES_SPACE),
+            Some(&Via::Http {
+                url: "http://127.0.0.1:9000/rpc".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn renaming_onto_or_off_a_mesh_name_is_reported() {
+        // covers: E3
+        assert_eq!(derived_worker_radius("tools", "chat.data"), None);
+        let off = derived_worker_radius(SITES_SPACE, "tools").expect("leaving a mesh name reports");
+        assert!(off.contains("allmystuff-ashlar") && off.contains("foreign/tools"), "{}", off);
+        let onto = derived_worker_radius("tools", MESH_SPACE).expect("entering a mesh name reports");
+        assert!(onto.contains("myownmesh ashlar"), "{}", onto);
+        let across = derived_worker_radius(MESH_SPACE, SITES_SPACE).expect("both ends report");
+        assert!(across.contains("allmystuff-ashlar"), "{}", across);
     }
 
     #[test]

@@ -72,6 +72,13 @@ pub struct Plan {
     /// reference to the prior state, which E2 forbids — so it is radius, and
     /// the CLI rewrites it.
     pub foreign_key_rename: Option<(String, String)>,
+    /// Radius that is a CONSEQUENCE rather than an edit: something the
+    /// refactor changes about the program which no file records, so nothing
+    /// else in this plan could name it. Today that is the derived-worker rule
+    /// (§9.10) — the two mesh space names are bound by being those names, so
+    /// renaming onto or off one swaps the transport with no key to rewrite.
+    /// Reported before applying (E3) and printed by `radius`.
+    pub notes: Vec<String>,
 }
 
 /// A refusal: the reason radius could not be computed (E5).
@@ -204,6 +211,7 @@ pub fn plan_rename_part(
         state_prop_renames: vec![],
         foreign_renames: vec![],
         foreign_key_rename: None,
+        notes: vec![],
     })
 }
 
@@ -577,6 +585,7 @@ pub fn plan_rename_prop(
         },
         foreign_renames: vec![],
         foreign_key_rename: None,
+        notes: vec![],
     })
 }
 
@@ -982,6 +991,7 @@ pub fn plan_rekind(
         state_prop_renames: vec![],
         foreign_renames: vec![],
         foreign_key_rename: None,
+        notes: vec![],
     })
 }
 
@@ -1132,6 +1142,16 @@ pub fn plan_rename_space(
     } else {
         (vec![], None)
     };
+    // The one piece of that binding with no file to carry: a name that IS
+    // the binding (§9.10's derived-worker rule). Nothing moves, so it is a
+    // note rather than a change — but it is still radius.
+    let notes = if has_foreigns {
+        crate::foreign::derived_worker_radius(old, new)
+            .into_iter()
+            .collect()
+    } else {
+        vec![]
+    };
 
     verify_plan_text(sources, &changes)?;
     Ok(Plan {
@@ -1141,6 +1161,7 @@ pub fn plan_rename_space(
         state_prop_renames: vec![],
         foreign_renames,
         foreign_key_rename,
+        notes,
     })
 }
 
@@ -1590,6 +1611,7 @@ pub fn plan_move(
         state_prop_renames: vec![],
         foreign_renames: vec![],
         foreign_key_rename: None,
+        notes: vec![],
     })
 }
 

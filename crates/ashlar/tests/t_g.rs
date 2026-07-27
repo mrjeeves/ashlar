@@ -31,7 +31,7 @@ fn start(root: PathBuf) -> (u16, Arc<AtomicBool>, std::thread::JoinHandle<()>) {
     let stop2 = stop.clone();
     let (tx, rx) = mpsc::channel();
     let join = std::thread::spawn(move || {
-        let r = http::serve(root, None, Some(0), move |port| tx.send(port).unwrap(), stop2);
+        let r = http::serve(root, None, Some(0), move |port, _| tx.send(port).unwrap(), stop2);
         if let Err(e) = r {
             panic!("serve failed: {}", e);
         }
@@ -44,7 +44,7 @@ fn start(root: PathBuf) -> (u16, Arc<AtomicBool>, std::thread::JoinHandle<()>) {
 /// is a delivered behavior here, not an accident, so it needs asserting.
 fn start_expecting_failure(root: PathBuf) -> String {
     let stop = Arc::new(AtomicBool::new(false));
-    match http::serve(root, None, Some(0), |_| {}, stop) {
+    match http::serve(root, None, Some(0), |_, _| {}, stop) {
         Ok(()) => panic!("expected startup to refuse, but it served"),
         Err(e) => e,
     }
@@ -60,7 +60,7 @@ fn start_with_liveness(
     let stop2 = stop.clone();
     let (tx, rx) = mpsc::channel();
     let join = std::thread::spawn(move || {
-        let r = http::serve_with_liveness(root, None, Some(0), move |port| tx.send(port).unwrap(), stop2, live);
+        let r = http::serve_with_liveness(root, None, Some(0), move |port, _| tx.send(port).unwrap(), stop2, live);
         if let Err(e) = r {
             panic!("serve failed: {}", e);
         }
@@ -1942,7 +1942,7 @@ part ping {
 
     // Unnamed with two candidates: an error naming both.
     let stop = Arc::new(AtomicBool::new(false));
-    let err = http::serve(root.clone(), None, Some(0), |_| {}, stop).unwrap_err();
+    let err = http::serve(root.clone(), None, Some(0), |_, _| {}, stop).unwrap_err();
     assert!(err.contains("more than one part declares `port`"), "{}", err);
     assert!(err.contains("multi.alpha") && err.contains("multi.beta"), "{}", err);
 
@@ -1952,7 +1952,7 @@ part ping {
         root.clone(),
         Some("multi.ping".to_string()),
         Some(0),
-        |_| {},
+        |_, _| {},
         stop,
     )
     .unwrap_err();
@@ -1967,7 +1967,7 @@ part ping {
             root,
             Some("multi.beta".to_string()),
             Some(0),
-            move |port| tx.send(port).unwrap(),
+            move |port, _| tx.send(port).unwrap(),
             stop2,
         )
         .unwrap();
@@ -2769,7 +2769,7 @@ part link {
     // No settings.json at all: both required settings are named, WITH their
     // shapes, and the defaulted one is not (it has a value).
     let stop = Arc::new(AtomicBool::new(false));
-    let err = http::serve(root.clone(), None, Some(0), |_| {}, stop).unwrap_err();
+    let err = http::serve(root.clone(), None, Some(0), |_, _| {}, stop).unwrap_err();
     assert!(err.contains("site.app.endpoint : text"), "{}", err);
     assert!(err.contains("site.app.label : text"), "{}", err);
     assert!(
@@ -2787,7 +2787,7 @@ part link {
     )
     .unwrap();
     let stop = Arc::new(AtomicBool::new(false));
-    let err = http::serve(root.clone(), None, Some(0), |_| {}, stop).unwrap_err();
+    let err = http::serve(root.clone(), None, Some(0), |_, _| {}, stop).unwrap_err();
     assert!(err.contains("1 setting(s)"), "{}", err);
     assert!(err.contains("site.app.label"), "{}", err);
     assert!(!err.contains("site.app.endpoint :"), "supplied is not missing: {}", err);
@@ -2799,7 +2799,7 @@ part link {
     )
     .unwrap();
     let stop = Arc::new(AtomicBool::new(false));
-    let err = http::serve(root.clone(), None, Some(0), |_| {}, stop).unwrap_err();
+    let err = http::serve(root.clone(), None, Some(0), |_, _| {}, stop).unwrap_err();
     assert!(err.contains("site.app.endpoint"), "{}", err);
     assert!(err.contains("text"), "the cause must name the expected shape: {}", err);
 

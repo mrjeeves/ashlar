@@ -20,6 +20,7 @@ pub mod fmt;
 pub mod http;
 pub mod lexer;
 pub mod manifest;
+pub mod mesh;
 pub mod parser;
 pub mod refactor;
 pub mod resolve;

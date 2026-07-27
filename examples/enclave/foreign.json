@@ -1,0 +1,4 @@
+{
+  "mesh": { "via": "worker", "run": ["python3", "foreign/enclave.py"] },
+  "mesh.sites": { "via": "worker", "run": ["python3", "foreign/enclave.py"] }
+}

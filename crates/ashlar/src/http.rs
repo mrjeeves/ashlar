@@ -1115,13 +1115,13 @@ fn html_escape(s: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// Run the project at `root`. `override_port` (tests) wins over the
-/// program's `port`; `ready` receives the bound port; `stop` ends the
-/// loop from another thread.
+/// program's `port`; `ready` receives the bound port and the server root's
+/// full name; `stop` ends the loop from another thread.
 pub fn serve(
     root: PathBuf,
     root_part: Option<String>,
     override_port: Option<u16>,
-    ready: impl FnOnce(u16),
+    ready: impl FnOnce(u16, &str),
     stop: Arc<AtomicBool>,
 ) -> Result<(), String> {
     serve_with_liveness(root, root_part, override_port, ready, stop, Liveness::default())
@@ -1133,7 +1133,7 @@ pub fn serve_with_liveness(
     root: PathBuf,
     root_part: Option<String>,
     override_port: Option<u16>,
-    ready: impl FnOnce(u16),
+    ready: impl FnOnce(u16, &str),
     stop: Arc<AtomicBool>,
     live: Liveness,
 ) -> Result<(), String> {
@@ -1337,7 +1337,7 @@ pub fn serve_with_liveness(
             l.set_nonblocking(true)
                 .map_err(|e| format!("nonblocking failed: {}", e))?;
             if let Some(r) = ready.take() {
-                r(l.local_addr().map(|a| a.port()).unwrap_or(port));
+                r(l.local_addr().map(|a| a.port()).unwrap_or(port), &port_part);
             }
             listener = Some(l);
         }

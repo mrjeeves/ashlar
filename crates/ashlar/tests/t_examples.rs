@@ -116,7 +116,7 @@ fn start(root: PathBuf) -> (u16, Arc<AtomicBool>, std::thread::JoinHandle<()>) {
     let stop2 = stop.clone();
     let (tx, rx) = mpsc::channel();
     let join = std::thread::spawn(move || {
-        let r = ashlar::http::serve(root, None, Some(0), move |port| tx.send(port).unwrap(), stop2);
+        let r = ashlar::http::serve(root, None, Some(0), move |port, _| tx.send(port).unwrap(), stop2);
         if let Err(e) = r {
             panic!("serve failed: {}", e);
         }
@@ -1180,6 +1180,145 @@ fn t_examples_abacus_computes_through_a_python_worker() {
 }
 
 #[test]
+fn t_examples_enclave_vendors_the_mesh_library_verbatim() {
+    // covers: G5
+    // There is no registry, so a dependency is code copied into the tree
+    // (`ashlar vendor`). A copy that drifts from its source is the version
+    // skew a registry exists to manage and this language refuses to have, so
+    // the two are compared byte for byte rather than trusted.
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut compared = 0;
+    for file in ["mesh.ash", "sites.ash"] {
+        let lib = std::fs::read(root.join("lib/mesh").join(file))
+            .unwrap_or_else(|e| panic!("lib/mesh/{} is missing: {}", file, e));
+        let vendored = std::fs::read(root.join("examples/enclave/vendor/mesh").join(file))
+            .unwrap_or_else(|e| panic!("examples/enclave/vendor/mesh/{} is missing: {}", file, e));
+        assert_eq!(
+            lib,
+            vendored,
+            "examples/enclave/vendor/mesh/{} has drifted from lib/mesh/{} — re-vendor it",
+            file,
+            file
+        );
+        compared += 1;
+    }
+    assert_eq!(compared, 2, "the mesh library is two spaces; both are vendored");
+}
+
+#[test]
+fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
+    // covers: B5, G4
+    // The mesh is a capability, not a builtin: two `foreign` spaces, reached
+    // across the one boundary (§9.10). Here they are bound to a stand-in, so
+    // the whole path is driven without a mesh daemon — which is the claim
+    // ADR-0017 makes, exercised rather than asserted.
+    if std::process::Command::new("python3").arg("-V").output().is_err() {
+        eprintln!("SKIP: t_examples_enclave needs python3 (the stand-in's language)");
+        return;
+    }
+    let dir = staged("enclave");
+    let (port, stop, join) = start(dir.clone());
+
+    // An empty mesh says so. A roster that renders nothing when it knows
+    // nothing is indistinguishable from one that is broken.
+    let (status, _, html) = req(port, "GET", "/", None, None);
+    assert_eq!(status, 200);
+    assert!(html.contains("No one else here yet."), "the empty roster is stated: {}", html);
+    assert!(
+        html.contains("No sites on this mesh yet."),
+        "so is the empty site list: {}",
+        html
+    );
+
+    // The mesh this app is on is the one its OWN source layered onto the
+    // vendored setting — not the shared default the library ships with.
+    assert!(
+        html.contains(">enclave<"),
+        "the panel names the app's own mesh, from the layered setting: {}",
+        html
+    );
+
+    let (status, _, peers) = req(port, "GET", "/api/peers", None, None);
+    assert_eq!(status, 200);
+    assert_eq!(peers.trim(), "[]", "no peers, over HTTP too");
+
+    // Someone arrives. The stand-in reads its roster from a file, so writing
+    // one is this test's version of a peer joining the mesh.
+    let page_id = attr_of(&html, "data-ash-page").unwrap();
+    let mut ws = ws_open(port);
+    ws_send(&mut ws, &format!("{{\"page\":\"{}\"}}", page_id));
+    std::thread::sleep(std::time::Duration::from_millis(80));
+    std::fs::write(
+        dir.join("foreign/peers.json"),
+        r#"[{"id":"n1","label":"ada","here":true,"sites":[{"label":"ada's pad","url":"http://127.0.0.1:47001"}]},
+            {"id":"n2","label":"grace","here":false,"sites":[]}]"#,
+    )
+    .unwrap();
+
+    // Nobody polled from the browser and nobody clicked. The schedule in the
+    // vendored library noticed the roster's revision move, the `updates`
+    // annotation marked the collection, and every view that read it
+    // re-rendered — server-driven, over the socket (§9.3, §9.10).
+    let patch = ws_expect(&mut ws, "ada", 8);
+    assert!(patch.contains("grace"), "the whole roster patches, not one row: {}", patch);
+    assert!(
+        patch.contains("mesh-dot mesh-dot-here"),
+        "presence is visible: a connected peer carries the live class: {}",
+        patch
+    );
+    assert!(
+        patch.contains("ada&#x27;s pad") || patch.contains("ada's pad"),
+        "a peer's site appears in the browser: {}",
+        patch
+    );
+    assert!(
+        patch.contains("127.0.0.1:47001"),
+        "the link is the address the mesh handed back at runtime, which appears \
+         nowhere in source (B5): {}",
+        patch
+    );
+    drop(ws);
+
+    // The same roster over HTTP: one handler, two transports (G2).
+    let (_, _, peers) = req(port, "GET", "/api/peers", None, None);
+    assert!(peers.contains("\"label\":\"ada\""), "{}", peers);
+    assert!(peers.contains("\"here\":false"), "presence crosses as it is: {}", peers);
+
+    // What `ashlar run --mesh` does, against the same binding: publish the
+    // port this origin is serving, ask what the mesh now says, and take it
+    // back off. The site is published to a mesh named at RUN time — the
+    // program said nothing about it, which is the whole of B5 here.
+    let mut link = ashlar::mesh::Link::new();
+    let landed = link
+        .publish(&dir, port, "enclave", "enclave.app")
+        .expect("the mesh answers `expose`");
+    assert_eq!(landed.network, "enclave");
+    assert!(
+        landed.line().contains("mesh `enclave`"),
+        "the line a runner reads names the mesh: {}",
+        landed.line()
+    );
+    let report = link.report(&dir);
+    assert!(report.ok(), "both spaces answered: {:?}", report.problems);
+    assert!(
+        report.facts.iter().any(|(k, v)| k == "published" && v == "enclave.app"),
+        "the published site is reported back: {:?}",
+        report.facts
+    );
+    link.withdraw(&dir, port).expect("the mesh answers `unexpose`");
+    let after = link.report(&dir);
+    assert!(
+        after.facts.iter().any(|(k, v)| k == "published" && v == "nothing"),
+        "and taking it back off is visible to the same link: {:?}",
+        after.facts
+    );
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn t_examples_locker_scopes_storage_per_user() {
     // `peruser stored` gives each signed-in user their own isolated, persisted
     // data (ADR-0015). Proven here: anonymous access is refused, two users
@@ -1633,7 +1772,7 @@ fn t_examples_gallery_frames_a_chosen_example() {
     // Every example the settings name is in the sidebar, under its heading.
     for name in [
         "counter", "todo", "chat", "poll", "ticker", "pong", "foundry", "press", "guardrails",
-        "diary", "locker", "ledger", "abacus", "commons", "slate", "hello",
+        "diary", "locker", "ledger", "abacus", "enclave", "commons", "slate", "hello",
     ] {
         assert!(
             html.contains(&format!(">{}<", name)),

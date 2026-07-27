@@ -101,11 +101,21 @@ no external crate reachable from the workspace. G5 (no registry) is the same
 check plus `vendor`'s copy-in semantics in `t_e.rs` — the absence of version
 resolution is proven by there being nothing to resolve.
 
-`t_examples` sits across all of these rather than under one letter: all sixteen
-projects compile clean, are canonically formatted, and are driven at runtime
-over real HTTP and WebSockets — including `gallery`, the showcase page, whose
-driving test asserts it renders fifteen addresses that appear nowhere in its
-source.
+`t_examples` sits across all of these rather than under one letter: all
+seventeen projects compile clean, are canonically formatted, and are driven at
+runtime over real HTTP and WebSockets — including `gallery`, the showcase page,
+whose driving test asserts it renders sixteen addresses that appear nowhere in
+its source.
+
+Two of those projects are driven against a co-process rather than the system
+they name — `abacus` against Python, `enclave` against a stand-in for the mesh
+daemon — and both skip with a printed reason when the co-process's language is
+absent. `enclave` also carries the G5 half `vendor` cannot check: its
+`vendor/mesh/` is asserted byte-identical to `lib/mesh/`, because a vendored
+dependency that drifts from its source is the version skew a registry exists to
+manage and this language refuses to have. What the stand-in cannot prove — a
+second machine — is named in `docs/roadmap.md` rather than implied by a green
+run.
 
 ## Machine-readable index
 

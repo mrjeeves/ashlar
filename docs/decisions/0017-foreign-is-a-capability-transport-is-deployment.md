@@ -149,6 +149,36 @@ A worker is spawned lazily on first call and kept alive. If it dies, the call
 faults loudly and the *next* call respawns it. That is process lifecycle, not
 failover.
 
+### 5b. Two names whose default is the machine's, not the project's (2026-07-27)
+
+The derivation rule answers "where does this capability live" with a path
+*inside the project* — `foreign/<space>` — which is right for a capability the
+project supplies and wrong for one the machine already runs. The mesh daemon is
+the second kind: installed once, shared by every program on the box, exactly
+like the proxy ADR-0013 puts in front of the origin. Deriving `mesh` to
+`foreign/mesh.so` would have meant every project that wanted a roster shipped a
+shim to a daemon it did not own.
+
+So exactly two space names — `mesh` and `mesh.sites` — derive to a co-process
+instead of a library. Everything else about them is unchanged: a `foreign.json`
+entry overrides either, `check` still reports a key naming no space, and the
+manifest still records the transport that won. The rule this ADR closed with
+holds here too, and cost one more thing to notice: **a name that IS the binding
+has no file for a rename to carry.** Renaming a space onto or off one of these
+two silently swaps its transport, with no key to rewrite and no library to
+move — so `rename` reports it as radius (E3) even though it changes nothing on
+disk. That is the same lesson as the `foreign.json` key, one level further in:
+the refactor commands have to see every way a name binds, not just the ones
+that leave a file behind.
+
+Why two names rather than one: the roster and the site proxy are separate
+capabilities with separate requirements. A machine with only the mesh daemon
+can answer `mesh` — who is here — and genuinely cannot answer `mesh.sites`,
+which needs a proxy able to carry a TCP connection to a peer. One space would
+have made "the mesh is installed" and "sites can be published" the same claim,
+and a program would discover the difference at the call site rather than from
+`ashlar mesh`.
+
 ### 5. `ashlar foreign check`
 
 A new toolchain command that verifies every declared foreign name is actually

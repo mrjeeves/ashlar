@@ -49,6 +49,7 @@ EXAMPLES=(
   "locker:8091"
   "ledger:8092"
   "abacus:8095"
+  "enclave:8096"
   "commons:8093"
   "hello:8094"
   "slate:8097"
