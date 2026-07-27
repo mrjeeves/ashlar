@@ -124,8 +124,9 @@ mentioning, and it is usually right.
 Suite map: T-A1/A2/A5 (reference gates — bytes, ```ash blocks, per-section
 budget), T-A3 (cold-read gate — run by hand via the protocol in
 `suites/t_a3/PROTOCOL.md`, never in CI, results per run in
-`suites/t_a3/results/`), T-A4 (31 loud-failure fixtures, numbered to 38
-with gaps), T-B (resolution, banned words, no locations in source),
+`suites/t_a3/results/`), T-A4 (38 loud-failure fixtures, one per number,
+no gaps — `t_meta_agents_md_counts_the_fixtures_correctly` keeps that
+sentence true), T-B (resolution, banned words, no locations in source),
 T-D/T-D5 (fix round-trips; mean rounds-to-clean), T-E (refactor proofs),
 T-F/T-F1 (manifest determinism + the release-only latency gate),
 T-G (runtime conformance), T-META (docs, coverage honesty, no-deps),

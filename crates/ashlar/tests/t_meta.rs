@@ -229,6 +229,60 @@ fn t_meta_core_docs_exist() {
 }
 
 #[test]
+fn t_meta_agents_md_counts_the_fixtures_correctly() {
+    // covers: G1 (the documentation half) — AGENTS.md's suite map states a
+    // fixture count, and a count is a claim. It drifted once already: it read
+    // "31 ... numbered to 38 with gaps" while the directory held 38 cases with
+    // no gaps, because filling the gaps did not touch the sentence describing
+    // them. A number a reader can act on has to be checked like any other.
+    let root = support::repo_root();
+    let agents = support::read_text(&root.join("AGENTS.md"));
+    let cases = support::gather_t_a4_cases(&root);
+
+    let claimed = claimed_fixture_count(&agents).unwrap_or_else(|| {
+        panic!(
+            "AGENTS.md's suite map must state the T-A4 fixture count as \
+             `T-A4 (<n> loud-failure fixtures`; no such phrase found"
+        )
+    });
+    assert_eq!(
+        claimed,
+        cases.len(),
+        "AGENTS.md claims {} T-A4 loud-failure fixture(s); suites/t_a4 holds {}. \
+         The contract file is the first thing an agent reads — fix the sentence, \
+         not this test",
+        claimed,
+        cases.len()
+    );
+
+    // "one per number, no gaps" is the other half of the same sentence.
+    let mut numbers: Vec<usize> = cases
+        .iter()
+        .filter_map(|c| c.name.split('-').next())
+        .filter_map(|n| n.parse().ok())
+        .collect();
+    numbers.sort_unstable();
+    let expected: Vec<usize> = (1..=cases.len()).collect();
+    assert_eq!(
+        numbers, expected,
+        "suites/t_a4 case numbers must run 1..={} with no gaps and no duplicates, \
+         because AGENTS.md says so; got {:?}",
+        cases.len(),
+        numbers
+    );
+}
+
+/// The `<n>` in AGENTS.md's `T-A4 (<n> loud-failure fixtures` suite-map entry.
+fn claimed_fixture_count(agents: &str) -> Option<usize> {
+    let after = agents.split("T-A4 (").nth(1)?;
+    let digits: String = after.chars().take_while(|c| c.is_ascii_digit()).collect();
+    if digits.is_empty() || !after[digits.len()..].starts_with(" loud-failure fixtures") {
+        return None;
+    }
+    digits.parse().ok()
+}
+
+#[test]
 fn t_meta_agents_md_does_not_teach_the_language() {
     // covers: A3 — the cold-read gate's isolation, made mechanical.
     //
