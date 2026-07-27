@@ -171,6 +171,39 @@ const browser = await chromium.launch({
   await ctx.close(); srv.kill();
 }
 
+// ---- slate: collaborator cursors, at the granularity the merge uses -----
+{
+  const srv = await serve('slate', 8403);
+  const ctx = await browser.newContext();
+  const a = await ctx.newPage();
+  const ctx2 = await browser.newContext();
+  const b2 = await ctx2.newPage();
+  await a.goto('http://127.0.0.1:8403/p/welcome', { waitUntil: 'load' });
+  await b2.goto('http://127.0.0.1:8403/p/welcome', { waitUntil: 'load' });
+  await sleep(1200);
+  const ta = p => p.locator('textarea').first();
+  const share = async p => (await p.locator('.sharing').first().textContent().catch(() => '')).trim();
+
+  await ta(a).click(); await ta(a).fill('');
+  await a.keyboard.type('line one\nline two\nline three', { delay: 25 });
+  await sleep(1200);
+  await ta(b2).click(); await b2.keyboard.press('Control+Home');
+  await b2.keyboard.type('X', { delay: 25 });
+  await sleep(1200);
+  check('slate: different lines, nobody is warned',
+    (await share(a)) === '' && (await share(b2)) === '',
+    `${JSON.stringify(await share(a))} / ${JSON.stringify(await share(b2))}`);
+
+  await ta(b2).click(); await b2.keyboard.press('Control+End');
+  await b2.keyboard.type('!', { delay: 25 });
+  await sleep(1400);
+  const sa = await share(a), sb = await share(b2);
+  check('slate: two carets on one line, each page names the other',
+    sa.includes('on your line') && sb.includes('on your line'), `${JSON.stringify(sa)} / ${JSON.stringify(sb)}`);
+
+  await ctx.close(); await ctx2.close(); srv.kill();
+}
+
 await browser.close();
 const failed = checks.filter(c => !c.pass);
 console.log(`\n${checks.length - failed.length}/${checks.length} checks passed`);

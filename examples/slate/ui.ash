@@ -57,11 +57,13 @@ part editor {
   me: text
   state base: text = ""
   state warned: [text] = []
+  state seen: number = 0
 
   start stack = () => {
     slate.data.Store.arrive(key, me, me)
     subscribe("slate.clash." + key, heard)
     subscribe("slate.changed." + key, moved)
+    subscribe("slate.carets." + key, shifted)
     return none
   }
 
@@ -89,6 +91,7 @@ part editor {
           placeholder: "type here — anyone else on this page sees it as you go",
         }, [slate.data.Store.bodyOf(key)]),
         el("p", { class: "hint" }, [hint()]),
+        el("p", { class: "sharing" }, [sharing()]),
       ]),
       el("aside", { class: "side" }, [
         el(slate.ui.notices, { key: key, said: join(warned, "|") }),
@@ -105,9 +108,30 @@ part editor {
   typed = (e: std.Event) => {
     let why = slate.data.Store.commit(key, base, text(e.data.value), me)
     base = slate.data.Store.bodyOf(key)
+    // Say where this page is working. `caret` is the offset the field
+    // already knew (§9.4); the line is what the merge resolves by, so the
+    // line is what the pad publishes.
+    let at = number(text(e.data.caret)) ?? 0
+    slate.data.Store.markCaret(key, me, slate.data.Store.lineOf(text(e.data.value), at))
     if why != "" {
       warned = [...warned, why]
     }
+  }
+
+  // Who else is on this line right now. This is the collision the merge
+  // would have to resolve, named before it happens rather than reported
+  // after — the pad already tells you who LOST a line; this says who is
+  // about to be in one with you.
+  sharing = () => {
+    let with = slate.data.Store.sharingLine(key, me)
+    return if len(with) == 0 { "" } else { join(with, ", ") + " " + (if len(with) == 1 { "is" } else { "are" }) + " on your line" }
+  }
+
+  // Someone else's caret moved. Nothing to store — the pad holds the
+  // carets; this page only needs to re-read them, and touching its own
+  // state is what asks for that.
+  shifted = (m: data) => {
+    seen = seen + 1
   }
 
   heard = (m: data) => {

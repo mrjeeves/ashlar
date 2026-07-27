@@ -791,9 +791,12 @@ function fire(kind,e){var t=e.target.closest('[data-ash-h]');
  if(!t||t.getAttribute('data-ash-on')!==kind)return;
  if(kind==='onsubmit')e.preventDefault();
  var v=(e.target&&'value'in e.target)?e.target.value:null;
+ // Where the caret is, when the target has one. A shared editor cannot
+ // say who is working where without it, and the field already knows.
+ var c=null;try{if(e.target&&e.target.selectionStart!=null)c=e.target.selectionStart;}catch(_){}
  var inst=t.closest('[data-ash-instance]').getAttribute('data-ash-instance');
  if(v!==null){var k=fieldKey(inst,e.target);if(k)sent[k]=v;}
- send({event:{instance:inst,h:t.getAttribute('data-ash-h'),name:kind,value:v}});}
+ send({event:{instance:inst,h:t.getAttribute('data-ash-h'),name:kind,value:v,caret:c}});}
 document.addEventListener('click',function(e){fire('onclick',e)});
 document.addEventListener('input',function(e){fire('oninput',e)});
 document.addEventListener('submit',function(e){fire('onsubmit',e)});
@@ -1018,6 +1021,7 @@ pub fn dispatch_event(
     hid: &str,
     name: &str,
     value: V,
+    caret: V,
 ) -> Result<Vec<(String, String)>, Fault> {
     let Some(f) = ev.handlers.get(&(instance.to_string(), hid.to_string())).cloned() else {
         return Err(Fault {
@@ -1034,6 +1038,7 @@ pub fn dispatch_event(
     } else {
         let mut data = std::collections::BTreeMap::new();
         data.insert("value".to_string(), value);
+        data.insert("caret".to_string(), caret);
         let mut event = std::collections::BTreeMap::new();
         event.insert("name".to_string(), V::Text(name.to_string()));
         event.insert("data".to_string(), V::Map(data));
@@ -2036,7 +2041,8 @@ fn process_ws_text(
             let hid = e.get("h").map(to_text).unwrap_or_default();
             let name = e.get("name").map(to_text).unwrap_or_default();
             let value = e.get("value").cloned().unwrap_or(V::None);
-            return match dispatch_event(ev, &instance, &hid, &name, value) {
+            let caret = e.get("caret").cloned().unwrap_or(V::None);
+            return match dispatch_event(ev, &instance, &hid, &name, value, caret) {
                 Ok(patches) => (patches_json(&patches), patches),
                 Err(f) => {
                     let mut m = BTreeMap::new();

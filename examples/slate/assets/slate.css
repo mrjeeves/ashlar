@@ -205,3 +205,12 @@ html[data-ash-offline] .app::before {
 html[data-ash-offline] .editor textarea {
   opacity: 0.55;
 }
+
+/* Who else is on your line — the collision the merge would have to
+   resolve, named before it happens rather than reported after. */
+.sharing:empty { display: none; }
+.sharing {
+  margin-top: 0.35rem;
+  color: #b8860b;
+  font-size: 0.85rem;
+}
