@@ -266,6 +266,22 @@ impl Session {
     /// proxies over the mesh, so the link a page renders is ordinary loopback.
     fn nearby(&self) -> Result<V, String> {
         let snapshot = node("session_snapshot", V::Map(BTreeMap::new()))?;
+        // Site adverts ride presence, and the node runs presence on ONE
+        // network — the first it joined. The roster is safe either way
+        // (`mesh_peers` names its network), but the sites in this snapshot
+        // belong to whatever that primary is. Showing them for another mesh
+        // would be a page of the wrong people's links, and showing an empty
+        // list would claim nobody is serving anything. Say which instead.
+        let on = field(&snapshot, "network");
+        if !on.is_empty() && on != self.network() {
+            return Err(format!(
+                "this node runs presence on `{}`, not `{}`, and site adverts \
+                 arrive with presence. The roster is unaffected; to browse this \
+                 mesh's sites, make it the node's first network.",
+                on,
+                self.network()
+            ));
+        }
         let mappings = node("site_mappings", V::Map(BTreeMap::new())).unwrap_or(V::List(vec![]));
         let mut out = Vec::new();
         for (peer, port, label) in peer_sites(&snapshot) {
@@ -811,6 +827,30 @@ mod tests {
         assert_eq!(sites.len(), 2, "a peer with no node id is skipped: {:?}", sites);
         assert_eq!(sites[0], ("n1".to_string(), 8080, "pad".to_string()));
         assert_eq!(sites[1], ("n1".to_string(), 9000, "ada :9000".to_string()));
+    }
+
+    #[test]
+    fn sites_from_another_mesh_are_refused_rather_than_shown() {
+        // The node's presence is one network deep. A snapshot from a different
+        // one carries real sites that are not this mesh's, and both silent
+        // answers are wrong: the wrong links, or a false "nobody is serving".
+        let mut s = Session::default();
+        s.network = Some("enclave".to_string());
+        let snapshot = map(&[
+            ("network", text("fleet")),
+            (
+                "peers",
+                V::List(vec![map(&[
+                    ("node", text("n1")),
+                    ("label", text("ada")),
+                    ("sites", V::List(vec![map(&[("label", text("pad")), ("port", V::Number(80.0))])])),
+                ])]),
+            ),
+        ]);
+        // The guard is the comparison, tested where the socket is not.
+        let on = field(&snapshot, "network");
+        assert_ne!(on, s.network());
+        assert!(!peer_sites(&snapshot).is_empty(), "there ARE sites — they are just not ours");
     }
 
     #[test]
