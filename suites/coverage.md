@@ -50,7 +50,7 @@ half — a program may *depend* on a location it cannot know, via a `setting`
 deployment supplies — is proved in T-G by
 `t_g_missing_required_setting_refuses_before_serving` (every gap named with its
 shape, refused before a port is bound), in `t_examples`' gallery test (a page of
-fifteen addresses whose source has none), and in `settings.rs`'s own unit
+seventeen addresses whose source has none), and in `settings.rs`'s own unit
 tests. B1 is `t_f.rs`'s relocation test; B2 is the `t_a4`
 corpus; B6 is `resolve.rs`'s own unit tests, since the space-header rule is a
 parse-time structural property.
@@ -102,9 +102,9 @@ check plus `vendor`'s copy-in semantics in `t_e.rs` — the absence of version
 resolution is proven by there being nothing to resolve.
 
 `t_examples` sits across all of these rather than under one letter: all
-seventeen projects compile clean, are canonically formatted, and are driven at
+eighteen projects compile clean, are canonically formatted, and are driven at
 runtime over real HTTP and WebSockets — including `gallery`, the showcase page,
-whose driving test asserts it renders sixteen addresses that appear nowhere in
+whose driving test asserts it renders seventeen addresses that appear nowhere in
 its source.
 
 Two of those projects are driven against a co-process rather than the system

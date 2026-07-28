@@ -31,8 +31,8 @@ else
   echo "      it may predate this checkout."
 fi
 
-# name:port — the map examples/gallery/settings.json mirrors for the sixteen it
-# frames. Keep them in sync; t_examples_showcase_launchers_agree_on_every_port
+# name:port — the map examples/gallery/settings.json mirrors for the seventeen
+# it frames. Keep them in sync; t_examples_showcase_launchers_agree_on_every_port
 # asserts they are.
 EXAMPLES=(
   "gallery:8080"
@@ -97,9 +97,24 @@ if build_ledger_shim; then
   fi
 else
   echo
-  echo "  The other fifteen examples are unaffected. ledger's page will serve"
+  echo "  The other seventeen examples are unaffected. ledger's page will serve"
   echo "  but its store will fault at the boundary, with that same correction."
   echo "  \`abacus\` is the foreign example that needs no compiler at all."
+  echo
+fi
+
+# Two examples reach a co-process rather than a library: `abacus` runs a Python
+# worker, and `enclave` ships a stand-in for the mesh so it demonstrates on a
+# machine that has none. Both serve without python3 and then fault at the
+# boundary on every call — which reads as a broken page rather than a missing
+# package, so say it here instead.
+if ! command -v python3 >/dev/null 2>&1; then
+  echo
+  echo "  python3 is not on PATH. \`abacus\` and \`enclave\` will serve, but every"
+  echo "  call across their boundary will fault with that correction — their"
+  echo "  co-processes are Python. The other sixteen are unaffected."
+  echo "  (\`enclave\` also runs against a real mesh: delete its foreign.json and"
+  echo "  it binds the mesh node this machine runs.)"
   echo
 fi
 

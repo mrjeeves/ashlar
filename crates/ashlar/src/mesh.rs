@@ -118,11 +118,42 @@ impl Link {
         match b.call(root, MESH_SPACE, "here", vec![]) {
             Ok(v) => {
                 let m = fields(&v);
-                out.facts.push(("mesh".to_string(), text_of(&m, "network")));
                 out.facts.push(("node".to_string(), text_of(&m, "id")));
                 out.facts.push(("label".to_string(), text_of(&m, "label")));
-                out.facts.push(("peers".to_string(), number_of(&m, "peers")));
             }
+            Err(e) => out.problems.push(format!("{}: {}", MESH_SPACE, e)),
+        }
+
+        // Every mesh this node is ON, not the one this process happens to
+        // have entered. A fresh `ashlar mesh` has entered nothing, so asking
+        // it for "the" mesh answered with the default area and zero peers
+        // while the node had an active peer on another — a report that is
+        // wrong in the direction of "nothing is happening".
+        match b.call(root, MESH_SPACE, "networks", vec![]) {
+            Ok(V::List(nets)) => {
+                if nets.is_empty() {
+                    out.facts
+                        .push(("mesh".to_string(), "none joined".to_string()));
+                }
+                for n in &nets {
+                    let m = fields(n);
+                    let peers = number_of(&m, "peers");
+                    out.facts.push((
+                        "mesh".to_string(),
+                        format!(
+                            "{} ({} peer{})",
+                            text_of(&m, "id"),
+                            peers,
+                            if peers == "1" { "" } else { "s" }
+                        ),
+                    ));
+                }
+            }
+            Ok(other) => out.problems.push(format!(
+                "{}: `networks` answered {}, not a list.",
+                MESH_SPACE,
+                shape_word(&other)
+            )),
             Err(e) => out.problems.push(format!("{}: {}", MESH_SPACE, e)),
         }
 

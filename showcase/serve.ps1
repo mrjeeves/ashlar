@@ -94,6 +94,19 @@ if ($onWindows) {
   }
 }
 
+# `abacus` runs a Python worker and `enclave` ships a stand-in for the mesh, so
+# both serve without python3 and then fault at the boundary on every call —
+# which reads as a broken page rather than a missing package.
+if (-not (Get-Command python3 -ErrorAction SilentlyContinue)) {
+  Write-Host ''
+  Write-Host '  python3 is not on PATH. `abacus` and `enclave` will serve, but every'
+  Write-Host '  call across their boundary will fault with that correction — their'
+  Write-Host '  co-processes are Python. The other sixteen are unaffected.'
+  Write-Host '  (`enclave` also runs against a real mesh: delete its foreign.json and'
+  Write-Host '  it binds the mesh node this machine runs.)'
+  Write-Host ''
+}
+
 $procs = @()
 try {
   Write-Host ''

@@ -11,12 +11,12 @@ Every example wears the same restrained dark skin — one house palette,
 declared per project as `assets/<name>.css` and bound by `class` name
 (§9.4, ADR-0016). To flip through them all at once, run `./showcase/serve.sh`
 (it starts each example on its own port) and open <http://127.0.0.1:8080> —
-`gallery`, below, which frames the other sixteen.
+`gallery`, below, which frames the other seventeen.
 
 ## gallery
 
 The showcase itself, and the reason `setting` exists. It renders a sidebar
-of every other example with a live frame — sixteen addresses — and its
+of every other example with a live frame — seventeen addresses — and its
 source contains not one of them. `Catalog` declares
 `setting groups: [Group]`, deployment fills it in from `settings.json`,
 and starting without it refuses by name rather than serving dead frames

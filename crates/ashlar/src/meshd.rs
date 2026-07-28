@@ -106,6 +106,7 @@ impl Session {
                 let label = text_arg(args, 1)?;
                 self.enter(&network, &label)
             }
+            "networks" => self.networks(),
             "revision" | "reread" => {
                 self.refresh()?;
                 Ok(V::Number(self.revision))
@@ -126,8 +127,8 @@ impl Session {
             "published" => self.published(),
             "nearby" => self.nearby(),
             other => Err(format!(
-                "no such call: `{}`. The mesh answers here, peers, enter, \
-                 revision, reread; its sites answer expose, unexpose, \
+                "no such call: `{}`. The mesh answers here, peers, networks, \
+                 enter, revision, reread; its sites answer expose, unexpose, \
                  published, nearby.",
                 other
             )),
@@ -162,6 +163,48 @@ impl Session {
             return Ok(Vec::new());
         };
         Ok(list.iter().map(peer_row).collect())
+    }
+
+    /// Every mesh this node is on, with how many peers are on each.
+    ///
+    /// `here` answers for the mesh THIS worker entered, which is process
+    /// state: a fresh `ashlar mesh` never called `enter`, so it would answer
+    /// for the default area and report zero peers while the node had an
+    /// active one three lines away. That is the quiet-wrong this language
+    /// refuses, so the report asks the node what it is actually on.
+    fn networks(&self) -> Result<V, String> {
+        let answer = node("mesh_networks", V::Map(BTreeMap::new()))?;
+        let list = match at(&answer, "networks") {
+            Some(V::List(l)) => l,
+            _ => match answer {
+                V::List(l) => l,
+                _ => Vec::new(),
+            },
+        };
+        let mut out = Vec::new();
+        for n in &list {
+            let id = {
+                let wire = field(n, "network_id");
+                if wire.is_empty() { field(n, "id") } else { wire }
+            };
+            if id.is_empty() {
+                continue;
+            }
+            let mut args = BTreeMap::new();
+            args.insert("network".to_string(), V::Text(id.clone()));
+            let peers = match node("mesh_peers", V::Map(args)) {
+                Ok(v) => match at(&v, "peers") {
+                    Some(V::List(p)) => p.len(),
+                    _ => 0,
+                },
+                Err(_) => 0,
+            };
+            out.push(map(&[
+                ("id", V::Text(id)),
+                ("peers", V::Number(peers as f64)),
+            ]));
+        }
+        Ok(V::List(out))
     }
 
     fn enter(&mut self, network: &str, label: &str) -> Result<V, String> {
@@ -573,10 +616,16 @@ fn port_arg(args: &[V], index: usize) -> Result<u16, String> {
 // The two sockets
 // ---------------------------------------------------------------------------
 
-/// Where the node listens. `MYOWNMESH_HOME` moves a whole stack, which is how
-/// a second install runs beside a first without either finding the other's
-/// socket; the node reads it as the parent of its `.myownmesh` directory, and
-/// this reads it the same way rather than inventing a second convention.
+/// Where the node listens: `$MYOWNMESH_HOME/.myownmesh/`, else
+/// `$HOME/.myownmesh/`, which is how the node itself derives it.
+///
+/// Read it the node's way rather than inventing a second convention — and do
+/// not read it as "the way to run two stacks side by side". It is not: the
+/// node resolves this variable as the PARENT of `.myownmesh` while the mesh
+/// daemon treats it as that directory outright, so setting it leaves the node
+/// unable to find the daemon it just spawned. CEC Support hit that and stopped
+/// forking the variable (its `apply_cec_env` says why). Isolating a stack
+/// means isolating `HOME`.
 pub fn node_socket() -> Option<PathBuf> {
     #[cfg(windows)]
     {
@@ -936,7 +985,7 @@ mod tests {
         let mut s = Session::default();
         let e = s.dispatch("summarize", &[]).unwrap_err();
         assert!(e.contains("no such call"), "{}", e);
-        assert!(e.contains("here, peers, enter"), "{}", e);
+        assert!(e.contains("here, peers, networks, enter"), "{}", e);
         assert!(e.contains("expose, unexpose"), "{}", e);
     }
 

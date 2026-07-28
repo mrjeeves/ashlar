@@ -32,6 +32,14 @@ part Here {
   peers: number
 }
 
+// One mesh this node is on, and how many peers are on it. A node can be on
+// several — its own fleet, an app's area — so "which mesh" is a list, not a
+// fact, and `ashlar mesh` prints every row rather than guessing one.
+part Network {
+  id: text
+  peers: number
+}
+
 // The roster is a collection the runtime tracks: a view that read it
 // re-renders when `reread` marks it changed (§9.10). `revision` is outside
 // that on purpose — the poll below asks it every few seconds, and a call
@@ -40,6 +48,7 @@ part Here {
 foreign here: () -> mesh.Here watches mesh.Peer
 foreign peers: () -> [mesh.Peer] watches mesh.Peer
 foreign enter: (network: text, label: text) -> mesh.Here updates mesh.Peer
+foreign networks: () -> [mesh.Network] watches mesh.Peer
 foreign revision: () -> number
 foreign reread: () -> number updates mesh.Peer
 

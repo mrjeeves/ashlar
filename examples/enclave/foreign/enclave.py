@@ -81,6 +81,14 @@ def enter(network, label):
     return here()
 
 
+def networks():
+    """Every mesh this node is on. A stand-in is on exactly the one it was
+    told to enter, and on none before that."""
+    if not STATE["network"]:
+        return []
+    return [{"id": STATE["network"], "peers": len(_peer_rows())}]
+
+
 def revision():
     return _bump_if_changed()
 
@@ -131,6 +139,7 @@ CALLS = {
     "here": here,
     "peers": peers,
     "enter": enter,
+    "networks": networks,
     "revision": revision,
     "reread": reread,
     "expose": expose,
