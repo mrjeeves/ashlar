@@ -115,9 +115,21 @@ impl Link {
         let mut out = Report::default();
         let b = &mut self.boundary;
 
+        // A view asking who is here gets an answer either way, because a page
+        // must render (§9.4). This command is the deliberate question, so a
+        // machine with no node is a problem here even though it is merely a
+        // fact there — `ashlar mesh` exists to be told.
         match b.call(root, MESH_SPACE, "here", vec![]) {
             Ok(v) => {
                 let m = fields(&v);
+                if matches!(m.get("reachable"), Some(V::Bool(false))) {
+                    // No node: the two questions below have no answer worth
+                    // printing, and "none joined / nothing published" reads
+                    // as a node that is there and empty.
+                    out.problems
+                        .push(format!("{}: {}", MESH_SPACE, text_of(&m, "note")));
+                    return out;
+                }
                 out.facts.push(("node".to_string(), text_of(&m, "id")));
                 out.facts.push(("label".to_string(), text_of(&m, "label")));
             }

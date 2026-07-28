@@ -107,10 +107,17 @@ runtime over real HTTP and WebSockets — including `gallery`, the showcase page
 whose driving test asserts it renders seventeen addresses that appear nowhere in
 its source.
 
-Two of those projects are driven against a co-process rather than the system
-they name — `abacus` against Python, `enclave` against a stand-in for the mesh
-node — and both skip with a printed reason when the co-process's language is
-absent. `enclave` also carries the G5 half `vendor` cannot check: its
+One of those projects is driven against a co-process rather than the system it
+names — `abacus` against Python — and skips with a printed reason when that
+language is absent. `enclave` is driven twice, against the worker this
+toolchain ships: once with the mesh node's own control socket stood up by the
+test, which is unix-only because `std` binds a Unix socket and cannot create a
+named pipe, and once against a socket that is not there at all, on every
+platform. The second is the regression for a build whose every mesh read
+faulted, so a machine with no node — closed, uninstalled, or across a WSL
+boundary — could not start the site at all. It also pins the rule that a
+program joining a mesh never renames the machine it runs on.
+`enclave` also carries the G5 half `vendor` cannot check: its
 `vendor/mesh/` is asserted byte-identical to `lib/mesh/`, because a vendored
 dependency that drifts from its source is the version skew a registry exists to
 manage and this language refuses to have. What the stand-in cannot prove — two real machines, and what the

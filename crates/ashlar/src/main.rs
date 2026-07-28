@@ -13,7 +13,7 @@
 
 mod cli {
     use ashlar::diag::Diag;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     pub const USAGE: &str = "usage:\n  \
         ashlar check [path] [--human]\n  \
@@ -29,7 +29,7 @@ mod cli {
         ashlar vendor <source> [path]\n  \
         ashlar foreign check [space] [path]\n  \
         ashlar mesh [path]\n  \
-        ashlar mesh worker\n";
+        ashlar mesh worker [socket]\n";
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum Cmd {
@@ -54,7 +54,7 @@ mod cli {
         Vendor { source: String, path: String },
         ForeignCheck { space: Option<String>, path: String },
         Mesh { path: String },
-        MeshWorker,
+        MeshWorker { socket: Option<String> },
     }
 
     /// Parse the command and its arguments (everything after the binary
@@ -298,10 +298,14 @@ mod cli {
                 // real command all the same, so a person can drive it by hand
                 // to see exactly what a site sees.
                 if rest.first().map(String::as_str) == Some("worker") {
-                    if rest.len() > 1 {
-                        return Err("`mesh worker` takes no arguments".to_string());
+                    if rest.len() > 2 {
+                        return Err("`mesh worker` takes at most a socket to speak to".to_string());
                     }
-                    return Ok(Cmd::MeshWorker);
+                    // Naming the socket says where the node already is, so the
+                    // worker connects to that one and starts nothing — the
+                    // same relationship `foreign.json` has to every other
+                    // derived binding (ADR-0017).
+                    return Ok(Cmd::MeshWorker { socket: rest.get(1).cloned() });
                 }
                 Ok(Cmd::Mesh {
                     path: one_path(rest)?,
@@ -365,7 +369,7 @@ mod cli {
             Cmd::Fmt { path, check_only } => run_fmt(&path, check_only),
             Cmd::Run { path, part, port, mesh } => run_serve(&path, part, port, mesh),
             Cmd::Mesh { path } => run_mesh(&path),
-            Cmd::MeshWorker => ashlar::meshd::run(),
+            Cmd::MeshWorker { socket } => ashlar::meshd::run(socket.map(PathBuf::from)),
             Cmd::Rename { target, new_name, path, plan_only } => {
                 run_refactor(&path, plan_only, |srcs| plan_rename(srcs, &target, &new_name))
             }
@@ -956,11 +960,12 @@ mod cli {
             let link = link.clone();
             let published = published.clone();
             move |port: u16, root_part: &str| {
-                if let Some(network) = &mesh {
-                    let mut link = link.lock().expect("not poisoned");
+                if let (Some(network), Ok(mut link)) = (&mesh, link.lock()) {
                     match link.publish(&root, port, network, root_part) {
                         Ok(p) => {
-                            *published.lock().expect("not poisoned") = Some(port);
+                            if let Ok(mut bound) = published.lock() {
+                                *bound = Some(port);
+                            }
                             eprintln!("{}", p.line());
                         }
                         Err(e) => {
@@ -977,9 +982,8 @@ mod cli {
         // the way out of a clean shutdown and a failed one alike: the daemon
         // outlives this process, so a site left published is one a peer can
         // still see and never reach.
-        let bound = *published.lock().expect("not poisoned");
-        if let Some(port) = bound {
-            let mut link = link.lock().expect("not poisoned");
+        let bound = published.lock().ok().and_then(|b| *b);
+        if let (Some(port), Ok(mut link)) = (bound, link.lock()) {
             if let Err(e) = link.withdraw(&root, port) {
                 eprintln!("warning: could not take the site off the mesh: {}", e);
             }

@@ -94,9 +94,10 @@ if ($onWindows) {
   }
 }
 
-# Two examples reach something this repository does not ship, and both serve
-# and then fault at the boundary — which reads as a broken page rather than a
-# missing part.
+# Two examples reach something this repository does not ship. `abacus` faults
+# at its boundary without it, which reads as a broken page rather than a
+# missing part; `enclave` serves a roster that is empty for a reason worth
+# stating before it is read as "nobody is out there".
 if (-not (Get-Command python3 -ErrorAction SilentlyContinue)) {
   Write-Host ''
   Write-Host '  python3 is not on PATH, so `abacus` will serve and then fault at its'
@@ -105,14 +106,9 @@ if (-not (Get-Command python3 -ErrorAction SilentlyContinue)) {
 }
 if (-not (Test-Path '\\.\pipe\allmystuff-node')) {
   Write-Host ''
-  Write-Host '  No mesh node is listening, so `enclave` will serve and then fault at'
-  Write-Host '  its boundary. It asks the mesh THIS machine runs and shows that'
-  Write-Host '  node''s real roster; to see the page without a mesh, bind its'
-  Write-Host '  stand-in deliberately into examples/enclave/foreign.json:'
-  Write-Host ''
-  Write-Host '    { "mesh": { "via": "worker", "run": ["python3", "foreign/enclave.py"] } }'
-  Write-Host ''
-  Write-Host '  — and read the zero it then shows as "asking a script".'
+  Write-Host '  No mesh node is listening here, so `enclave` will serve with an empty'
+  Write-Host '  roster that says why. Install AllMyStuff and it shows the real one —'
+  Write-Host '  the mesh THIS machine is on, not a demo of one.'
   Write-Host ''
 }
 

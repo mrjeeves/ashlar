@@ -252,11 +252,13 @@ in the browser: a schedule in the library notices the revision move, `updates`
 marks the collection, and every view that read it re-renders over the socket.
 
 `ashlar run --mesh` publishes the port the origin is serving to that mesh, and
-`ashlar mesh` says what the machine can answer. The example binds both spaces
-to a stand-in that speaks the whole contract for a mesh of one, so it runs
-anywhere; delete `foreign.json` and the same program talks to the real daemons.
-Needs `python3` for the stand-in; the driving test skips loudly without it.
-What two machines would prove is open in `docs/roadmap.md`, not implied here.
+`ashlar mesh` says what the machine can answer. The example binds nothing, so
+it talks to the node this machine runs — and on a machine with no node it still
+serves, with a roster that says there is no mesh here rather than one that
+looks merely empty. Its driving test stands up the node's own control socket
+and lets the shipped worker drive it, so what is faked is the network and
+nothing else. What two machines would prove is open in `docs/roadmap.md`, not
+implied here.
 
 ## locker
 

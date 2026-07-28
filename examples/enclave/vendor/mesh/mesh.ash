@@ -25,11 +25,19 @@ part Peer {
 // This node's own place: the identity peers address it by, and the mesh it
 // joined. `network` is the app's mesh id — the answer to "whose roster is
 // this", and the reason two Ashlar apps on one machine need not share one.
+//
+// `reachable` is false on a machine with no mesh node running, and then `note`
+// is the sentence that fixes it. Not having a mesh is an ordinary state of a
+// machine, so it is answered rather than failed: a site serves either way, and
+// the pages below say which it is instead of showing an empty roster that
+// looks the same as a lonely one.
 part Here {
   id: text
   label: text
   network: text
   peers: number
+  reachable: bool
+  note: text
 }
 
 // One mesh this node is on, and how many peers are on it. A node can be on
@@ -66,6 +74,10 @@ foreign reread: () -> number updates mesh.Peer
 //   }
 //
 // and deployment can still override the value it chose.
+// `label` names the APP on the mesh — the network it joins, the site it
+// publishes. It is never the machine's name: the node's own identity belongs
+// to whoever runs it, and no program that joins a mesh renames the computer
+// it is running on.
 part Mesh {
   setting network: text = "ashlar"
   setting label: text = "an ashlar site"
@@ -110,13 +122,23 @@ part grid {
   view = () => el("div", { class: "mesh-grid" }, cards())
   cards = () => {
     let all = peers()
-    if len(all) == 0 {
-      return [el("p", { class: "mesh-empty" }, ["No one else here yet."])]
+    if len(all) > 0 {
+      return map(all, (p: mesh.Peer) => el("div", { class: "mesh-peer" }, [
+        el("span", { class: if p.here { "mesh-dot mesh-dot-here" } else { "mesh-dot" } }, []),
+        el("span", { class: "mesh-name" }, [p.label]),
+      ]))
     }
-    return map(all, (p: mesh.Peer) => el("div", { class: "mesh-peer" }, [
-      el("span", { class: if p.here { "mesh-dot mesh-dot-here" } else { "mesh-dot" } }, []),
-      el("span", { class: "mesh-name" }, [p.label]),
-    ]))
+    return [el("p", { class: "mesh-empty" }, [empty()])]
+  }
+  // An empty roster has two causes and they are not the same news. Only ask
+  // which when the roster IS empty: the answer costs a call, and the common
+  // case never needs it.
+  empty = () => {
+    let h = here()
+    if h.reachable {
+      return "No one else here yet."
+    }
+    return "No mesh node is running on this machine, so there is no roster."
   }
 }
 
@@ -129,6 +151,13 @@ part panel {
   view = () => el("div", { class: "mesh-panel" }, rows())
   rows = () => {
     let h = here()
+    if not h.reachable {
+      return [
+        row("mesh", h.network),
+        row("this node", "no mesh node is running here"),
+        el("p", { class: "mesh-empty" }, [h.note]),
+      ]
+    }
     return [
       row("mesh", h.network),
       row("this node", h.label),
@@ -185,12 +214,19 @@ part browser {
   view = () => el("div", { class: "mesh-sites-list" }, links())
   links = () => {
     let all = nearby()
-    if len(all) == 0 {
-      return [el("p", { class: "mesh-empty" }, ["No sites on this mesh yet."])]
+    if len(all) > 0 {
+      return map(all, (s: mesh.Site) => el("a", { class: "mesh-site", href: s.url }, [
+        el("span", {}, [s.label]),
+        el("span", { class: "mesh-site-peer" }, [s.peer]),
+      ]))
     }
-    return map(all, (s: mesh.Site) => el("a", { class: "mesh-site", href: s.url }, [
-      el("span", {}, [s.label]),
-      el("span", { class: "mesh-site-peer" }, [s.peer]),
-    ]))
+    return [el("p", { class: "mesh-empty" }, [empty()])]
+  }
+  empty = () => {
+    let h = here()
+    if h.reachable {
+      return "No sites on this mesh yet."
+    }
+    return "No mesh node is running on this machine, so there is nothing to browse."
   }
 }

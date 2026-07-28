@@ -91,19 +91,32 @@ fn staged(name: &str) -> PathBuf {
     let _ = std::fs::remove_dir_all(&dst);
     std::fs::create_dir_all(&dst).unwrap();
     copy_tree(&src, &dst);
-    // `enclave` ships NO binding, so a person who runs it talks to the mesh
-    // node on their machine and sees that node's real roster. This suite has
-    // no mesh, so every staged copy binds the stand-in — in the temp tree,
-    // never in the repository. Same names, different transport, which is the
-    // claim ADR-0017 makes and this exercises rather than asserts.
-    if name == "enclave" {
-        std::fs::write(
-            dst.join("foreign.json"),
-            "{\n  \"mesh\": { \"via\": \"worker\", \"run\": [\"python3\", \"foreign/enclave.py\"] }\n}\n",
-        )
-        .unwrap();
+    // A project that vendored the mesh library reaches the node this machine
+    // runs. The suite has none and must not touch one it finds, so every
+    // staged copy is pointed at a socket that is not there — the site serves
+    // its empty-roster state, and no test depends on what the machine running
+    // it installed. The two tests that are ABOUT the mesh rebind afterwards.
+    if dst.join("vendor/mesh/mesh.ash").is_file() {
+        bind_mesh_to(&dst, &dst.join("no-node-here.sock"));
     }
     dst
+}
+
+/// Bind the `mesh` space to this toolchain's own worker, pointed at a socket
+/// this test controls. Naming the socket is what stops the worker starting a
+/// node of its own — so a machine with AllMyStuff installed runs these tests
+/// without its real daemon being touched, and one without it runs them the
+/// same way.
+fn bind_mesh_to(dir: &std::path::Path, socket: &std::path::Path) {
+    std::fs::write(
+        dir.join("foreign.json"),
+        format!(
+            "{{\n  \"mesh\": {{ \"via\": \"worker\", \"run\": [{:?}, \"mesh\", \"worker\", {:?}] }}\n}}\n",
+            env!("CARGO_BIN_EXE_ashlar"),
+            socket.to_string_lossy()
+        ),
+    )
+    .unwrap();
 }
 
 fn copy_tree(src: &std::path::Path, dst: &std::path::Path) {
@@ -1217,18 +1230,276 @@ fn t_examples_enclave_vendors_the_mesh_library_verbatim() {
     assert_eq!(compared, 1, "the mesh library is one space, vendored whole");
 }
 
+/// The mesh node's control socket, without the daemon behind it.
+///
+/// This is deliberately NOT a stand-in for the `mesh` space: the space is
+/// bound to the shipped worker (`ashlar mesh worker`), and this answers the
+/// socket that worker drives. So the adapter under test is the one that ships,
+/// its wire framing is exercised against a real socket, and the only thing
+/// faked is the network — which is the one part a single machine cannot have.
+#[cfg(unix)]
+mod fake_node {
+    use ashlar::eval::{from_json, to_json, V};
+    use std::collections::BTreeMap;
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixListener;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Default)]
+    pub struct State {
+        /// What the machine's owner called this node.
+        pub name: String,
+        /// id, label, status — the roster the daemon would answer.
+        pub peers: Vec<(String, String, String)>,
+        /// node, label, port — what presence says each peer serves.
+        pub sites: Vec<(String, String, u16)>,
+        pub exposed: BTreeMap<String, String>,
+        pub networks: Vec<String>,
+        /// Every command this node was asked to run. The rename regression is
+        /// asserted from here: a site must join a mesh without ever touching
+        /// the identity its owner named.
+        pub asked: Vec<String>,
+    }
+
+    pub struct Fake {
+        pub state: Arc<Mutex<State>>,
+        pub socket: std::path::PathBuf,
+        stop: Arc<AtomicBool>,
+    }
+
+    impl Drop for Fake {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Relaxed);
+            let _ = std::fs::remove_file(&self.socket);
+        }
+    }
+
+    /// The socket lives outside the project tree, and short: a `sun_path` is
+    /// 108 bytes on Linux and a temp path under a project directory can spend
+    /// them.
+    pub fn start() -> Fake {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let socket = std::env::temp_dir().join(format!(
+            "ashlar_node_{}_{}.sock",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_file(&socket);
+        let listener = UnixListener::bind(&socket).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let state = Arc::new(Mutex::new(State::default()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let (s, t) = (state.clone(), stop.clone());
+        std::thread::spawn(move || {
+            while !t.load(Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        stream.set_nonblocking(false).unwrap();
+                        let Some(payload) = read_frame(&mut stream) else {
+                            continue;
+                        };
+                        let reply = to_json(&handle(&s, &payload));
+                        let bytes = reply.as_bytes();
+                        let len = (bytes.len() as u32) + 1;
+                        let _ = stream
+                            .write_all(&len.to_be_bytes())
+                            .and_then(|_| stream.write_all(&[0u8]))
+                            .and_then(|_| stream.write_all(bytes))
+                            .and_then(|_| stream.flush());
+                    }
+                    Err(_) => std::thread::sleep(std::time::Duration::from_millis(5)),
+                }
+            }
+        });
+        Fake {
+            state,
+            socket,
+            stop,
+        }
+    }
+
+    fn read_frame(stream: &mut std::os::unix::net::UnixStream) -> Option<String> {
+        let mut head = [0u8; 4];
+        stream.read_exact(&mut head).ok()?;
+        let len = u32::from_be_bytes(head) as usize;
+        let mut body = vec![0u8; len];
+        stream.read_exact(&mut body).ok()?;
+        String::from_utf8(body[1..].to_vec()).ok()
+    }
+
+    fn map(pairs: &[(&str, V)]) -> V {
+        V::Map(
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.clone()))
+                .collect(),
+        )
+    }
+
+    fn text(s: &str) -> V {
+        V::Text(s.to_string())
+    }
+
+    fn handle(state: &Mutex<State>, payload: &str) -> V {
+        let call = from_json(payload).unwrap_or(V::None);
+        let cmd = match ashlar::meshd::at(&call, "cmd") {
+            Some(V::Text(c)) => c,
+            _ => return map(&[("ok", V::Bool(false)), ("error", text("no cmd"))]),
+        };
+        let args = ashlar::meshd::at(&call, "args").unwrap_or(V::None);
+        let mut st = state.lock().unwrap();
+        st.asked.push(cmd.clone());
+        let result = match cmd.as_str() {
+            "mesh_identity" => map(&[("device_id", text("me-A1B2C")), ("label", text(&st.name))]),
+            "mesh_peers" => V::List(
+                st.peers
+                    .iter()
+                    .map(|(id, label, status)| {
+                        map(&[
+                            ("device_id", text(id)),
+                            ("label", text(label)),
+                            ("status", text(status)),
+                        ])
+                    })
+                    .collect(),
+            ),
+            "mesh_networks" => V::List(
+                st.networks
+                    .iter()
+                    .map(|n| map(&[("network_id", text(n))]))
+                    .collect(),
+            ),
+            "mesh_network_add" => {
+                if let Some(V::Text(id)) = ashlar::meshd::at(&args, "config")
+                    .and_then(|c| ashlar::meshd::at(&c, "network_id"))
+                {
+                    st.networks.push(id);
+                }
+                V::None
+            }
+            "site_exposed" => V::Map(
+                st.exposed
+                    .iter()
+                    .map(|(k, v)| (k.clone(), text(v)))
+                    .collect(),
+            ),
+            "site_set_exposed" => {
+                st.exposed.clear();
+                if let Some(V::Map(m)) = ashlar::meshd::at(&args, "exposed") {
+                    for (k, v) in m {
+                        if let V::Text(label) = v {
+                            st.exposed.insert(k, label);
+                        }
+                    }
+                }
+                V::None
+            }
+            "site_mappings" => V::List(vec![]),
+            // The node binds a local port and proxies it over the mesh; the
+            // number is the node's to choose, which is why source never has it.
+            "site_map" => map(&[("localPort", V::Number(47001.0))]),
+            "session_snapshot" => map(&[(
+                "peers",
+                V::List(
+                    st.sites
+                        .iter()
+                        .map(|(node, label, port)| {
+                            map(&[
+                                ("node", text(node)),
+                                ("label", text(node)),
+                                (
+                                    "sites",
+                                    V::List(vec![map(&[
+                                        ("label", text(label)),
+                                        ("port", V::Number(*port as f64)),
+                                    ])]),
+                                ),
+                            ])
+                        })
+                        .collect(),
+                ),
+            )]),
+            _ => {
+                return map(&[
+                    ("ok", V::Bool(false)),
+                    ("error", text(&format!("no such cmd: {}", cmd))),
+                ])
+            }
+        };
+        let wrapped = match cmd.as_str() {
+            "mesh_peers" => map(&[("peers", result)]),
+            "mesh_networks" => map(&[("networks", result)]),
+            _ => result,
+        };
+        map(&[("ok", V::Bool(true)), ("result", wrapped)])
+    }
+}
+
+#[test]
+fn t_examples_enclave_serves_where_there_is_no_mesh() {
+    // covers: B5, G4
+    // A machine with no mesh node is an ordinary machine — the app is closed,
+    // it was never installed, or (WSL) the node is on the other side of the
+    // kernel boundary. The site must still serve, and must say which state it
+    // is in rather than showing an empty roster that looks like a lonely one.
+    //
+    // This is the regression for a build that faulted on every mesh read: the
+    // enclave's `start` stack called `arrive()`, the fault propagated, and the
+    // whole example refused to come up — "1 of 18 did not start".
+    let dir = staged("enclave");
+    // A socket that is not there, named — so nothing is spawned and the
+    // outcome does not depend on what the machine running the suite installed.
+    bind_mesh_to(&dir, &dir.join("no-node-here.sock"));
+    let (port, stop, join) = start(dir.clone());
+
+    let (status, _, html) = req(port, "GET", "/", None, None);
+    assert_eq!(status, 200, "the site serves without a mesh: {}", html);
+    assert!(
+        html.contains("No mesh node is running on this machine"),
+        "the roster says why it is empty, not just that it is: {}",
+        html
+    );
+    assert!(
+        html.contains("nothing is listening at"),
+        "and the panel carries the correction, in the page: {}",
+        html
+    );
+    // The one deliberate publish still fails loudly: `run --mesh` printed a
+    // promise, and a site nobody can reach reported as published would be the
+    // quiet-wrong this language refuses.
+    let mut link = ashlar::mesh::Link::new();
+    let refused = link
+        .publish(&dir, port, "enclave", "enclave.app")
+        .unwrap_err();
+    assert!(refused.contains("nothing is listening"), "{}", refused);
+    let report = link.report(&dir);
+    assert!(!report.ok(), "`ashlar mesh` is the question, so it is told");
+    assert_eq!(
+        report.problems.len(),
+        1,
+        "one absent node, one problem: {:?}",
+        report.problems
+    );
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(unix)]
 #[test]
 fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
     // covers: B5, G4
-    // The mesh is a capability, not a builtin: two `foreign` spaces, reached
-    // across the one boundary (§9.10). Here they are bound to a stand-in, so
-    // the whole path is driven without a mesh daemon — which is the claim
-    // ADR-0017 makes, exercised rather than asserted.
-    if std::process::Command::new("python3").arg("-V").output().is_err() {
-        eprintln!("SKIP: t_examples_enclave needs python3 (the stand-in's language)");
-        return;
-    }
+    // The mesh is a capability, not a builtin: one `foreign` space reached
+    // across the one boundary (§9.10), bound to the worker this toolchain
+    // ships. What is faked here is the mesh NODE's socket, not the space — so
+    // the adapter, its wire, and the vendored library are all the shipped ones
+    // and only the network is stood in for.
     let dir = staged("enclave");
+    let node = fake_node::start();
+    node.state.lock().unwrap().name = "chris's laptop".to_string();
+    bind_mesh_to(&dir, &node.socket);
     let (port, stop, join) = start(dir.clone());
 
     // An empty mesh says so. A roster that renders nothing when it knows
@@ -1250,24 +1521,49 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
         html
     );
 
+    // The machine's name is the machine's. The panel shows what the NODE
+    // says it is called, and joining the mesh did not change it — an earlier
+    // build set the identity label from the app's `label` setting, renaming
+    // its owner's node on every mesh that node was on.
+    assert!(
+        html.contains("chris&#x27;s laptop") || html.contains("chris's laptop"),
+        "the node keeps the name its owner gave it: {}",
+        html
+    );
+    {
+        let st = node.state.lock().unwrap();
+        assert!(
+            !st.asked.iter().any(|c| c == "mesh_identity_set_label"),
+            "arriving on a mesh must never rename the node: {:?}",
+            st.asked
+        );
+        assert!(
+            st.networks.iter().any(|n| n == "enclave"),
+            "it joins the mesh the program named, and that is all it writes: {:?}",
+            st.networks
+        );
+    }
+
     let (status, _, peers) = req(port, "GET", "/api/peers", None, None);
     assert_eq!(status, 200);
     assert_eq!(peers.trim(), "[]", "no peers, over HTTP too");
 
-    // Someone arrives. The stand-in reads its roster from a file, so writing
-    // one is this test's version of a peer joining the mesh.
+    // Someone arrives.
     let page_id = attr_of(&html, "data-ash-page").unwrap();
     let mut ws = ws_open(port);
     ws_send(&mut ws, &format!("{{\"page\":\"{}\"}}", page_id));
     std::thread::sleep(std::time::Duration::from_millis(80));
-    std::fs::write(
-        dir.join("foreign/peers.json"),
-        r#"[{"id":"n1","label":"ada","here":true,"sites":[{"label":"ada's pad","url":"http://127.0.0.1:47001"}]},
-            {"id":"n2","label":"grace","here":false,"sites":[]}]"#,
-    )
-    .unwrap();
-    // The roster answers who is here; what they SERVE is the other space,
-    // which a machine can be unable to answer while answering this one.
+    {
+        let mut st = node.state.lock().unwrap();
+        st.peers = vec![
+            ("n1".to_string(), "ada".to_string(), "active".to_string()),
+            ("n2".to_string(), "grace".to_string(), "offline".to_string()),
+        ];
+        // Presence carries the display form of an id (`pubkey-SUFFIX`) while
+        // the roster answers the bare key; a site whose peer is on this mesh
+        // must survive that difference.
+        st.sites = vec![("n1-7F3A2".to_string(), "ada's pad".to_string(), 8080)];
+    }
 
     // Nobody polled from the browser and nobody clicked. The schedule in the
     // vendored library noticed the roster's revision move, the `updates`
@@ -1313,7 +1609,7 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
         landed.line()
     );
     let report = link.report(&dir);
-    assert!(report.ok(), "both spaces answered: {:?}", report.problems);
+    assert!(report.ok(), "the mesh answered every question: {:?}", report.problems);
     assert!(
         report.facts.iter().any(|(k, v)| k == "published" && v == "enclave.app"),
         "the published site is reported back: {:?}",

@@ -23,16 +23,17 @@ agent surface and revision it used.
 
 **The mesh is proven on one box, not across two.** `examples/enclave` ships no
 binding, so it reaches the mesh node on the machine that runs it; `t_examples`
-drives the whole contract against a stand-in bound into the staged copy, and
-two full stacks on one box — two identities, two published sites — have been
-driven end to end: each saw the other in its roster and rendered the other's
-site as a link its node had mapped locally. What one box cannot show is the
-part the network decides: signaling between two real machines, ICE across a
-NAT, and a roster losing a node that actually went away. Serves **B5, G4**.
-Proven by: a hand-run gate on two machines, recorded like T-BROWSER's — a
-second node's site opened from the first, and `ashlar mesh` agreeing with the
-node on both. The Windows half of the socket rides the same gate: a named pipe
-is opened here with `std` alone and has never been driven against a real node.
+drives the whole contract against the node's own control socket, stood up by
+the test, and two full stacks on one box — two identities, two published
+sites — have been driven end to end: each saw the other in its roster and
+rendered the other's site as a link its node had mapped locally. What one box
+cannot show is the part the network decides: signaling between two real
+machines, ICE across a NAT, and a roster losing a node that actually went away.
+Serves **B5, G4**. Proven by: a hand-run gate on two machines, recorded like
+T-BROWSER's — a second node's site opened from the first, and `ashlar mesh`
+agreeing with the node on both. The Windows half of the socket rides the same
+gate: a named pipe is opened here with `std` alone, and no test creates one,
+because `std` can connect to a named pipe but cannot serve it.
 
 **Capabilities with no corpus site.** An adversarial read listed ten. Four
 now have one — the directory form of `files`, `log.debug`, `log.warn`, and

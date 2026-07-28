@@ -28,9 +28,10 @@ other and with `examples/gallery/settings.json` — so the three copies cannot
 drift, a new example cannot stay out of the gallery, and the gallery cannot
 frame an address nothing is serving.
 
-`enclave` asks the mesh node this machine runs; with none it serves and faults
-at the boundary rather than showing an empty roster it has not checked, and the
-launcher says so with the one line that binds its stand-in instead.
+`enclave` asks the mesh node this machine runs. With none — not installed, not
+open, or on the other side of a WSL boundary — it serves an empty roster that
+says so and carries the correction, because a machine with no mesh is an
+ordinary machine and not a broken site.
 
 On Windows, seventeen of the eighteen work unchanged. `ledger` reaches SQLite over
 the `native` transport, which needs a POSIX dynamic loader, so its page serves

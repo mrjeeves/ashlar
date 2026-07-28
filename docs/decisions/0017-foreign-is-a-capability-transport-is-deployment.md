@@ -189,6 +189,26 @@ dependency. A capability that works on one operating system is not a
 capability, and "the runtime is zero-dependency" was doing the arguing for a
 conclusion that was never true.
 
+**Being a client constrains what this may write.** A control socket carries the
+whole machine, not this program's corner of it. The adapter reads freely and
+writes only what the program itself put there — a network it joined, a port it
+exposed. A third wrong answer shipped before that rule did: `enter` set the
+node's display label from the app's `label` setting, so starting an Ashlar site
+renamed its owner's node, for every peer on every mesh that node was on, with
+nothing to say it had happened. The setting names the app now — the network it
+joins, the site it publishes — and the refusal is by command name, in the one
+function every request passes through, so it holds for call sites not yet
+written.
+
+**An absent node is a fact about a machine, not a fault in a program.** Reads
+answer around it, with an empty roster that carries the correction rather than
+one that merely looks lonely; a deliberate publish still fails, because
+`run --mesh` printed a promise. The build that faulted on every read took the
+whole site down on any machine whose node was closed, never installed, or (WSL)
+across the kernel boundary — the example did not start at all. Reachability was
+already not a build-time fact (§5); the same holds at run time, and only a
+caller who asked for the capability is owed an error about it.
+
 The cost that remains is real and worth naming: this repository tracks one wire
 protocol it does not own. That is the ordinary cost of being a client. It is
 bounded — the ops used are the ones that node's own front end drives, the most

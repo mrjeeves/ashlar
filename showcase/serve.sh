@@ -103,9 +103,10 @@ else
   echo
 fi
 
-# Two examples reach something this repository does not ship. Say so here,
-# because both serve and then fault at the boundary on every call, which reads
-# as a broken page rather than a missing part.
+# Two examples reach something this repository does not ship. Say so here:
+# `abacus` faults at its boundary without it, which reads as a broken page
+# rather than a missing part, and `enclave` serves a roster that is empty for
+# a reason worth stating before it is read as "nobody is out there".
 if ! command -v python3 >/dev/null 2>&1; then
   echo
   echo "  python3 is not on PATH, so \`abacus\` will serve and then fault at its"
@@ -115,15 +116,9 @@ fi
 if [ ! -S "${MYOWNMESH_HOME:-$HOME/.myownmesh}/allmystuff-node.sock" ] \
    && [ ! -S "$HOME/.myownmesh/allmystuff-node.sock" ]; then
   echo
-  echo "  No mesh node is listening, so \`enclave\` will serve and then fault at"
-  echo "  its boundary. That is the honest answer: it asks the mesh THIS machine"
-  echo "  runs, and shows a real roster when there is one. To see the page"
-  echo "  without a mesh, bind its stand-in deliberately:"
-  echo
-  echo "    echo '{\"mesh\":{\"via\":\"worker\",\"run\":[\"python3\",\"foreign/enclave.py\"]}}' \\"
-  echo "      > examples/enclave/foreign.json"
-  echo
-  echo "  — and read the zero it then shows as \"asking a script\"."
+  echo "  No mesh node is listening here, so \`enclave\` will serve with an empty"
+  echo "  roster that says why. Install AllMyStuff and it shows the real one —"
+  echo "  the mesh THIS machine is on, not a demo of one."
   echo
 fi
 
