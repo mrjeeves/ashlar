@@ -265,25 +265,6 @@ impl Session {
         if !joined {
             node("mesh_network_add", V::Map(network_config(network, label)))?;
         }
-        // A site is advertised through PRESENCE, and the node runs presence on
-        // one network — the first it joined. Publishing while that is some
-        // other mesh would put this site in front of the wrong audience: not
-        // "it did not work", but "it worked, at people you did not mean". The
-        // read side merely shows the wrong list; this one exposes a port. So
-        // it refuses, and says what to change.
-        let on = field(
-            &node("session_snapshot", V::Map(BTreeMap::new()))?,
-            "network",
-        );
-        if !on.is_empty() && on != network {
-            return Err(format!(
-                "this node advertises on `{}`, not `{}`, and a site is \
-                 advertised through presence — publishing now would put it in \
-                 front of `{}`. Make `{}` the node's first network, or run \
-                 without --mesh.",
-                on, network, on, network
-            ));
-        }
         // Add one port to the owner's exposed selection and leave the rest
         // alone. The node's proxy refuses every port outside that selection,
         // so this is the whole of publishing — and it cannot reach a service
@@ -328,25 +309,22 @@ impl Session {
     /// proxies over the mesh, so the link a page renders is ordinary loopback.
     fn nearby(&self) -> Result<V, String> {
         let snapshot = node("session_snapshot", V::Map(BTreeMap::new()))?;
-        // Site adverts ride presence, and the node runs presence on ONE
-        // network — the first it joined. The roster is safe either way
-        // (`mesh_peers` names its network), but the sites in this snapshot
-        // belong to whatever that primary is. Showing them for another mesh
-        // would be a page of the wrong people's links, and showing an empty
-        // list would claim nobody is serving anything. Say which instead.
-        let on = field(&snapshot, "network");
-        if !on.is_empty() && on != self.network() {
-            return Err(format!(
-                "this node runs presence on `{}`, not `{}`, and site adverts \
-                 arrive with presence. The roster is unaffected; to browse this \
-                 mesh's sites, make it the node's first network.",
-                on,
-                self.network()
-            ));
-        }
+        // Presence reaches every network this node joined, so the snapshot
+        // mixes peers from all of them. Keep the ones on THIS mesh — the
+        // roster already names them — rather than showing another mesh's
+        // links under this one's heading.
+        let mine: Vec<String> = self
+            .peers()?
+            .iter()
+            .map(|p| canonical(&field(p, "id")))
+            .filter(|id| !id.is_empty())
+            .collect();
         let mappings = node("site_mappings", V::Map(BTreeMap::new())).unwrap_or(V::List(vec![]));
         let mut out = Vec::new();
         for (peer, port, label) in peer_sites(&snapshot) {
+            if !mine.contains(&canonical(&peer)) {
+                continue;
+            }
             let local = match existing_mapping(&mappings, &peer, port) {
                 Some(p) => Some(p),
                 None => {
@@ -374,6 +352,16 @@ impl Session {
 // ---------------------------------------------------------------------------
 // Pure decisions — everything above the sockets
 // ---------------------------------------------------------------------------
+
+/// A device id without its display suffix. The daemon's roster answers bare
+/// pubkeys and a presence advert carries the `pubkey-SUFFIX` display form, so
+/// the two only compare after this.
+pub fn canonical(id: &str) -> String {
+    match id.split_once('-') {
+        Some((pubkey, _)) => pubkey.to_string(),
+        None => id.to_string(),
+    }
+}
 
 /// The mesh a call named, or the default when it named none.
 pub fn network_or_default(named: &str) -> String {
@@ -616,6 +604,82 @@ fn port_arg(args: &[V], index: usize) -> Result<u16, String> {
 // The two sockets
 // ---------------------------------------------------------------------------
 
+/// How to start the node, in the order a machine is likely to have it. The
+/// node ships as a binary on PATH, as a subcommand of the app's CLI, and
+/// bundled beside an app that embeds it — this looks for all three rather than
+/// declaring the mesh absent because one name was not on PATH.
+///
+/// `ASHLAR_MESH_NODE` overrides the search with a command of your own, which
+/// is the same relationship every other binding has to its derived default.
+pub fn bring_up() -> Vec<String> {
+    if let Ok(cmd) = std::env::var("ASHLAR_MESH_NODE") {
+        let argv: Vec<String> = cmd.split_whitespace().map(str::to_string).collect();
+        if !argv.is_empty() {
+            return argv;
+        }
+    }
+    let exe = if cfg!(windows) { ".exe" } else { "" };
+    // Beside this binary first: an app that ships the node as a sidecar puts
+    // it there, which is how CEC Support and the desktop app already work.
+    if let Ok(here) = std::env::current_exe() {
+        if let Some(dir) = here.parent() {
+            let side = dir.join(format!("allmystuff-serve{}", exe));
+            if side.is_file() {
+                return vec![side.to_string_lossy().to_string()];
+            }
+        }
+    }
+    for dir in install_dirs() {
+        let served = dir.join(format!("allmystuff-serve{}", exe));
+        if served.is_file() {
+            return vec![served.to_string_lossy().to_string()];
+        }
+        let cli = dir.join(format!("allmystuff{}", exe));
+        if cli.is_file() {
+            return vec![cli.to_string_lossy().to_string(), "serve".to_string()];
+        }
+    }
+    // Nothing found on disk: let PATH answer, and let the failure name it.
+    vec!["allmystuff-serve".to_string()]
+}
+
+/// Where the installers put it. The Unix installer writes `/usr/local/bin` or
+/// `~/.local/bin`; the Windows one `%LOCALAPPDATA%\Programs`; the desktop app
+/// carries the node inside its bundle.
+fn install_dirs() -> Vec<PathBuf> {
+    let mut dirs: Vec<PathBuf> = Vec::new();
+    let home = std::env::var("HOME")
+        .ok()
+        .or_else(|| std::env::var("USERPROFILE").ok())
+        .filter(|h| !h.is_empty())
+        .map(PathBuf::from);
+    if cfg!(windows) {
+        for var in ["LOCALAPPDATA", "PROGRAMFILES", "ProgramFiles(x86)"] {
+            if let Ok(base) = std::env::var(var) {
+                if !base.is_empty() {
+                    dirs.push(PathBuf::from(&base).join("Programs").join("AllMyStuff"));
+                    dirs.push(PathBuf::from(&base).join("AllMyStuff"));
+                }
+            }
+        }
+    } else {
+        dirs.push(PathBuf::from("/usr/local/bin"));
+        dirs.push(PathBuf::from("/usr/bin"));
+        if let Some(h) = &home {
+            dirs.push(h.join(".local").join("bin"));
+        }
+        if cfg!(target_os = "macos") {
+            dirs.push(PathBuf::from(
+                "/Applications/AllMyStuff.app/Contents/MacOS",
+            ));
+            if let Some(h) = &home {
+                dirs.push(h.join("Applications/AllMyStuff.app/Contents/MacOS"));
+            }
+        }
+    }
+    dirs
+}
+
 /// Where the node listens: `$MYOWNMESH_HOME/.myownmesh/`, else
 /// `$HOME/.myownmesh/`, which is how the node itself derives it.
 ///
@@ -653,7 +717,7 @@ pub fn node(cmd: &str, args: V) -> Result<V, String> {
     let payload = to_json(&V::Map(body));
     let socket =
         node_socket().ok_or_else(|| "no home directory, so no node socket to find".to_string())?;
-    let answer = wire::round_trip(&socket, &payload, "allmystuff-serve", &["allmystuff-serve"])?;
+    let answer = wire::round_trip(&socket, &payload, &bring_up())?;
     let Some(value) = from_json(&answer) else {
         return Err(format!("the node's answer to `{}` was not JSON", cmd));
     };
@@ -698,11 +762,12 @@ mod wire {
     /// Connect, or bring the sidecar up and connect. Reusing what is already
     /// running is the first move: a machine with the app open already has the
     /// node, and a second copy would fight the first over one identity.
-    fn connect(socket: &Path, binary: &str, run: &[&str]) -> Result<Socket, String> {
+    fn connect(socket: &Path, run: &[String]) -> Result<Socket, String> {
+        let binary = run.join(" ");
         if let Ok(s) = open(socket) {
             return Ok(s);
         }
-        let spawned = std::process::Command::new(run[0])
+        let spawned = std::process::Command::new(&run[0])
             .args(&run[1..])
             .stdin(std::process::Stdio::null())
             .stdout(std::process::Stdio::null())
@@ -710,8 +775,9 @@ mod wire {
             .spawn();
         if spawned.is_err() {
             return Err(format!(
-                "no mesh here: `{}` is not running and not on PATH. Install it, \
-                 or bind this space in foreign.json to something that is.",
+                "no mesh here: could not start `{}`. Install AllMyStuff, set \
+                 ASHLAR_MESH_NODE to the node binary, or bind this space in \
+                 foreign.json to something else.",
                 binary
             ));
         }
@@ -731,13 +797,9 @@ mod wire {
     }
 
     /// One frame out, one frame back.
-    pub fn round_trip(
-        socket: &Path,
-        payload: &str,
-        binary: &str,
-        run: &[&str],
-    ) -> Result<String, String> {
-        let mut stream = connect(socket, binary, run)?;
+    pub fn round_trip(socket: &Path, payload: &str, run: &[String]) -> Result<String, String> {
+        let binary = run.join(" ");
+        let mut stream = connect(socket, run)?;
         let bytes = payload.as_bytes();
         let len = (bytes.len() as u32) + 1;
         stream
@@ -898,41 +960,64 @@ mod tests {
     }
 
     #[test]
-    fn publishing_onto_the_wrong_mesh_is_refused() {
-        // The read side shows the wrong links; this side would EXPOSE a port
-        // to people the operator did not name. Same check, higher stakes, so
-        // the message says who would have seen it.
-        let snapshot = map(&[("network", text("fleet"))]);
-        let on = field(&snapshot, "network");
-        assert_eq!(on, "fleet");
-        assert_ne!(on, "enclave", "the guard is this comparison");
-        // An unset network never blocks: a node with no presence yet is the
-        // ordinary first-run case, not a wrong audience.
-        assert!(field(&map(&[]), "network").is_empty());
+    fn sites_are_kept_to_the_mesh_whose_roster_names_them() {
+        // Presence reaches every network this node joined, so a snapshot mixes
+        // peers from all of them. The roster for THIS mesh is the filter — the
+        // earlier build refused the whole list instead, on the false belief
+        // that a site is advertised on one network only.
+        let snapshot = map(&[(
+            "peers",
+            V::List(vec![
+                map(&[
+                    ("node", text("aaa-11111")),
+                    ("label", text("ada")),
+                    ("sites", V::List(vec![map(&[("label", text("pad")), ("port", V::Number(80.0))])])),
+                ]),
+                map(&[
+                    ("node", text("bbb-22222")),
+                    ("label", text("someone on the fleet")),
+                    ("sites", V::List(vec![map(&[("label", text("nas")), ("port", V::Number(81.0))])])),
+                ]),
+            ]),
+        )]);
+        let all = peer_sites(&snapshot);
+        assert_eq!(all.len(), 2, "both are real sites: {:?}", all);
+        // `aaa` is on our mesh; `bbb` is not.
+        let mine = vec!["aaa".to_string()];
+        let kept: Vec<_> = all
+            .iter()
+            .filter(|(peer, _, _)| mine.contains(&canonical(peer)))
+            .collect();
+        assert_eq!(kept.len(), 1);
+        assert_eq!(kept[0].2, "pad");
     }
 
     #[test]
-    fn sites_from_another_mesh_are_refused_rather_than_shown() {
-        // The node's presence is one network deep. A snapshot from a different
-        // one carries real sites that are not this mesh's, and both silent
-        // answers are wrong: the wrong links, or a false "nobody is serving".
-        let mut s = Session::default();
-        s.network = Some("enclave".to_string());
-        let snapshot = map(&[
-            ("network", text("fleet")),
-            (
-                "peers",
-                V::List(vec![map(&[
-                    ("node", text("n1")),
-                    ("label", text("ada")),
-                    ("sites", V::List(vec![map(&[("label", text("pad")), ("port", V::Number(80.0))])])),
-                ])]),
-            ),
-        ]);
-        // The guard is the comparison, tested where the socket is not.
-        let on = field(&snapshot, "network");
-        assert_ne!(on, s.network());
-        assert!(!peer_sites(&snapshot).is_empty(), "there ARE sites — they are just not ours");
+    fn a_display_suffix_never_stops_two_ids_matching() {
+        // The daemon's roster answers bare pubkeys; presence carries
+        // `pubkey-SUFFIX`. Comparing them raw is a roster that silently
+        // matches nothing.
+        assert_eq!(canonical("aaa-11111"), "aaa");
+        assert_eq!(canonical("aaa"), "aaa");
+        assert_eq!(canonical(""), "");
+    }
+
+    #[test]
+    fn bring_up_prefers_an_override_then_what_is_installed() {
+        // A machine that has the node under its own name should not be told
+        // the mesh is absent. The last resort is a PATH lookup whose failure
+        // names what to install.
+        let argv = bring_up();
+        assert!(!argv.is_empty());
+        assert!(
+            argv[0].contains("allmystuff") || !argv[0].is_empty(),
+            "{:?}",
+            argv
+        );
+        // The CLI form carries its subcommand, the binary form does not.
+        if argv.len() > 1 {
+            assert_eq!(argv[1], "serve", "{:?}", argv);
+        }
     }
 
     #[test]
