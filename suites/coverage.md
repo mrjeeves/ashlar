@@ -113,9 +113,9 @@ node — and both skip with a printed reason when the co-process's language is
 absent. `enclave` also carries the G5 half `vendor` cannot check: its
 `vendor/mesh/` is asserted byte-identical to `lib/mesh/`, because a vendored
 dependency that drifts from its source is the version skew a registry exists to
-manage and this language refuses to have. What the stand-in cannot prove — a
-second machine — is named in `docs/roadmap.md` rather than implied by a green
-run.
+manage and this language refuses to have. What the stand-in cannot prove — two real machines, and what the
+network decides between them — is named in `docs/roadmap.md` rather than
+implied by a green run.
 
 ## Machine-readable index
 
