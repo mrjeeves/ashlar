@@ -102,9 +102,10 @@ pub fn derived_worker(space: &str) -> Option<Vec<String>> {
 /// Whether an argv is this toolchain answering its own derived default. A
 /// worker named `ashlar` is only findable when the toolchain is on PATH, and
 /// it very often is not — a `cargo run` build, a binary in a release
-/// directory. Spawning falls back to the running executable for exactly this
-/// argv and nothing else, so the derived default works wherever `ashlar`
-/// itself was started from without turning every worker into a guess.
+/// directory. The CLI therefore publishes its own path as `ASHLAR_SELF`, and
+/// spawning uses it for exactly this argv and nothing else, so the derived
+/// default works wherever `ashlar` was started from without turning every
+/// worker into a guess about what is running.
 pub fn is_self_worker(run: &[String]) -> bool {
     run.len() == 3 && run[0] == "ashlar" && run[1] == "mesh" && run[2] == "worker"
 }
@@ -692,12 +693,15 @@ impl Worker {
 
 fn spawn_worker(root: &Path, run: &[String]) -> Result<Worker, std::io::Error> {
     // The derived mesh binding names this toolchain, which is not always on
-    // PATH under the name `ashlar`. Answer it with the executable that is
-    // already running rather than refusing a capability we ourselves provide.
-    let program: PathBuf = if is_self_worker(run) {
-        std::env::current_exe().unwrap_or_else(|_| PathBuf::from(&run[0]))
-    } else {
-        PathBuf::from(&run[0])
+    // PATH under the name `ashlar`, so the CLI records where it lives and the
+    // fallback uses that. It is NOT `current_exe`: this library is embedded in
+    // other programs (its own test harness, for one), and spawning whatever
+    // binary happens to be running as a mesh worker answers with that
+    // program's output — which arrives here as "returned malformed JSON",
+    // three layers from the cause.
+    let program: PathBuf = match (is_self_worker(run), std::env::var("ASHLAR_SELF")) {
+        (true, Ok(path)) if !path.is_empty() => PathBuf::from(path),
+        _ => PathBuf::from(&run[0]),
     };
     let mut child = Command::new(program)
         .args(&run[1..])

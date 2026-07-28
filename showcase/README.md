@@ -28,6 +28,10 @@ other and with `examples/gallery/settings.json` — so the three copies cannot
 drift, a new example cannot stay out of the gallery, and the gallery cannot
 frame an address nothing is serving.
 
+`enclave` asks the mesh node this machine runs; with none it serves and faults
+at the boundary rather than showing an empty roster it has not checked, and the
+launcher says so with the one line that binds its stand-in instead.
+
 On Windows, seventeen of the eighteen work unchanged. `ledger` reaches SQLite over
 the `native` transport, which needs a POSIX dynamic loader, so its page serves
 but its store faults with that correction; `abacus` is the cross-platform

@@ -1,3 +1,0 @@
-{
-  "mesh": { "via": "worker", "run": ["python3", "foreign/enclave.py"] }
-}

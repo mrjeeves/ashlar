@@ -1,4 +1,13 @@
-"""A stand-in for the mesh, so this example runs on a machine that has none.
+"""A stand-in for the mesh, for demonstrating this example without one.
+
+NOT the default. The example ships no `foreign.json` at all, so it binds the
+mesh node on the machine that runs it and shows that node's real roster. Bind
+this instead only when there is no mesh to talk to:
+
+    { "mesh": { "via": "worker", "run": ["python3", "foreign/enclave.py"] } }
+
+and know what you are then looking at — a page that says zero peers because it
+is asking a Python script, not because your mesh is empty.
 
 It speaks the whole `mesh` contract (§9.10) over JSON Lines and answers
 truthfully about a mesh of one: this node, and whichever peers
@@ -6,11 +15,9 @@ truthfully about a mesh of one: this node, and whichever peers
 that file, so the shipped example shows the empty roster rather than a
 pretend one.
 
-The real binding is `ashlar mesh worker`, which is what the space derives to
-with no `foreign.json` at all: it drives the control socket this machine's mesh
-node already exposes. Delete this file and its binding and the same program
-talks to it — that is the whole point of a capability whose transport is a
-deployment fact (ADR-0017).
+That is the whole point of a capability whose transport is a deployment fact
+(ADR-0017): one program, one set of names, and the deployment decides whether
+they reach a mesh or a script.
 """
 
 import json

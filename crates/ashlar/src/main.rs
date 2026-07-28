@@ -1537,6 +1537,13 @@ mod cli {
 }
 
 fn main() {
+    // The mesh spaces derive to `ashlar mesh worker` (§9.10), and `ashlar` is
+    // not always on PATH. Say where this binary is so the boundary can spawn
+    // it; nothing else reads this, and a program embedding the library sets
+    // nothing, which is what keeps it from spawning ITSELF as a worker.
+    if let Ok(exe) = std::env::current_exe() {
+        std::env::set_var("ASHLAR_SELF", exe);
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     match cli::parse(&args) {
         Ok(cmd) => std::process::exit(cli::run(cmd)),

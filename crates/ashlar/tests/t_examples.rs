@@ -91,6 +91,18 @@ fn staged(name: &str) -> PathBuf {
     let _ = std::fs::remove_dir_all(&dst);
     std::fs::create_dir_all(&dst).unwrap();
     copy_tree(&src, &dst);
+    // `enclave` ships NO binding, so a person who runs it talks to the mesh
+    // node on their machine and sees that node's real roster. This suite has
+    // no mesh, so every staged copy binds the stand-in — in the temp tree,
+    // never in the repository. Same names, different transport, which is the
+    // claim ADR-0017 makes and this exercises rather than asserts.
+    if name == "enclave" {
+        std::fs::write(
+            dst.join("foreign.json"),
+            "{\n  \"mesh\": { \"via\": \"worker\", \"run\": [\"python3\", \"foreign/enclave.py\"] }\n}\n",
+        )
+        .unwrap();
+    }
     dst
 }
 

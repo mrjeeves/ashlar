@@ -103,18 +103,27 @@ else
   echo
 fi
 
-# Two examples reach a co-process rather than a library: `abacus` runs a Python
-# worker, and `enclave` ships a stand-in for the mesh so it demonstrates on a
-# machine that has none. Both serve without python3 and then fault at the
-# boundary on every call — which reads as a broken page rather than a missing
-# package, so say it here instead.
+# Two examples reach something this repository does not ship. Say so here,
+# because both serve and then fault at the boundary on every call, which reads
+# as a broken page rather than a missing part.
 if ! command -v python3 >/dev/null 2>&1; then
   echo
-  echo "  python3 is not on PATH. \`abacus\` and \`enclave\` will serve, but every"
-  echo "  call across their boundary will fault with that correction — their"
-  echo "  co-processes are Python. The other sixteen are unaffected."
-  echo "  (\`enclave\` also runs against a real mesh: delete its foreign.json and"
-  echo "  it binds the mesh node this machine runs.)"
+  echo "  python3 is not on PATH, so \`abacus\` will serve and then fault at its"
+  echo "  boundary — its worker is Python."
+  echo
+fi
+if [ ! -S "${MYOWNMESH_HOME:-$HOME/.myownmesh}/allmystuff-node.sock" ] \
+   && [ ! -S "$HOME/.myownmesh/allmystuff-node.sock" ]; then
+  echo
+  echo "  No mesh node is listening, so \`enclave\` will serve and then fault at"
+  echo "  its boundary. That is the honest answer: it asks the mesh THIS machine"
+  echo "  runs, and shows a real roster when there is one. To see the page"
+  echo "  without a mesh, bind its stand-in deliberately:"
+  echo
+  echo "    echo '{\"mesh\":{\"via\":\"worker\",\"run\":[\"python3\",\"foreign/enclave.py\"]}}' \\"
+  echo "      > examples/enclave/foreign.json"
+  echo
+  echo "  — and read the zero it then shows as \"asking a script\"."
   echo
 fi
 
