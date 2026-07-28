@@ -222,6 +222,25 @@ impl Session {
         if !joined {
             node("mesh_network_add", V::Map(network_config(network, label)))?;
         }
+        // A site is advertised through PRESENCE, and the node runs presence on
+        // one network — the first it joined. Publishing while that is some
+        // other mesh would put this site in front of the wrong audience: not
+        // "it did not work", but "it worked, at people you did not mean". The
+        // read side merely shows the wrong list; this one exposes a port. So
+        // it refuses, and says what to change.
+        let on = field(
+            &node("session_snapshot", V::Map(BTreeMap::new()))?,
+            "network",
+        );
+        if !on.is_empty() && on != network {
+            return Err(format!(
+                "this node advertises on `{}`, not `{}`, and a site is \
+                 advertised through presence — publishing now would put it in \
+                 front of `{}`. Make `{}` the node's first network, or run \
+                 without --mesh.",
+                on, network, on, network
+            ));
+        }
         // Add one port to the owner's exposed selection and leave the rest
         // alone. The node's proxy refuses every port outside that selection,
         // so this is the whole of publishing — and it cannot reach a service
@@ -827,6 +846,20 @@ mod tests {
         assert_eq!(sites.len(), 2, "a peer with no node id is skipped: {:?}", sites);
         assert_eq!(sites[0], ("n1".to_string(), 8080, "pad".to_string()));
         assert_eq!(sites[1], ("n1".to_string(), 9000, "ada :9000".to_string()));
+    }
+
+    #[test]
+    fn publishing_onto_the_wrong_mesh_is_refused() {
+        // The read side shows the wrong links; this side would EXPOSE a port
+        // to people the operator did not name. Same check, higher stakes, so
+        // the message says who would have seen it.
+        let snapshot = map(&[("network", text("fleet"))]);
+        let on = field(&snapshot, "network");
+        assert_eq!(on, "fleet");
+        assert_ne!(on, "enclave", "the guard is this comparison");
+        // An unset network never blocks: a node with no presence yet is the
+        // ordinary first-run case, not a wrong audience.
+        assert!(field(&map(&[]), "network").is_empty());
     }
 
     #[test]
