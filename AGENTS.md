@@ -770,8 +770,9 @@ co-process is this toolchain: `mesh` — who else is on the private network this
 machine joined, and the sites they serve. `ashlar mesh worker` speaks the
 control socket the mesh already exposes to its own clients, so nothing outside
 the project changes to make the boundary work. `ashlar run --mesh` publishes
-the port it is serving through it, reaching that network and nobody else;
-`ashlar mesh` says what it answers.
+the port it is serving through it, reaching that network and nobody else, and
+refusing when the node advertises on another; `ashlar mesh` says what it
+answers.
 
 A foreign call may name a reactive collection, so a store behind the boundary
 is live without leaving the language:

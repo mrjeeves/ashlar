@@ -21,14 +21,27 @@ that exact baseline after the reference moved into the contract. Serves **A3**.
 Proven by: a 25-fixture run under `suites/t_a3/PROTOCOL.md`, recorded with the
 agent surface and revision it used.
 
+**Publishing refuses on a stock node.** A site is advertised through presence,
+and the node runs presence on the FIRST network it joined — which on a stock
+machine is its own local-claim area, joined at bring-up before anything else.
+So `run --mesh` refuses on every stock node, correctly (advertising to the
+wrong audience is worse than not advertising) and unhelpfully: the roster works
+out of the box and publishing does not. Closing it needs the node to accept
+which network to advertise on, which is a change to AllMyStuff and not ours to
+make. Serves **B5, G4**. Proven by: a run on a node whose advertised network is
+the app's, with a peer opening the published port; until then the refusal, its
+message, and this entry are the whole truth about it.
+
 **The mesh is driven against a stand-in, never a mesh.** `examples/enclave`
 binds `mesh` to a co-process that speaks the whole contract and answers for a
 mesh of one, so `t_examples` drives the roster, the schedule, the `updates`
-re-render and the socket patch on a machine with no node. What
-that cannot prove is the half that needs two machines: that `run --mesh`
-publishes a port a *peer* can open, that a peer's site arrives with a reachable
-address, and that a roster changes when a node actually leaves. Serves **B5,
-G4**. Proven by: a hand-run gate against two machines running the mesh node,
+re-render and the socket patch on a machine with no node. The roster half is
+now proven past it: two full stacks on one box, two identities, each seeing the
+other `here` through the derived default with no binding file. What neither run
+can prove is what needs two machines and a node advertising on the app's mesh —
+that `run --mesh` publishes a port a *peer* can open, that a peer's site arrives
+with a reachable address, and that a roster changes when a node actually
+leaves. Serves **B5, G4**. Proven by: a hand-run gate against two machines running the mesh node,
 recorded like T-BROWSER's — a second node's site opened from the first, and
 `ashlar mesh` agreeing with the node on both. The Windows half of the socket
 is in the same gate: a named pipe is opened here with `std` alone and has
