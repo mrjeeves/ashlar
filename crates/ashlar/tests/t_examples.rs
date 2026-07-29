@@ -1256,6 +1256,10 @@ mod fake_node {
         pub sites: Vec<(String, String, u16)>,
         pub exposed: BTreeMap<String, String>,
         pub networks: Vec<String>,
+        /// The base name of every file this node was asked to offer.
+        pub minted: Vec<String>,
+        /// Every token this node was asked to fetch.
+        pub fetched: Vec<String>,
         /// `room|text` for every line this node was asked to transmit.
         pub sent: Vec<String>,
         /// Every command this node was asked to run. The rename regression is
@@ -1293,6 +1297,31 @@ mod fake_node {
                             ("room", text(room)),
                             ("kind", text("chat")),
                             ("text", text(said)),
+                        ]),
+                    ),
+                ]),
+            )
+        }
+
+        /// A member restating what it offers the room.
+        pub fn hears_shared(&self, from: &str, room: &str, token: &str, name: &str) {
+            self.emit(
+                "allmystuff://room",
+                map(&[
+                    ("from", text(from)),
+                    (
+                        "message",
+                        map(&[
+                            ("room", text(room)),
+                            ("kind", text("share_list")),
+                            (
+                                "files",
+                                V::List(vec![map(&[
+                                    ("token", text(token)),
+                                    ("name", text(name)),
+                                    ("size", V::Number(3.0)),
+                                ])]),
+                            ),
                         ]),
                     ),
                 ]),
@@ -1484,6 +1513,70 @@ mod fake_node {
                         .unwrap_or_default(),
                 ));
                 V::None
+            }
+            // The room's own file lane: a token whose allow-list is the
+            // members, and one request — fetch it — checked per call. No
+            // share, no grant, nothing durable.
+            "room_share_files" => {
+                let paths = match ashlar::meshd::at(&args, "paths") {
+                    Some(V::List(p)) => p,
+                    _ => vec![],
+                };
+                V::List(
+                    paths
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| {
+                            let named = ashlar::meshd::as_text(p);
+                            let base =
+                                named.rsplit('/').next().unwrap_or(&named).to_string();
+                            st.minted.push(base.clone());
+                            map(&[
+                                ("token", text(&format!("tok{}", i + 1))),
+                                ("name", text(&base)),
+                                ("size", V::Number(3.0)),
+                            ])
+                        })
+                        .collect(),
+                )
+            }
+            "connect_route" => text("route-1"),
+            "disconnect_route" => V::None,
+            "file_watch" => V::Number(1.0),
+            "file_download" => {
+                // The node writes a fetch into Downloads and answers with
+                // where it landed. The test's "Downloads" is a temp file.
+                let landing = std::env::temp_dir()
+                    .join(format!("ashlar_fetched_{}", std::process::id()));
+                std::fs::write(&landing, b"hi
+").unwrap();
+                text(&landing.to_string_lossy())
+            }
+            "file_send" => {
+                st.fetched.push(
+                    ashlar::meshd::at(&args, "event")
+                        .map(|e| match ashlar::meshd::at(&e, "token") {
+                            Some(V::Text(t)) => t,
+                            _ => String::new(),
+                        })
+                        .unwrap_or_default(),
+                );
+                V::None
+            }
+            // One frame, `[u32 le len][json]`, saying the transfer ended.
+            "file_poll" => {
+                let frame = to_json(&map(&[
+                    ("kind", text("chunk")),
+                    ("req", V::Number(1.0)),
+                    ("eof", V::Bool(true)),
+                ]));
+                let mut bytes: Vec<V> = (frame.len() as u32)
+                    .to_le_bytes()
+                    .iter()
+                    .map(|b| V::Number(*b as f64))
+                    .collect();
+                bytes.extend(frame.bytes().map(|b| V::Number(b as f64)));
+                V::List(bytes)
             }
             "site_mappings" => V::List(vec![]),
             // The node binds a local port and proxies it over the mesh; the
@@ -1720,6 +1813,40 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
     );
     let mine = ws_expect(&mut ws, "mesh-said", 8);
     assert!(mine.contains("here"), "the sender sees its own line: {}", mine);
+    // A member puts a file up. The room's file lane is NOT the share
+    // subsystem: the token's allow-list is the members, so nothing durable is
+    // granted and nothing has to be revoked.
+    node.hears_shared("n1", &room, "tok9", "notes.txt");
+    let shelf = ws_expect(&mut ws, "notes.txt", 8);
+    assert!(
+        shelf.contains("mesh-offer"),
+        "an offer arrives as a push and patches the shelf: {}",
+        shelf
+    );
+    // Nothing is fetched until somebody asks — an offer is a list, not a
+    // transfer. Ask, and the bytes land under the site's own assets, where a
+    // `files` part serves them like anything else.
+    let (inst, get) = event_target(&shelf, "onclick", 0).unwrap();
+    ws_send(
+        &mut ws,
+        &format!(
+            "{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onclick\"}}}}",
+            inst, get
+        ),
+    );
+    let after = ws_expect(&mut ws, "/room/notes.txt", 8);
+    assert!(
+        after.contains("<a href=\"/room/notes.txt\""),
+        "a fetched file is an ordinary link on this site: {}",
+        after
+    );
+    {
+        let st = node.state.lock().unwrap();
+        assert_eq!(st.fetched, vec!["tok9".to_string()], "one fetch, by token");
+    }
+    let (status, _, body) = req(port, "GET", "/room/notes.txt", None, None);
+    assert_eq!((status, body.trim()), (200, "hi"), "and it serves");
+
     drop(ws);
     {
         let st = node.state.lock().unwrap();

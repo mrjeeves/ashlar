@@ -35,6 +35,8 @@ part page {
       el("p", { class: "lede" }, ["A room for the people who hold this program's mesh id, and nobody else. No server in the middle, no account to make, no address anyone wrote down. Everything below is server-rendered and arrives when it happens."]),
       el(mesh.talk, {}),
       el(mesh.speak, {}),
+      el("h2", {}, ["On the shelf"]),
+      el(mesh.shelf, {}),
       el("h2", {}, ["Who is here"]),
       el(mesh.grid, {}),
       el("h2", {}, ["This node"]),

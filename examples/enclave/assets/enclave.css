@@ -216,3 +216,43 @@ body {
   font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
+
+/* -- what the room is passing around ------------------------------------- */
+
+.mesh-shelf {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.mesh-offer {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.mesh-offer-who {
+  color: var(--muted);
+  font-size: 12px;
+  flex: none;
+  max-width: 12ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mesh-offer button,
+.mesh-offer a {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: none;
+}

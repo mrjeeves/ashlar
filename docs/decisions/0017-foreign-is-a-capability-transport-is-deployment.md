@@ -234,6 +234,23 @@ worker that never pushes is unaffected, which is why this is an addition to the
 envelope and not a version of it. The cost is one thread per worker and one
 queue; the alternative was every reactive co-process inventing its own schedule.
 
+**A room's files are not a share.** Two things in that stack look alike and
+are not: a `Share` is a durable grant relationship with a *person* who brings a
+fleet, minted by an explicit act and revoked by another; a room's Shared Files
+lane is a token whose allow-list is the room's members, checked on every fetch
+and gone when the offer is restated without it. The node's own code draws the
+line — the shared lane is "token-gated, never owner/fleet", and the route
+carries exactly one request, `Fetch { req, token }`, with no path browsing and
+no writes.
+
+An Ashlar room takes the second and none of the first. Membership IS the
+authorization, which is the same sentence as "the mesh id is the invite":
+nothing durable is granted to anyone, so nothing has to be revoked, and a
+member that leaves the mesh stops being on the allow-list the next time the
+offer is stated. Reaching for `share_grant` here would have added a person
+model, a grant lifecycle, and a revocation story to a room whose whole
+admission rule is already one secret.
+
 **The mesh is the room.** The node's rooms have a host: it mints the id,
 states the roster, and admits knocks. That is right when a room is a subset of
 a mesh, and wrong for an Ashlar app, whose mesh id is already the invite —

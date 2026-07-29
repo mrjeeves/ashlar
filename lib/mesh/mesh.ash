@@ -114,6 +114,56 @@ part speak {
   }
 }
 
+// -- Passing things around ----------------------------------------------------
+//
+// A room's files are not a share. The uploader mints a token whose allow-list
+// is the room's members, and the one request a peer may make is "fetch this
+// token" — checked against that list every time. Nothing durable is granted to
+// anyone, so nothing has to be revoked: membership IS the authorization, which
+// is the same sentence as "the mesh id is the invite".
+
+// One file somebody put up. `url` is empty until this machine has fetched it,
+// and is then an ordinary path on this site — the bytes are here.
+part Offer {
+  peer: text
+  who: text
+  token: text
+  name: text
+  size: number
+  url: text
+}
+
+// `offer` states this machine's WHOLE current list, so offering fewer paths is
+// how a file is taken back down.
+foreign offer: (paths: [text]) -> [mesh.Offer] updates mesh.Offer
+foreign offered: () -> [mesh.Offer] watches mesh.Offer
+foreign fetch: (peer: text, token: text, name: text) -> text updates mesh.Offer
+
+// Fetched bytes land under the project's own assets, so serving them is the
+// ordinary static-file part (§9.8) and nothing new. An app that carries the
+// shelf below carries this too.
+part held {
+  route = "/room"
+  files = "room"
+}
+
+// The shelf: what the room is offering, and a way to pull one here. A file
+// nobody has fetched yet is a button; once its bytes are local it is a link.
+// Classes: `mesh-shelf`, `mesh-offer`, `mesh-offer-who`, `mesh-empty`.
+part shelf {
+  view = () => el("div", { class: "mesh-shelf" }, items())
+  items = () => {
+    let all = offered()
+    if len(all) == 0 {
+      return [el("p", { class: "mesh-empty" }, ["Nothing on the shelf."])]
+    }
+    return map(all, (o: mesh.Offer) => el("div", { class: "mesh-offer" }, [
+      el("span", { class: "mesh-offer-who" }, [o.who]),
+      if o.url == "" { el("button", { onclick: (e: std.Event) => fetch(o.peer, o.token, o.name) }, [o.name]) } else { el("a", { href: o.url }, [o.name]) },
+    ]))
+  }
+}
+
 // The app's own mesh. Both values are settings: the name and shape are
 // source, the value is deployment's (§9.12) — so one program can be run on
 // the shared area, on a customer's private one, or on a throwaway for a

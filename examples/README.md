@@ -260,6 +260,14 @@ it re-renders over the socket. The library carried a three-second schedule for
 this once; it was late by up to three seconds and, on a quiet mesh, entirely
 wasted.
 
+`mesh.shelf` passes things around. A room's files are not the share
+subsystem: the uploader mints a token whose allow-list is the room's members
+and the one request a peer may make is "fetch this token", checked every time.
+Nothing durable is granted, so nothing has to be revoked. An offer arrives as a
+push and sits on the shelf until somebody asks for it; fetched bytes land under
+the project's own assets, so serving them is the ordinary static-file part and
+the language grows nothing.
+
 The site half is the smaller point, kept because it makes one:
 `ashlar run --mesh` publishes the port the origin is serving to that mesh, and
 `ashlar mesh` says what the machine can answer. The example binds nothing, so

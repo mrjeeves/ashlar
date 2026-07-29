@@ -56,6 +56,47 @@ pub const PEER_SHAPE: &str = "mesh.Peer";
 /// The collection the messages live in, as `lib/mesh` declares it.
 pub const SAID_SHAPE: &str = "mesh.Said";
 
+/// The collection the room's offered files live in.
+pub const OFFER_SHAPE: &str = "mesh.Offer";
+
+/// Where a fetched file lands so the site can serve it: under the project's
+/// own assets, which is where a `files` part reads from at request time. The
+/// worker runs with the project root as its working directory, so this is the
+/// one place it can put bytes that the program already knows how to serve.
+pub const ROOM_FILES: &str = "assets/room";
+
+/// One file somebody offered into the room.
+///
+/// A room's file lane is NOT the share subsystem: no person, no grant, no
+/// durable relationship. The uploader mints a token whose allow-list is the
+/// room's members, and the `:shared` route carries exactly one request —
+/// fetch this token — which the uploader resolves against that list on every
+/// request. Membership is the whole of the authorization, which is the same
+/// sentence as "the mesh id is the invite".
+#[derive(Debug, Clone, PartialEq)]
+pub struct Offer {
+    pub peer: String,
+    pub who: String,
+    pub token: String,
+    pub name: String,
+    pub size: f64,
+    /// Where this machine can open it, once fetched. Empty until then.
+    pub url: String,
+}
+
+impl Offer {
+    fn value(&self) -> V {
+        map(&[
+            ("peer", V::Text(self.peer.clone())),
+            ("who", V::Text(self.who.clone())),
+            ("token", V::Text(self.token.clone())),
+            ("name", V::Text(self.name.clone())),
+            ("size", V::Number(self.size)),
+            ("url", V::Text(self.url.clone())),
+        ])
+    }
+}
+
 /// One line somebody said, in the shape `mesh.Said` declares.
 ///
 /// Plain data rather than a `V`: the log is written by the watch thread and
@@ -234,6 +275,21 @@ impl Session {
                 self.say(&line).map_err(String::from)
             }
             "heard" => Ok(V::List(self.node.said())),
+            "offer" => {
+                let paths = match args.first() {
+                    Some(V::List(p)) => p.clone(),
+                    Some(other) => vec![other.clone()],
+                    None => Vec::new(),
+                };
+                self.offer(&paths).map_err(String::from)
+            }
+            "offered" => Ok(V::List(self.node.shelf())),
+            "fetch" => {
+                let peer = text_arg(args, 0)?;
+                let token = text_arg(args, 1)?;
+                let name = text_arg(args, 2)?;
+                self.fetch(&peer, &token, &name).map_err(String::from)
+            }
             // -- the sites (`mesh.sites`) ----------------------------------
             "expose" => {
                 let port = port_arg(args, 0)?;
@@ -251,7 +307,8 @@ impl Session {
             "nearby" => Ok(V::List(soft(self.nearby(), Vec::new())?)),
             other => Err(format!(
                 "no such call: `{}`. The mesh answers here, peers, networks, \
-                 enter, say, heard; its sites answer expose, unexpose, \
+                 enter, say, heard, offer, offered, fetch; its sites answer \
+                 expose, unexpose, \
                  published, nearby.",
                 other
             )),
@@ -422,6 +479,139 @@ impl Session {
             at: now_ms(),
         });
         Ok(V::Bool(true))
+    }
+
+    /// Offer files to the room. The token's allow-list is the roster, so
+    /// membership is the whole of the authorization — no grant, no person,
+    /// nothing durable to revoke afterwards. Restating the offer with fewer
+    /// paths is how a member takes one back.
+    fn offer(&mut self, paths: &[V]) -> Result<V, Trouble> {
+        let members = self.member_ids()?;
+        let mut args = BTreeMap::new();
+        args.insert("members".to_string(), V::List(members.clone()));
+        args.insert(
+            "paths".to_string(),
+            V::List(paths.iter().map(|p| V::Text(as_text(p))).collect()),
+        );
+        let minted = match self.node.ask("room_share_files", V::Map(args))? {
+            V::List(files) => files,
+            _ => Vec::new(),
+        };
+        // Tell the room. There is no host to aggregate, so every member is
+        // told directly and keeps the shelf itself.
+        let mut message = BTreeMap::new();
+        message.insert("room".to_string(), V::Text(room_of(&self.network())));
+        message.insert("name".to_string(), V::Text(self.network()));
+        message.insert("kind".to_string(), V::Text("share_list".to_string()));
+        message.insert("files".to_string(), V::List(minted.clone()));
+        if !members.is_empty() {
+            let mut send = BTreeMap::new();
+            send.insert("members".to_string(), V::List(members));
+            send.insert("message".to_string(), V::Map(message));
+            self.node.ask("room_send", V::Map(send))?;
+        }
+        // And keep our own, so the page shows what this machine put up.
+        let me = self
+            .node
+            .ask("mesh_identity", V::Map(BTreeMap::new()))
+            .map(|v| field(&v, "device_id"))
+            .unwrap_or_default();
+        self.node.offered_by(&me, &minted);
+        Ok(V::List(self.node.shelf()))
+    }
+
+    /// Pull one offered file here, and answer where this machine can open it.
+    ///
+    /// The route carries one request — fetch this token — and the uploader
+    /// checks the token against the members it shared with, per request. The
+    /// bytes land in this machine's Downloads folder, because that is what
+    /// the node does with a fetch; copying them under the project's assets is
+    /// what makes them servable, since a `files` part reads that directory at
+    /// request time.
+    fn fetch(&mut self, peer: &str, token: &str, name: &str) -> Result<V, Trouble> {
+        let me = self
+            .node
+            .ask("mesh_identity", V::Map(BTreeMap::new()))
+            .map(|v| field(&v, "device_id"))
+            .unwrap_or_default();
+        let mut open = BTreeMap::new();
+        open.insert("from".to_string(), V::Text(me));
+        open.insert("to".to_string(), V::Text(peer.to_string()));
+        open.insert("media".to_string(), V::Text("shared".to_string()));
+        let route = match self.node.ask("connect_route", V::Map(open))? {
+            V::Text(id) => id,
+            other => field(&other, "route_id"),
+        };
+        if route.is_empty() {
+            return Err(Trouble::Refused(
+                "the node opened no route to that peer.".to_string(),
+            ));
+        }
+        let mut watch = BTreeMap::new();
+        watch.insert("route_id".to_string(), V::Text(route.clone()));
+        let _ = self.node.ask("file_watch", V::Map(watch));
+
+        // The sink is registered BEFORE the request, so the first chunk
+        // cannot race it — the node's own comment, and its own ordering.
+        let req = 1.0;
+        let mut sink = BTreeMap::new();
+        sink.insert("route_id".to_string(), V::Text(route.clone()));
+        sink.insert("req".to_string(), V::Number(req));
+        sink.insert("name".to_string(), V::Text(name.to_string()));
+        let landed = as_text(&self.node.ask("file_download", V::Map(sink))?);
+
+        let mut event = BTreeMap::new();
+        event.insert("kind".to_string(), V::Text("fetch".to_string()));
+        event.insert("req".to_string(), V::Number(req));
+        event.insert("token".to_string(), V::Text(token.to_string()));
+        let mut send = BTreeMap::new();
+        send.insert("route_id".to_string(), V::Text(route.clone()));
+        send.insert("event".to_string(), V::Map(event));
+        self.node.ask("file_send", V::Map(send))?;
+
+        let url = self.drain(&route, &landed, name)?;
+        let mut close = BTreeMap::new();
+        close.insert("route_id".to_string(), V::Text(route));
+        let _ = self.node.ask("disconnect_route", V::Map(close));
+        self.node.fetched(peer, token, &url);
+        Ok(V::Text(url))
+    }
+
+    /// Drive the transfer to its end, then put the bytes where the site can
+    /// serve them. Polling is the node's own shape here — it hands a window
+    /// its buffered frames — and the file is done when the host says `eof`
+    /// or refuses.
+    fn drain(&self, route: &str, landed: &str, name: &str) -> Result<String, Trouble> {
+        let mut args = BTreeMap::new();
+        args.insert("route_id".to_string(), V::Text(route.to_string()));
+        for _ in 0..600 {
+            let frames = self.node.ask("file_poll", V::Map(args.clone()))?;
+            for frame in file_frames(&frames) {
+                match field(&frame, "kind").as_str() {
+                    "err" => return Err(Trouble::Refused(field(&frame, "reason"))),
+                    "chunk" if matches!(at(&frame, "eof"), Some(V::Bool(true))) => {
+                        return place_under_assets(landed, name)
+                            .map_err(Trouble::Refused);
+                    }
+                    _ => {}
+                }
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        }
+        Err(Trouble::Refused(format!(
+            "`{}` never finished arriving.",
+            name
+        )))
+    }
+
+    /// The roster's ids, which are the room's members.
+    fn member_ids(&self) -> Result<Vec<V>, Trouble> {
+        Ok(self
+            .peers()?
+            .iter()
+            .map(|p| V::Text(field(p, "id")))
+            .filter(|id| !matches!(id, V::Text(t) if t.is_empty()))
+            .collect())
     }
 
     // -- the sites ----------------------------------------------------------
@@ -603,6 +793,73 @@ fn place(id: &str, label: &str, network: &str, peers: usize, reachable: bool, no
 // ---------------------------------------------------------------------------
 // Pure decisions — everything above the sockets
 // ---------------------------------------------------------------------------
+
+/// Any value as the text a command or a path wants.
+pub fn as_text(v: &V) -> String {
+    match v {
+        V::Text(t) => t.clone(),
+        V::None => String::new(),
+        other => to_json(other),
+    }
+}
+
+/// The frames one poll returned: `[u32 le len][frame json]…`, which is the
+/// node's own framing for a window draining its buffered file responses.
+pub fn file_frames(polled: &V) -> Vec<V> {
+    let text = match polled {
+        V::Text(t) => t.clone(),
+        V::List(items) => {
+            // A JSON transport hands the bytes back as numbers; rebuild them.
+            let bytes: Vec<u8> = items
+                .iter()
+                .filter_map(|n| match n {
+                    V::Number(n) => Some(*n as u8),
+                    _ => None,
+                })
+                .collect();
+            return frames_from_bytes(&bytes);
+        }
+        _ => return Vec::new(),
+    };
+    frames_from_bytes(text.as_bytes())
+}
+
+fn frames_from_bytes(bytes: &[u8]) -> Vec<V> {
+    let mut out = Vec::new();
+    let mut at = 0usize;
+    while at + 4 <= bytes.len() {
+        let len = u32::from_le_bytes([bytes[at], bytes[at + 1], bytes[at + 2], bytes[at + 3]])
+            as usize;
+        at += 4;
+        if len == 0 || at + len > bytes.len() {
+            break;
+        }
+        if let Ok(text) = std::str::from_utf8(&bytes[at..at + len]) {
+            if let Some(v) = from_json(text) {
+                out.push(v);
+            }
+        }
+        at += len;
+    }
+    out
+}
+
+/// Put fetched bytes where the site can serve them. The node writes a fetch
+/// into this machine's Downloads folder; a page can only link what the
+/// program's own assets carry, and a `files` part reads that directory at
+/// request time — so the copy is what turns "downloaded" into "openable".
+pub fn place_under_assets(landed: &str, name: &str) -> Result<String, String> {
+    let safe = std::path::Path::new(name)
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| "file".to_string());
+    let dir = std::path::PathBuf::from(ROOM_FILES);
+    std::fs::create_dir_all(&dir).map_err(|e| format!("could not make {}: {}", dir.display(), e))?;
+    std::fs::copy(landed, dir.join(&safe))
+        .map_err(|e| format!("could not place `{}`: {}", safe, e))?;
+    Ok(format!("/room/{}", safe))
+}
 
 /// A key at reading length. Enough to tell two people apart in a room, and
 /// not so much that the room is a wall of base32.
@@ -1019,6 +1276,9 @@ pub struct Node {
     /// What this site has heard, newest last. Shared for the same reason:
     /// messages arrive on the watch thread and are read by a view.
     heard: std::sync::Arc<std::sync::Mutex<Vec<Said>>>,
+    /// What the room is offering, keyed by `peer|token` so a member's
+    /// re-statement replaces its own entries and nobody else's.
+    offers: std::sync::Arc<std::sync::Mutex<BTreeMap<String, Offer>>>,
 }
 
 impl Node {
@@ -1028,6 +1288,7 @@ impl Node {
             start: Some(bring_up()),
             network: Node::area(),
             heard: Node::log(),
+            offers: Node::empty_shelf(),
         }
     }
 
@@ -1037,7 +1298,12 @@ impl Node {
             start: None,
             network: Node::area(),
             heard: Node::log(),
+            offers: Node::empty_shelf(),
         }
+    }
+
+    fn empty_shelf() -> std::sync::Arc<std::sync::Mutex<BTreeMap<String, Offer>>> {
+        std::sync::Arc::new(std::sync::Mutex::new(BTreeMap::new()))
     }
 
     fn log() -> std::sync::Arc<std::sync::Mutex<Vec<Said>>> {
@@ -1070,6 +1336,7 @@ impl Node {
             start: None, // a listener never starts a daemon
             network: self.network.clone(),
             heard: self.heard.clone(),
+            offers: self.offers.clone(),
         };
         let socket = self.socket.clone().expect("checked");
         std::thread::spawn(move || {
@@ -1093,8 +1360,8 @@ impl Node {
                     // construction — a message is not a state that can be
                     // re-stated — so there is nothing to compare it against.
                     "allmystuff://room" => {
-                        if node.remember(payload) {
-                            let _ = say(&out, &changed(SAID_SHAPE));
+                        if let Some(shape) = node.remember(payload) {
+                            let _ = say(&out, &changed(shape));
                         }
                     }
                     _ => {}
@@ -1142,27 +1409,86 @@ impl Node {
         self.ask("mesh_peers", V::Map(args)).unwrap_or(V::None)
     }
 
+    /// Record what a member says it is offering. Replacement semantics per
+    /// member, which is what the protocol states: the list a member sends is
+    /// its whole current list, so a file it stopped offering drops off.
+    fn offered_by(&self, peer: &str, files: &[V]) {
+        let who = self.who(peer);
+        let mine = canonical(peer);
+        if let Ok(mut shelf) = self.offers.lock() {
+            shelf.retain(|_, o| canonical(&o.peer) != mine);
+            for f in files {
+                let token = field(f, "token");
+                if token.is_empty() {
+                    continue;
+                }
+                shelf.insert(
+                    format!("{}|{}", mine, token),
+                    Offer {
+                        peer: peer.to_string(),
+                        who: who.clone(),
+                        name: field(f, "name"),
+                        size: match at(f, "size") {
+                            Some(V::Number(n)) => n,
+                            _ => 0.0,
+                        },
+                        url: String::new(),
+                        token,
+                    },
+                );
+            }
+        }
+    }
+
+    fn shelf(&self) -> Vec<V> {
+        match self.offers.lock() {
+            Ok(shelf) => shelf.values().map(Offer::value).collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// Mark one offer openable, once its bytes are here.
+    fn fetched(&self, peer: &str, token: &str, url: &str) {
+        if let Ok(mut shelf) = self.offers.lock() {
+            if let Some(o) = shelf.get_mut(&format!("{}|{}", canonical(peer), token)) {
+                o.url = url.to_string();
+            }
+        }
+    }
+
     /// Keep an arriving message if it is for this program's room, and say
     /// whether it was. Messages for another room on the same mesh — another
     /// app, the node's own GUI — are not ours to show.
-    pub fn remember(&self, arrival: &V) -> bool {
-        let Some(message) = at(arrival, "message") else {
-            return false;
-        };
+    pub fn remember(&self, arrival: &V) -> Option<&'static str> {
+        let message = at(arrival, "message")?;
         if field(&message, "room") != room_of(&self.network()) {
-            return false;
-        }
-        if field(&message, "kind") != "chat" {
-            return false;
+            return None;
         }
         let from = field(arrival, "from");
-        self.keep(Said {
-            who: self.who(&from),
-            from,
-            text: field(&message, "text"),
-            at: now_ms(),
-        });
-        true
+        match field(&message, "kind").as_str() {
+            "chat" => {
+                self.keep(Said {
+                    who: self.who(&from),
+                    from,
+                    text: field(&message, "text"),
+                    at: now_ms(),
+                });
+                Some(SAID_SHAPE)
+            }
+            // A member restating what it offers the room. With no host to
+            // aggregate, every member keeps the whole shelf itself — which
+            // is the same list, arrived at without anyone having to be
+            // online to hold it.
+            "share_list" => {
+                let files = match at(&message, "files") {
+                    Some(V::List(f)) => f,
+                    _ => Vec::new(),
+                };
+                self.offered_by(&from, &files);
+                Some(OFFER_SHAPE)
+            }
+            _ => None,
+        }
     }
 
     /// What to call whoever sent this, in a sentence a person reads: the name
@@ -1697,10 +2023,13 @@ mod tests {
                 ),
             ])
         };
-        assert!(!node.remember(&arrival("ashlar:elsewhere", "chat")));
-        assert!(!node.remember(&arrival("ashlar:enclave", "join")));
-        assert!(!node.remember(&V::None));
-        assert!(node.remember(&arrival("ashlar:enclave", "chat")));
+        assert_eq!(node.remember(&arrival("ashlar:elsewhere", "chat")), None);
+        assert_eq!(node.remember(&arrival("ashlar:enclave", "join")), None);
+        assert_eq!(node.remember(&V::None), None);
+        assert_eq!(
+            node.remember(&arrival("ashlar:enclave", "chat")),
+            Some(SAID_SHAPE)
+        );
         let said = node.said();
         assert_eq!(said.len(), 1);
         assert_eq!(at(&said[0], "text"), Some(V::Text("hi".into())));
