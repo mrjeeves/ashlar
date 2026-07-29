@@ -239,66 +239,41 @@ does. Needs `python3`; the driving test skips loudly without it.
 
 ## enclave
 
-A room for the people holding this program's mesh id, and nobody else. No
-server in the middle, no account, no address anyone wrote down: the id baked
-into the program IS the invite, so distributing the build is distributing the
-key, and a group changes its locks by rolling a new one.
+A chat program for the people who hold this program's mesh id, and nobody
+else. No server in the middle, no account, no address anyone wrote down: the
+id baked into the build IS the invite, so distributing the program distributes
+the key, and a group changes its locks by rolling a new one.
 
-One vendored space carries all of it: `mesh`. It is `foreign`, so the language
-grows nothing, and it derives to `ashlar mesh worker`, which drives the control
-socket the mesh node already exposes to its own clients — so a project that
-wants a room writes no binding, and the mesh ships nothing on Ashlar's behalf.
-`mesh.talk` and `mesh.speak` are the conversation, `mesh.grid` the roster,
-`mesh.panel` the settings in force. This app layers one setting to take its OWN
-mesh rather than share the shared one — the ordinary replace, applied to a
-dependency's default.
+The whole app is one element. `enclave.ash` is a `port`, a `start` that joins
+the mesh, one setting layered to take its own room rather than the shared
+area, and:
 
-Nothing here polls, in the browser or in the program. The node streams presence
-and messages to its own clients and the worker is one of them, so a peer
-arriving or a line being said pushes the collection, and every view that read
-it re-renders over the socket. The library carried a three-second schedule for
-this once; it was late by up to three seconds and, on a quiet mesh, entirely
-wasted.
+```ash
+el(mesh.room, {})
+```
 
-`mesh.shelf` passes things around. A room's files are not the share
-subsystem: the uploader mints a token whose allow-list is the room's members
-and the one request a peer may make is "fetch this token", checked every time.
-Nothing durable is granted, so nothing has to be revoked. An offer arrives as a
-push and sits on the shelf until somebody asks for it; fetched bytes land under
-the project's own assets, so serving them is the ordinary static-file part and
-the language grows nothing.
+Everything inside that — who is here across the top, the conversation, the
+files people drop into it, the line you type in — is the vendored `mesh`
+space. Your own words sit on the other side of the thread and read as yours; a
+run of lines from one person says their name once; arrivals are notices the
+room works out for itself from the roster, so they cost no traffic and no two
+members can disagree about who was there; a file appears where it was put,
+with its size and a button that fetches it; and everything carries how long
+ago it happened. What was said survives the site restarting.
 
-`el(mesh.room, {})` is the whole thing in one element: who is here across the
-top, the conversation under it, and a line to type in. Your own words read as
-yours and sit on the other side; arrivals appear as notices the room worked out
-for itself from the roster, so they cost no traffic and no two members can
-disagree about who was there; and what was said survives the site restarting,
-because the worker writes the room down beside the project's other runtime
-state. Every piece is still its own part for an app that would rather place
-them itself.
+None of that is the language. The `mesh` space is `foreign` (§9.10) and derives
+to `ashlar mesh worker`, which drives the control socket the mesh node already
+exposes to its own clients — so a project that wants a room writes no binding,
+and the mesh ships nothing on Ashlar's behalf. Nothing polls, in the browser or
+in the program: the node streams presence and messages to its own clients, the
+worker is one of them, and a push re-renders every view that read what moved.
 
-`mesh.faces` and `mesh.camera` are the last lane. Holding the room's id does
-NOT get you somebody's camera — the node refuses a media route from anyone who
-is not owner, fleet, or shared with, and that refusal is right — so `allow` is
-a separate, deliberate act by the person at the machine. After it, frames cross
-as JPEG rather than H.264, and a peer's face is an ordinary `img` whose `src`
-carries the frame number. No decoder, no client code, no new language surface.
-
-Nothing here asks the node on a render. The worker keeps what a page needs in
-memory and refills it when the event stream says something moved, so a room
-renders from memory — the earlier build made a socket round trip per view per
-render, and got slower the more there was in the room.
-
-The site half is not on this page — a room is a room — but the capability is
-here:
-`ashlar run --mesh` publishes the port the origin is serving to that mesh, and
-`ashlar mesh` says what the machine can answer. The example binds nothing, so
-it talks to the node this machine runs — and on a machine with no node it still
-serves, with a roster that says there is no mesh here rather than one that
-looks merely empty. Its driving test stands up the node's own control socket
-and lets the shipped worker drive it, so what is faked is the network and
-nothing else. What two machines would prove is open in `docs/roadmap.md`, not
-implied here.
+On a machine with no mesh node the site still serves, and the room's header
+says why instead of showing an empty room that looks merely quiet. Its driving
+test stands up the node's own control socket and lets the shipped worker drive
+it, so what is faked is the network and nothing else; a second test runs it
+against a socket that is not there at all. What two machines would prove is
+open in `docs/roadmap.md`, not implied here.
 
 ## locker
 

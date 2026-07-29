@@ -1,385 +1,219 @@
-/* enclave — a private mesh, in the house style. `style = "enclave"` (§9.4);
-   every class here meets a view by name, including the ones the vendored
-   `mesh` space renders (ADR-0010: appearance binds by name, and a library
-   ships classes, never a sheet). */
+/* enclave — a chat program for the people who hold this program's mesh id.
+   `style = "enclave"` (§9.4); every class here meets a view by name, including
+   the ones the vendored `mesh` space renders (ADR-0010: appearance binds by
+   name, and a library ships classes, never a sheet). */
 
 :root {
-  --bg: #0f1115;
-  --panel: #171a21;
-  --panel-2: #1e222b;
+  --bg: #0e1014;
+  --panel: #14171d;
+  --raised: #1b1f27;
   --line: #262b36;
-  --ink: #e6e9ef;
-  --muted: #8b93a7;
+  --ink: #e8ebf1;
+  --muted: #8a92a6;
   --accent: #5b8cff;
   --live: #46d17f;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 
 * { box-sizing: border-box; }
-html, body { margin: 0; }
+html, body { margin: 0; height: 100%; }
 
 body {
-  min-height: 100vh;
   background: var(--bg);
   color: var(--ink);
   font-size: 15px;
-  line-height: 1.55;
+  line-height: 1.5;
   -webkit-font-smoothing: antialiased;
 }
 
-.stage {
-  min-height: 100vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 40px 20px;
-}
+/* The page IS the app: header pinned, composer pinned, the conversation
+   taking whatever is left. */
+.app { height: 100%; display: flex; }
 
-.card {
+.room {
   width: 100%;
-  max-width: 32rem;
+  max-width: 46rem;
+  margin: 0 auto;
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
   background: var(--panel);
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  padding: 28px 28px 30px;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  border-left: 1px solid var(--line);
+  border-right: 1px solid var(--line);
 }
 
-.kicker {
-  margin: 0;
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 0.8px;
-  color: var(--muted);
-}
+/* -- who is here ---------------------------------------------------------- */
 
-.card h1 {
-  margin: 6px 0 8px;
-  font-size: 24px;
-  font-weight: 650;
-  letter-spacing: -0.2px;
-}
-
-.card h2 {
-  margin: 26px 0 10px;
-  font-size: 12px;
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.8px;
-  color: var(--muted);
-}
-
-.lede { margin: 0 0 22px; color: var(--muted); }
-
-/* -- the roster the `mesh` space renders --------------------------------- */
-
-.mesh-grid {
-  display: grid;
-  gap: 8px;
-}
-
-.mesh-peer {
+.room-top {
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--line);
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  gap: 12px;
 }
 
-.mesh-dot {
-  width: 8px;
-  height: 8px;
+.room-who { display: flex; flex-direction: row-reverse; }
+
+.who-face {
+  width: 30px;
+  height: 30px;
+  margin-left: -8px;
   border-radius: 50%;
-  background: var(--line);
-  flex: none;
+  border: 2px solid var(--panel);
+  background: var(--raised);
+  color: var(--muted);
+  display: grid;
+  place-items: center;
+  font-size: 13px;
+  font-weight: 650;
+  text-transform: uppercase;
 }
 
-.mesh-dot-here {
+.who-here {
+  color: #0e1014;
   background: var(--live);
-  box-shadow: 0 0 0 3px rgba(70, 209, 127, 0.16);
 }
 
-.mesh-name { font-weight: 600; }
-
-.mesh-empty {
+.room-where {
   margin: 0;
-  padding: 14px 12px;
-  border: 1px dashed var(--line);
-  border-radius: 10px;
-  color: var(--muted);
-}
-
-/* -- what the mesh's members say to each other --------------------------- */
-
-.mesh-talk {
-  display: grid;
-  gap: 6px;
-  margin-bottom: 12px;
-}
-
-.mesh-said {
-  display: flex;
-  gap: 10px;
-  padding: 8px 12px;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-}
-
-.mesh-said-who {
-  color: var(--muted);
-  font-family: var(--mono, ui-monospace, monospace);
-  font-size: 12px;
-  flex: none;
-  max-width: 12ch;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.mesh-speak {
-  display: flex;
-  gap: 8px;
-}
-
-.mesh-line {
-  flex: 1;
-  padding: 10px 12px;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  color: inherit;
-  font: inherit;
-}
-
-.mesh-speak button {
-  padding: 10px 16px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--panel-2);
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-}
-
-/* -- the sites browser the `mesh.sites` space renders --------------------- */
-
-.mesh-sites-list {
-  display: grid;
-  gap: 8px;
-}
-
-.mesh-site {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 10px 12px;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  color: var(--accent);
-  text-decoration: none;
-}
-
-.mesh-site:hover { border-color: var(--accent); }
-
-.mesh-site-peer {
-  margin-left: auto;
   color: var(--muted);
   font-size: 13px;
-}
-
-/* -- the settings panel --------------------------------------------------- */
-
-.mesh-panel {
-  display: grid;
-  gap: 2px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  overflow: hidden;
-}
-
-.mesh-row {
-  display: flex;
-  gap: 12px;
-  padding: 9px 12px;
-  background: var(--panel-2);
-  font-size: 14px;
-}
-
-.mesh-key { color: var(--muted); min-width: 6.5rem; }
-
-.mesh-value {
-  margin-left: auto;
-  font-variant-numeric: tabular-nums;
   overflow-wrap: anywhere;
 }
 
-/* -- what the room is passing around ------------------------------------- */
+/* -- the conversation ------------------------------------------------------ */
 
-.mesh-shelf {
-  display: grid;
-  gap: 6px;
-  margin-bottom: 12px;
-}
-
-.mesh-offer {
+.talk {
+  overflow-y: auto;
+  padding: 18px 20px 8px;
   display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: 10px;
+  flex-direction: column;
+  gap: 2px;
 }
 
-.mesh-offer-who {
+.line {
+  display: grid;
+  grid-template-columns: 7rem 1fr;
+  gap: 12px;
+  align-items: baseline;
+  padding: 2px 0;
+}
+
+.line .who {
   color: var(--muted);
   font-size: 12px;
-  flex: none;
-  max-width: 12ch;
+  text-align: right;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.mesh-offer button,
-.mesh-offer a {
-  padding: 4px 10px;
+.said {
+  justify-self: start;
+  max-width: 34rem;
+  padding: 8px 13px;
+  background: var(--raised);
   border: 1px solid var(--line);
-  border-radius: 8px;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-  text-decoration: none;
-}
-
-/* -- faces ---------------------------------------------------------------- */
-
-.mesh-faces {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.mesh-face {
-  display: grid;
-  gap: 6px;
-  padding: 8px;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-}
-
-.mesh-face img {
-  width: 100%;
-  border-radius: 8px;
-  display: block;
-}
-
-.mesh-face-who { color: var(--muted); font-size: 12px; }
-
-.mesh-camera { display: grid; gap: 6px; }
-
-.mesh-camera-row {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  padding: 6px 12px;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: 10px;
-}
-
-.mesh-camera-row button {
-  padding: 4px 10px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-}
-
-/* The room is the page; everything else sits to one side. */
-.aside {
-  margin-top: 20px;
-  padding-top: 16px;
-  border-top: 1px solid var(--line);
-  display: grid;
-  gap: 12px;
-  opacity: 0.85;
-}
-
-/* -- the room ------------------------------------------------------------- */
-
-.mesh-room { display: grid; gap: 10px; }
-
-.mesh-room-top {
-  padding-bottom: 10px;
-  border-bottom: 1px solid var(--line);
-}
-
-.mesh-here { display: flex; flex-wrap: wrap; gap: 6px; }
-
-.mesh-who {
-  padding: 2px 9px;
-  border: 1px solid var(--line);
-  border-radius: 999px;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.mesh-who-here {
-  color: var(--ink);
-  border-color: rgba(70, 209, 127, 0.45);
-}
-
-.mesh-alone { color: var(--muted); font-size: 13px; }
-
-.mesh-talk {
-  display: grid;
-  gap: 4px;
-  max-height: 22rem;
-  overflow-y: auto;
-  padding-right: 2px;
-}
-
-.mesh-said {
+  border-radius: 14px 14px 14px 4px;
   display: flex;
   align-items: baseline;
   gap: 10px;
-  padding: 7px 12px;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  max-width: 90%;
+  overflow-wrap: anywhere;
 }
 
-/* Your own words sit on the other side, and read as yours. */
-.mesh-mine {
-  margin-left: auto;
-  background: rgba(91, 140, 255, 0.14);
-  border-color: rgba(91, 140, 255, 0.35);
+/* Your own words sit on the other side and read as yours. */
+.mine { grid-template-columns: 1fr 7rem; }
+.mine .who { order: 2; text-align: left; }
+
+.mine .said {
+  order: 1;
+  justify-self: end;
+  background: rgba(91, 140, 255, 0.16);
+  border-color: rgba(91, 140, 255, 0.34);
+  border-radius: 14px 14px 4px 14px;
 }
 
-.mesh-said-text { flex: 1; overflow-wrap: anywhere; }
+/* Still the same person talking: no repeated name, tighter corners. */
+.run-on .said { border-radius: 4px 14px 14px 4px; }
+.mine.run-on .said { border-radius: 14px 4px 4px 14px; }
 
-.mesh-said-when {
+.when {
   color: var(--muted);
   font-size: 11px;
   flex: none;
   font-variant-numeric: tabular-nums;
 }
 
-.mesh-notice {
-  margin: 2px 0;
+.notice {
+  margin: 8px 0;
   text-align: center;
   color: var(--muted);
   font-size: 12px;
 }
 
+/* A file lands in the conversation, where it was put. */
+.drop { gap: 12px; }
+.drop-name { font-weight: 600; }
+.drop-size { color: var(--muted); font-size: 12px; }
+
+.drop button,
+.drop a {
+  padding: 3px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  text-decoration: none;
+}
+
+.drop button:hover,
+.drop a:hover { border-color: var(--accent); }
+
+.empty {
+  margin: auto;
+  max-width: 22rem;
+  text-align: center;
+  color: var(--muted);
+}
+
+/* -- the line you type in -------------------------------------------------- */
+
+.speak {
+  display: flex;
+  gap: 10px;
+  padding: 14px 20px 18px;
+  border-top: 1px solid var(--line);
+}
+
+.line-in {
+  flex: 1;
+  padding: 11px 15px;
+  background: var(--raised);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: inherit;
+  font: inherit;
+}
+
+.line-in:focus {
+  outline: none;
+  border-color: rgba(91, 140, 255, 0.5);
+}
+
+.speak button {
+  padding: 11px 20px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #0b1220;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+/* A page that has lost its socket says so rather than looking live (§9.5). */
+html[data-ash-offline] .room { opacity: 0.55; }
+html[data-ash-offline] .room-where::after { content: " · reconnecting…"; }

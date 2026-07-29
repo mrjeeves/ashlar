@@ -1814,13 +1814,13 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
     let (status, _, html) = req(port, "GET", "/", None, None);
     assert_eq!(status, 200);
     assert!(
-        html.contains("just you so far"),
-        "the empty roster is stated: {}",
+        html.contains("nobody else here yet"),
+        "the empty room says so: {}",
         html
     );
     assert!(
-        html.contains("Nothing on the shelf.") && html.contains("Nothing said yet."),
-        "and so is every other lane, rather than rendering blank: {}",
+        html.contains("Nobody has said anything."),
+        "rather than rendering blank: {}",
         html
     );
 
@@ -1837,8 +1837,8 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
     // build set the identity label from the app's `label` setting, renaming
     // its owner's node on every mesh that node was on.
     assert!(
-        html.contains("chris&#x27;s laptop") || html.contains("chris's laptop"),
-        "the node keeps the name its owner gave it: {}",
+        html.contains("title=\"chris&#x27;s laptop\"") || html.contains("title=\"chris's laptop\""),
+        "you are in your own room, under the name your machine's owner gave it: {}",
         html
     );
     {
@@ -1888,7 +1888,7 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
     let patch = ws_expect(&mut ws, "ada", 8);
     assert!(patch.contains("grace"), "the whole roster patches, not one row: {}", patch);
     assert!(
-        patch.contains("mesh-who mesh-who-here"),
+        patch.contains("who-face who-here"),
         "presence is visible: a connected peer carries the live class: {}",
         patch
     );
@@ -1899,7 +1899,7 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
     node.hears("n1", &room, "anyone about?");
     let patch = ws_expect(&mut ws, "anyone about?", 8);
     assert!(
-        patch.contains("mesh-said"),
+        patch.contains("class=\"said\""),
         "a line arriving patches the conversation, unasked: {}",
         patch
     );
@@ -1928,14 +1928,14 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
             inst, submit
         ),
     );
-    let mine = ws_expect(&mut ws, "mesh-said", 8);
+    let mine = ws_expect(&mut ws, "line mine", 8);
     assert!(
-        mine.contains("mesh-said mesh-mine"),
+        mine.contains("line mine"),
         "your own words read as yours, not as everyone else's: {}",
         mine
     );
     assert!(
-        mine.contains("mesh-said-when\">now<"),
+        mine.contains("when\">now<"),
         "and carry when they were said: {}",
         mine
     );
@@ -1943,7 +1943,7 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
     // computes them from the roster it already watches, so they cost no
     // traffic and no two members can disagree about who was there.
     assert!(
-        mine.contains("<p class=\"mesh-notice\">ada joined</p>"),
+        mine.contains("<p class=\"notice\">ada joined</p>"),
         "an arrival is a notice, not a message: {}",
         mine
     );
@@ -1958,7 +1958,7 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
     node.hears_shared("n1", &room, "tok9", "notes.txt");
     let shelf = ws_expect(&mut ws, "notes.txt", 8);
     assert!(
-        shelf.contains("mesh-offer"),
+        shelf.contains("drop-name"),
         "an offer arrives as a push and patches the shelf: {}",
         shelf
     );

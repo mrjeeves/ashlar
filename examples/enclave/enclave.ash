@@ -27,21 +27,12 @@ part mesh.Mesh {
 
 part page {
   route = "/"
-  view = () => el("div", { class: "stage" }, [
+  view = () => el("div", { class: "app" }, [
     el("title", {}, ["enclave"]),
-    el("div", { class: "card" }, [
-      el("p", { class: "kicker" }, ["private mesh · §9.10"]),
-      el("h1", {}, ["enclave"]),
-      el("p", { class: "lede" }, ["Everyone holding this program's mesh id is in this room, and nobody else can find it. No server in the middle, no account, no address anyone wrote down."]),
-      // The whole room is one element. Everything under it — the roster,
-      // the conversation, who is typing, the line you type in — is the
-      // vendored library's, and this file says none of it.
-      el(mesh.room, {}),
-      el("div", { class: "aside" }, [
-        el(mesh.shelf, {}),
-        el(mesh.panel, {}),
-      ]),
-    ]),
+    // The whole chat program is one element. Everything in it — who is
+    // here, the conversation, the files people drop in it, the line you
+    // type — is the vendored library's, and this file says none of it.
+    el(mesh.room, {}),
   ])
 }
 

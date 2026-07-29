@@ -85,47 +85,81 @@ part Said {
 foreign say: (text: text) -> bool updates mesh.Said
 foreign heard: () -> [mesh.Said] watches mesh.Said
 
-// The conversation. Classes are the contract with the app's stylesheet
-// (ADR-0010): `mesh-talk`, `mesh-said`, `mesh-mine`, `mesh-said-who`,
-// `mesh-said-text`, `mesh-said-when`, `mesh-notice`, `mesh-empty`.
+// The conversation: messages, arrivals, and the files people put in the room,
+// in the order they happened. Classes are the contract with the app's
+// stylesheet (ADR-0010): `talk`, `line`, `mine`, `run-on`, `said`, `who`,
+// `when`, `notice`, `drop`, `empty`.
 part talk {
-  view = () => el("div", { class: "mesh-talk" }, lines())
+  view = () => el("div", { class: "talk" }, lines())
   lines = () => {
     let all = heard()
     if len(all) == 0 {
-      return [el("p", { class: "mesh-empty" }, ["Nothing said yet. Whoever holds this program can hear you."])]
+      return [el("p", { class: "empty" }, ["Nobody has said anything. Whoever holds this program can hear you."])]
     }
-    return map(all, (s: mesh.Said) => one(s))
+    // Indexed, because whether a line repeats its author's name depends on
+    // the line before it — a wall of the same name six times is a log.
+    return map(range(len(all)), (i: number) => one(all[i]!, all[i - 1]))
   }
-  // An arrival is not a message and should not look like one.
-  one = (s: mesh.Said) => (if s.kind == "chat" { el("div", { class: if s.mine { "mesh-said mesh-mine" } else { "mesh-said" } }, [
-    el("span", { class: "mesh-said-who" }, [s.who]),
-    el("span", { class: "mesh-said-text" }, [s.text]),
-    el("span", { class: "mesh-said-when" }, [since(s.at)]),
-  ]) } else { el("p", { class: "mesh-notice" }, [s.who + " " + s.kind]) })
-  // How long ago, in the only unit that matters at a glance. `now()` is the
+  one = (s: mesh.Said, before: mesh.Said?) => (if s.kind == "chat" { said(s, follows(s, before)) } else if s.kind == "file" { dropped(s) } else { el("p", { class: "notice" }, [s.who + " " + s.kind]) })
+  // A run-on is the same person still talking: same author, same kind, and
+  // close enough in time that it reads as one turn.
+  follows = (s: mesh.Said, before: mesh.Said?) => {
+    if before == none {
+      return false
+    }
+    let last = before!
+    return last.kind == "chat" and last.who == s.who and s.at - last.at < 120000
+  }
+  said = (s: mesh.Said, run_on: bool) => el("div", {
+    class: (if s.mine { "line mine" } else { "line" }) + (if run_on { " run-on" } else { "" }),
+  }, [
+    el("span", { class: "who" }, [if run_on { "" } else { s.who }]),
+    el("div", { class: "said" }, [
+      el("span", {}, [s.text]),
+      el("span", { class: "when" }, [since(s.at)]),
+    ]),
+  ])
+  // A file lands in the conversation where it was put, not in a drawer
+  // beside it. Whether its bytes are here yet is the offer's business.
+  dropped = (s: mesh.Said) => {
+    let it = find(offered(), (o: mesh.Offer) => o.name == s.text and o.peer == s.from)
+    if it == none {
+      return el("p", { class: "notice" }, [s.who + " shared " + s.text])
+    }
+    return el("div", { class: if s.mine { "line mine" } else { "line" } }, [
+      el("span", { class: "who" }, [s.who]),
+      el("div", { class: "said drop" }, [
+        el("span", { class: "drop-name" }, [it!.name]),
+        el("span", { class: "drop-size" }, [size(it!.size)]),
+        if it!.url == "" { el("button", { onclick: (e: std.Event) => fetch(it!.peer, it!.token, it!.name) }, ["get"]) } else { el("a", { href: it!.url }, ["open"]) },
+      ]),
+    ])
+  }
+  size = (bytes: number) => (if bytes < 1024 { text(round(bytes)) + " B" } else if bytes < 1048576 { text(round(bytes / 1024)) + " KB" } else { text(round(bytes / 1048576)) + " MB" })
+  // How long ago, in the only unit that reads at a glance. `now()` is the
   // runtime's clock and `at` was stamped on the other side of the boundary,
-  // so a clock that disagrees shows as "now" rather than as a negative age.
+  // so a clock that disagrees shows "now" rather than a negative age.
   since = (at: number) => ago((now() - at) / 1000)
   ago = (seconds: number) => (if seconds < 45 { "now" } else if seconds < 3600 { text(round(seconds / 60)) + "m" } else if seconds < 86400 { text(round(seconds / 3600)) + "h" } else { text(round(seconds / 86400)) + "d" })
   round = (n: number) => n - n % 1
 }
 
-// A line and a way to send it. The draft is per-instance state, so two open
-// pages type independently; what is SAID goes to everyone.
+// The line you type in.
 part speak {
   state draft: text = ""
-  view = () => el("form", { class: "mesh-speak", onsubmit: send }, [
+  view = () => el("form", { class: "speak", onsubmit: send }, [
     el("input", {
-      class: "mesh-line",
+      class: "line-in",
       name: "line",
       value: draft,
       placeholder: "say something",
       autocomplete: "off",
       oninput: typed,
     }, []),
-    el("button", { type: "submit" }, ["say"]),
+    el("button", { type: "submit" }, ["send"]),
   ])
+  // An event carries the value of the element it fired on, and a form has
+  // none — so the field mirrors as it is typed and the submit sends that.
   typed = (e: std.Event) => {
     draft = text(e.data.value ?? "")
   }
@@ -135,29 +169,51 @@ part speak {
   }
 }
 
-// The room, in one element. An app that wants the whole thing writes
-// `el(mesh.room, {})` and nothing else: who is here across the top, the
-// conversation under it, who is mid-sentence, and a line to type in. Every
-// piece is still its own part for an app that wants to place them itself.
+// The room, in one element. An app that wants a chat program writes
+// `el(mesh.room, {})` and nothing else — a header of who is here, the
+// conversation, and a line to type in. Every piece is still its own part for
+// an app that would rather place them itself.
 part room {
-  view = () => el("div", { class: "mesh-room" }, [
-    el("div", { class: "mesh-room-top" }, [el(here_now, {})]),
+  view = () => el("div", { class: "room" }, [
+    el(banner, {}),
     el(talk, {}),
     el(speak, {}),
   ])
 }
 
-// Who is here, as a line rather than a list — the room's own header. The
-// `grid` is the same roster with room to breathe.
-part here_now {
-  view = () => el("div", { class: "mesh-here" }, faces_of())
-  faces_of = () => {
-    let all = peers()
-    let mine = here()
-    if len(all) == 0 {
-      return [el("span", { class: "mesh-alone" }, [if mine.reachable { "just you so far" } else { mine.note }])]
+// Who is here, and where "here" is. A room's header is the one place the
+// mesh's own name belongs: it is the answer to "which room is this".
+part banner {
+  view = () => el("header", { class: "room-top" }, [
+    el("div", { class: "room-who" }, faces_of()),
+    el("p", { class: "room-where" }, [where()]),
+  ])
+  faces_of = () => yours() + map(peers(), (p: mesh.Peer) => face(p.label, p.here))
+  // Your own face, when this machine has one. A blank circle for a node that
+  // is not there is worse than no circle.
+  yours = () => {
+    let me = here()
+    if me.label == "" {
+      return []
     }
-    return map(all, (p: mesh.Peer) => el("span", { class: if p.here { "mesh-who mesh-who-here" } else { "mesh-who" } }, [p.label]))
+    return [face(me.label, true)]
+  }
+  // One letter is a face when there is no photograph, and the whole name is
+  // the title — a key is not a name, but it is at least a stable one.
+  face = (name: text, lit: bool) => el("span", {
+    class: if lit { "who-face who-here" } else { "who-face" },
+    title: name,
+  }, [slice(name, 0, 1)])
+  where = () => {
+    let mine = here()
+    if not mine.reachable {
+      return mine.note
+    }
+    let others = len(filter(peers(), (p: mesh.Peer) => p.here))
+    if others == 0 {
+      return mine.network + " · nobody else here yet"
+    }
+    return mine.network + " · " + text(others) + (if others == 1 { " other here" } else { " others here" })
   }
 }
 

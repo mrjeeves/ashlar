@@ -457,7 +457,7 @@ impl Session {
         // roster answers an unlabelled peer with its id, and this node is a
         // peer to everyone else.
         let label = match known.me.1.trim() {
-            "" => known.me.0.clone(),
+            "" => short(&canonical(&known.me.0)),
             named => named.to_string(),
         };
         Ok(place(
@@ -644,6 +644,18 @@ impl Session {
             .ask("mesh_identity", V::Map(BTreeMap::new()))
             .map(|v| field(&v, "device_id"))
             .unwrap_or_default();
+        let known = self.node.offered_names(&me);
+        let who = self.node.who(&me);
+        for f in &minted {
+            let name = field(f, "name");
+            if !name.is_empty() && !known.contains(&name) {
+                self.node.keep(Said {
+                    kind: "file".to_string(),
+                    mine: true,
+                    ..Said::chat(&who, &me, &name, true)
+                });
+            }
+        }
         self.node.offered_by(&me, &minted);
         Ok(V::List(self.node.shelf()))
     }
@@ -1718,6 +1730,19 @@ impl Node {
         }
     }
 
+    /// What this member is already known to be offering.
+    fn offered_names(&self, peer: &str) -> Vec<String> {
+        let mine = canonical(peer);
+        match self.offers.lock() {
+            Ok(shelf) => shelf
+                .values()
+                .filter(|o| canonical(&o.peer) == mine)
+                .map(|o| o.name.clone())
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
     fn shelf(&self) -> Vec<V> {
         match self.offers.lock() {
             Ok(shelf) => shelf.values().map(Offer::value).collect(),
@@ -1783,8 +1808,12 @@ impl Node {
                     .map(|p| {
                         let id = field(p, "device_id");
                         let status = field(p, "status").to_ascii_lowercase();
+                        // A machine its owner never named has no name, and a
+                        // fifty-two character key is not one either: in a
+                        // conversation it is a wall. Show it at reading
+                        // length and keep the whole of it in the title.
                         let label = match field(p, "label").trim() {
-                            "" => id.clone(),
+                            "" => short(&canonical(&id)),
                             named => named.to_string(),
                         };
                         (id, label, status == "active" || status == "shelved")
@@ -2028,8 +2057,23 @@ impl Node {
                     Some(V::List(f)) => f,
                     _ => Vec::new(),
                 };
+                // A file belongs in the conversation, where it was put — not
+                // in a drawer beside it. Only what is NEW is said, because a
+                // member restating its whole list is not somebody sharing
+                // the same file again.
+                let known = self.offered_names(&from);
+                let who = self.who(&from);
+                for f in &files {
+                    let name = field(f, "name");
+                    if !name.is_empty() && !known.contains(&name) {
+                        self.keep(Said {
+                            kind: "file".to_string(),
+                            ..Said::chat(&who, &from, &name, false)
+                        });
+                    }
+                }
                 self.offered_by(&from, &files);
-                Some(OFFER_SHAPE)
+                Some(SAID_SHAPE)
             }
             _ => None,
         }
