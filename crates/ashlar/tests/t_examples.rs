@@ -91,7 +91,32 @@ fn staged(name: &str) -> PathBuf {
     let _ = std::fs::remove_dir_all(&dst);
     std::fs::create_dir_all(&dst).unwrap();
     copy_tree(&src, &dst);
+    // A project that vendored the mesh library reaches the node this machine
+    // runs. The suite has none and must not touch one it finds, so every
+    // staged copy is pointed at a socket that is not there — the site serves
+    // its empty-roster state, and no test depends on what the machine running
+    // it installed. The two tests that are ABOUT the mesh rebind afterwards.
+    if dst.join("vendor/mesh/mesh.ash").is_file() {
+        bind_mesh_to(&dst, &dst.join("no-node-here.sock"));
+    }
     dst
+}
+
+/// Bind the `mesh` space to this toolchain's own worker, pointed at a socket
+/// this test controls. Naming the socket is what stops the worker starting a
+/// node of its own — so a machine with AllMyStuff installed runs these tests
+/// without its real daemon being touched, and one without it runs them the
+/// same way.
+fn bind_mesh_to(dir: &std::path::Path, socket: &std::path::Path) {
+    std::fs::write(
+        dir.join("foreign.json"),
+        format!(
+            "{{\n  \"mesh\": {{ \"via\": \"worker\", \"run\": [{:?}, \"mesh\", \"worker\", {:?}] }}\n}}\n",
+            env!("CARGO_BIN_EXE_ashlar"),
+            socket.to_string_lossy()
+        ),
+    )
+    .unwrap();
 }
 
 fn copy_tree(src: &std::path::Path, dst: &std::path::Path) {
@@ -116,7 +141,7 @@ fn start(root: PathBuf) -> (u16, Arc<AtomicBool>, std::thread::JoinHandle<()>) {
     let stop2 = stop.clone();
     let (tx, rx) = mpsc::channel();
     let join = std::thread::spawn(move || {
-        let r = ashlar::http::serve(root, None, Some(0), move |port| tx.send(port).unwrap(), stop2);
+        let r = ashlar::http::serve(root, None, Some(0), move |port, _| tx.send(port).unwrap(), stop2);
         if let Err(e) = r {
             panic!("serve failed: {}", e);
         }
@@ -260,6 +285,10 @@ fn ws_send(s: &mut TcpStream, text: &str) {
     frame.extend_from_slice(payload);
     s.write_all(&frame).unwrap();
 }
+
+/// One request whose answer is not text. `req` reads a `String`, which a
+/// JPEG is not — and an image served from a room is exactly the case worth
+/// asserting on the bytes.
 
 fn ws_read(s: &mut TcpStream) -> String {
     let mut head = [0u8; 2];
@@ -1180,6 +1209,845 @@ fn t_examples_abacus_computes_through_a_python_worker() {
 }
 
 #[test]
+fn t_examples_enclave_vendors_the_mesh_library_verbatim() {
+    // covers: G5
+    // There is no registry, so a dependency is code copied into the tree
+    // (`ashlar vendor`). A copy that drifts from its source is the version
+    // skew a registry exists to manage and this language refuses to have, so
+    // the two are compared byte for byte rather than trusted.
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut compared = 0;
+    for file in ["mesh.ash"] {
+        let lib = std::fs::read(root.join("lib/mesh").join(file))
+            .unwrap_or_else(|e| panic!("lib/mesh/{} is missing: {}", file, e));
+        let vendored = std::fs::read(root.join("examples/enclave/vendor/mesh").join(file))
+            .unwrap_or_else(|e| panic!("examples/enclave/vendor/mesh/{} is missing: {}", file, e));
+        assert_eq!(
+            lib,
+            vendored,
+            "examples/enclave/vendor/mesh/{} has drifted from lib/mesh/{} — re-vendor it",
+            file,
+            file
+        );
+        compared += 1;
+    }
+    assert_eq!(compared, 1, "the mesh library is one space, vendored whole");
+}
+
+/// The mesh node's control socket, without the daemon behind it.
+///
+/// This is deliberately NOT a stand-in for the `mesh` space: the space is
+/// bound to the shipped worker (`ashlar mesh worker`), and this answers the
+/// socket that worker drives. So the adapter under test is the one that ships,
+/// its wire framing is exercised against a real socket, and the only thing
+/// faked is the network — which is the one part a single machine cannot have.
+#[cfg(unix)]
+mod fake_node {
+    use ashlar::eval::{from_json, to_json, V};
+    use std::collections::BTreeMap;
+    use std::io::{Read, Write};
+    use std::os::unix::net::UnixListener;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Default)]
+    pub struct State {
+        /// What the machine's owner called this node.
+        pub name: String,
+        /// id, label, status — the roster the daemon would answer.
+        pub peers: Vec<(String, String, String)>,
+        /// node, label, port — what presence says each peer serves.
+        pub sites: Vec<(String, String, u16)>,
+        pub exposed: BTreeMap<String, String>,
+        pub networks: Vec<String>,
+        /// The base name of every file this node was asked to offer.
+        pub minted: Vec<String>,
+        /// Every token this node was asked to fetch.
+        pub fetched: Vec<String>,
+        /// Where the last registered download sink writes.
+        pub landed: String,
+        /// Whether this machine has shared its camera with anyone.
+        pub granted: bool,
+        /// Every grant id this node was asked to record.
+        pub grants: Vec<String>,
+        /// How many camera batches this node has handed over.
+        pub polls: u32,
+        /// `kind|room|text` for everything this node was asked to transmit.
+        pub sent: Vec<String>,
+        /// Every command this node was asked to run. The rename regression is
+        /// asserted from here: a site must join a mesh without ever touching
+        /// the identity its owner named.
+        pub asked: Vec<String>,
+    }
+
+    pub struct Fake {
+        pub state: Arc<Mutex<State>>,
+        pub socket: std::path::PathBuf,
+        /// Connections that asked to be told when something moves. The real
+        /// node holds these for its GUI; the worker is one more subscriber.
+        watchers: Arc<Mutex<Vec<std::os::unix::net::UnixStream>>>,
+        stop: Arc<AtomicBool>,
+    }
+
+    impl Fake {
+        /// Say the session moved, the way the node does when presence
+        /// changes. Nothing polls: this is what the page follows.
+        pub fn announce(&self, event: &str) {
+            self.emit(event, V::Map(BTreeMap::new()))
+        }
+
+        /// One peer's line arriving, exactly as the node hands it to its own
+        /// clients: `{from, message}` on `allmystuff://room`.
+        pub fn hears(&self, from: &str, room: &str, said: &str) {
+            self.emit(
+                "allmystuff://room",
+                map(&[
+                    ("from", text(from)),
+                    (
+                        "message",
+                        map(&[
+                            ("room", text(room)),
+                            ("kind", text("chat")),
+                            ("text", text(said)),
+                        ]),
+                    ),
+                ]),
+            )
+        }
+
+        /// A member restating what it offers the room.
+        pub fn hears_shared(&self, from: &str, room: &str, token: &str, name: &str) {
+            self.emit(
+                "allmystuff://room",
+                map(&[
+                    ("from", text(from)),
+                    (
+                        "message",
+                        map(&[
+                            ("room", text(room)),
+                            ("kind", text("share_list")),
+                            (
+                                "files",
+                                V::List(vec![map(&[
+                                    ("token", text(token)),
+                                    ("name", text(name)),
+                                    ("size", V::Number(3.0)),
+                                ])]),
+                            ),
+                        ]),
+                    ),
+                ]),
+            )
+        }
+
+        fn emit(&self, event: &str, payload: V) {
+            let body = to_json(&map(&[
+                ("kind", text("emit")),
+                ("event", text(event)),
+                ("payload", payload),
+            ]));
+            let bytes = body.as_bytes();
+            let len = (bytes.len() as u32) + 1;
+            let mut held = self.watchers.lock().unwrap();
+            held.retain_mut(|w| {
+                w.write_all(&len.to_be_bytes())
+                    .and_then(|_| w.write_all(&[2u8]))
+                    .and_then(|_| w.write_all(bytes))
+                    .and_then(|_| w.flush())
+                    .is_ok()
+            });
+        }
+    }
+
+    impl Drop for Fake {
+        fn drop(&mut self) {
+            self.stop.store(true, Ordering::Relaxed);
+            let _ = std::fs::remove_file(&self.socket);
+        }
+    }
+
+    /// The socket lives outside the project tree, and short: a `sun_path` is
+    /// 108 bytes on Linux and a temp path under a project directory can spend
+    /// them.
+    pub fn start() -> Fake {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let socket = std::env::temp_dir().join(format!(
+            "ashlar_node_{}_{}.sock",
+            std::process::id(),
+            NEXT.fetch_add(1, Ordering::Relaxed)
+        ));
+        let _ = std::fs::remove_file(&socket);
+        let listener = UnixListener::bind(&socket).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let state = Arc::new(Mutex::new(State::default()));
+        let stop = Arc::new(AtomicBool::new(false));
+        let watchers: Arc<Mutex<Vec<std::os::unix::net::UnixStream>>> =
+            Arc::new(Mutex::new(Vec::new()));
+        let (s, t, w) = (state.clone(), stop.clone(), watchers.clone());
+        std::thread::spawn(move || {
+            while !t.load(Ordering::Relaxed) {
+                match listener.accept() {
+                    Ok((mut stream, _)) => {
+                        stream.set_nonblocking(false).unwrap();
+                        let Some(payload) = read_frame(&mut stream) else {
+                            continue;
+                        };
+                        let ack = |stream: &mut std::os::unix::net::UnixStream, body: String| {
+                            let bytes = body.as_bytes();
+                            let len = (bytes.len() as u32) + 1;
+                            let _ = stream
+                                .write_all(&len.to_be_bytes())
+                                .and_then(|_| stream.write_all(&[0u8]))
+                                .and_then(|_| stream.write_all(bytes))
+                                .and_then(|_| stream.flush());
+                        };
+                        // A subscriber keeps its connection: the node streams
+                        // events down it until one side goes away.
+                        if matches!(
+                            ashlar::meshd::at(&from_json(&payload).unwrap_or(V::None), "cmd"),
+                            Some(V::Text(ref c)) if c == "__subscribe_events"
+                        ) {
+                            ack(
+                                &mut stream,
+                                to_json(&map(&[("ok", V::Bool(true)), ("result", V::None)])),
+                            );
+                            w.lock().unwrap().push(stream);
+                            continue;
+                        }
+                        // A `*_poll` answers with a raw batch under tag 1,
+                        // never JSON — the node keeps media bytes out of its
+                        // JSON lane, and a double that answered otherwise
+                        // would hide exactly the bug that cost a day here.
+                        if matches!(
+                            ashlar::meshd::at(&from_json(&payload).unwrap_or(V::None), "cmd"),
+                            Some(V::Text(ref c)) if c == "video_poll"
+                        ) {
+                            // A camera that never stops would flood the
+                            // socket for the rest of the test; a real one
+                            // stops too, and an empty batch is how it says so.
+                            let sent = {
+                                let mut st = s.lock().unwrap();
+                                st.polls += 1;
+                                st.polls
+                            };
+                            if sent > 2 {
+                                let _ = stream
+                                    .write_all(&1u32.to_be_bytes())
+                                    .and_then(|_| stream.write_all(&[1u8]))
+                                    .and_then(|_| stream.flush());
+                                continue;
+                            }
+                            let jpeg: Vec<u8> = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0xFF, 0xD9];
+                            let frame = to_json(&map(&[
+                                ("t", text("video")),
+                                ("seq", V::Number(7.0)),
+                                ("jpeg", text(&b64(&jpeg))),
+                            ]));
+                            let mut batch = (frame.len() as u32).to_le_bytes().to_vec();
+                            batch.extend_from_slice(frame.as_bytes());
+                            let len = (batch.len() as u32) + 1;
+                            let _ = stream
+                                .write_all(&len.to_be_bytes())
+                                .and_then(|_| stream.write_all(&[1u8]))
+                                .and_then(|_| stream.write_all(&batch))
+                                .and_then(|_| stream.flush());
+                            continue;
+                        }
+                        let answered = handle(&s, &payload);
+                        // A fetch's chunks stream to disk and never reach a
+                        // poll queue; the node says it landed with an event.
+                        let finished = matches!(
+                            ashlar::meshd::at(&from_json(&payload).unwrap_or(V::None), "cmd"),
+                            Some(V::Text(ref c)) if c == "file_send"
+                        );
+                        ack(&mut stream, to_json(&answered));
+                        if finished {
+                            let landed = s.lock().unwrap().landed.clone();
+                            let body = to_json(&map(&[
+                                ("kind", text("emit")),
+                                ("event", text("allmystuff://file-saved")),
+                                (
+                                    "payload",
+                                    map(&[
+                                        ("route", text("route-1")),
+                                        ("req", V::Number(1.0)),
+                                        ("path", text(&landed)),
+                                    ]),
+                                ),
+                            ]));
+                            let bytes = body.as_bytes();
+                            let len = (bytes.len() as u32) + 1;
+                            let mut held = w.lock().unwrap();
+                            held.retain_mut(|c| {
+                                c.write_all(&len.to_be_bytes())
+                                    .and_then(|_| c.write_all(&[2u8]))
+                                    .and_then(|_| c.write_all(bytes))
+                                    .and_then(|_| c.flush())
+                                    .is_ok()
+                            });
+                        }
+                    }
+                    Err(_) => std::thread::sleep(std::time::Duration::from_millis(5)),
+                }
+            }
+        });
+        Fake {
+            state,
+            socket,
+            watchers,
+            stop,
+        }
+    }
+
+    fn read_frame(stream: &mut std::os::unix::net::UnixStream) -> Option<String> {
+        let mut head = [0u8; 4];
+        stream.read_exact(&mut head).ok()?;
+        let len = u32::from_be_bytes(head) as usize;
+        let mut body = vec![0u8; len];
+        stream.read_exact(&mut body).ok()?;
+        String::from_utf8(body[1..].to_vec()).ok()
+    }
+
+    fn map(pairs: &[(&str, V)]) -> V {
+        V::Map(
+            pairs
+                .iter()
+                .map(|(k, v)| (k.to_string(), v.clone()))
+                .collect(),
+        )
+    }
+
+    fn text(s: &str) -> V {
+        V::Text(s.to_string())
+    }
+
+    /// Base64, the encoding the node's JSON control channel uses for bytes.
+    fn b64(bytes: &[u8]) -> String {
+        const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = String::new();
+        for group in bytes.chunks(3) {
+            let b = [group[0], *group.get(1).unwrap_or(&0), *group.get(2).unwrap_or(&0)];
+            let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+            for i in 0..4 {
+                if i <= group.len() {
+                    out.push(A[((n >> (18 - 6 * i)) & 63) as usize] as char);
+                } else {
+                    out.push('=');
+                }
+            }
+        }
+        out
+    }
+
+    fn handle(state: &Mutex<State>, payload: &str) -> V {
+        let call = from_json(payload).unwrap_or(V::None);
+        let cmd = match ashlar::meshd::at(&call, "cmd") {
+            Some(V::Text(c)) => c,
+            _ => return map(&[("ok", V::Bool(false)), ("error", text("no cmd"))]),
+        };
+        let args = ashlar::meshd::at(&call, "args").unwrap_or(V::None);
+        let mut st = state.lock().unwrap();
+        st.asked.push(cmd.clone());
+        let result = match cmd.as_str() {
+            "mesh_identity" => map(&[("device_id", text("me-A1B2C")), ("label", text(&st.name))]),
+            "mesh_peers" => V::List(
+                st.peers
+                    .iter()
+                    .map(|(id, label, status)| {
+                        map(&[
+                            ("device_id", text(id)),
+                            ("label", text(label)),
+                            ("status", text(status)),
+                        ])
+                    })
+                    .collect(),
+            ),
+            "mesh_networks" => V::List(
+                st.networks
+                    .iter()
+                    .map(|n| map(&[("network_id", text(n))]))
+                    .collect(),
+            ),
+            "mesh_network_add" => {
+                if let Some(V::Text(id)) = ashlar::meshd::at(&args, "config")
+                    .and_then(|c| ashlar::meshd::at(&c, "network_id"))
+                {
+                    st.networks.push(id);
+                }
+                V::None
+            }
+            "site_exposed" => V::Map(
+                st.exposed
+                    .iter()
+                    .map(|(k, v)| (k.clone(), text(v)))
+                    .collect(),
+            ),
+            "site_set_exposed" => {
+                st.exposed.clear();
+                if let Some(V::Map(m)) = ashlar::meshd::at(&args, "exposed") {
+                    for (k, v) in m {
+                        if let V::Text(label) = v {
+                            st.exposed.insert(k, label);
+                        }
+                    }
+                }
+                V::None
+            }
+            // What a member sends to the room. The node routes it; every
+            // recipient's own node emits it back out as an event.
+            "room_send" => {
+                st.sent.push(format!(
+                    "{}|{}|{}",
+                    ashlar::meshd::at(&args, "message")
+                        .and_then(|m| ashlar::meshd::at(&m, "kind"))
+                        .and_then(|k| match k {
+                            V::Text(t) => Some(t),
+                            _ => None,
+                        })
+                        .unwrap_or_default(),
+                    ashlar::meshd::at(&args, "message")
+                        .map(|m| ashlar::meshd::at(&m, "room"))
+                        .and_then(|r| match r {
+                            Some(V::Text(t)) => Some(t),
+                            _ => None,
+                        })
+                        .unwrap_or_default(),
+                    ashlar::meshd::at(&args, "message")
+                        .map(|m| ashlar::meshd::at(&m, "text"))
+                        .and_then(|t| match t {
+                            Some(V::Text(t)) => Some(t),
+                            _ => None,
+                        })
+                        .unwrap_or_default(),
+                ));
+                V::None
+            }
+            // The room's own file lane: a token whose allow-list is the
+            // members, and one request — fetch it — checked per call. No
+            // share, no grant, nothing durable.
+            "room_share_files" => {
+                let paths = match ashlar::meshd::at(&args, "paths") {
+                    Some(V::List(p)) => p,
+                    _ => vec![],
+                };
+                V::List(
+                    paths
+                        .iter()
+                        .enumerate()
+                        .map(|(i, p)| {
+                            let named = ashlar::meshd::as_text(p);
+                            let base =
+                                named.rsplit('/').next().unwrap_or(&named).to_string();
+                            st.minted.push(base.clone());
+                            map(&[
+                                ("token", text(&format!("tok{}", i + 1))),
+                                ("name", text(&base)),
+                                ("size", V::Number(3.0)),
+                            ])
+                        })
+                        .collect(),
+                )
+            }
+            "connect_route" => {
+                // A media route from somebody who has not shared is refused,
+                // and the node's sentence is the one the page shows.
+                if matches!(ashlar::meshd::at(&args, "media"), Some(V::Text(ref m)) if m == "video")
+                    && !st.granted
+                {
+                    return map(&[
+                        ("ok", V::Bool(false)),
+                        (
+                            "error",
+                            text(
+                                "not authorized: capturing this device's screen, camera, \
+                                 or microphone needs owner/fleet or a share",
+                            ),
+                        ),
+                    ]);
+                }
+                text("route-1")
+            }
+            "share_grant" => {
+                st.granted = true;
+                st.grants.push(
+                    ashlar::meshd::at(&args, "grant")
+                        .map(|g| match ashlar::meshd::at(&g, "id") {
+                            Some(V::Text(id)) => id,
+                            _ => String::new(),
+                        })
+                        .unwrap_or_default(),
+                );
+                V::None
+            }
+            "video_watch" => V::Number(1.0),
+            "disconnect_route" => V::None,
+            "file_download" => {
+                // The node writes a fetch into Downloads and answers where it
+                // landed. This test's "Downloads" is a temp file.
+                let landing = std::env::temp_dir()
+                    .join(format!("ashlar_fetched_{}.txt", std::process::id()));
+                std::fs::write(&landing, b"hi").unwrap();
+                st.landed = landing.to_string_lossy().into_owned();
+                text(&st.landed)
+            }
+            "file_send" => {
+                st.fetched.push(
+                    ashlar::meshd::at(&args, "event")
+                        .and_then(|e| ashlar::meshd::at(&e, "token"))
+                        .and_then(|t| match t {
+                            V::Text(t) => Some(t),
+                            _ => None,
+                        })
+                        .unwrap_or_default(),
+                );
+                V::None
+            }
+            "site_mappings" => V::List(vec![]),
+            // The node binds a local port and proxies it over the mesh; the
+            // number is the node's to choose, which is why source never has it.
+            "site_map" => map(&[("localPort", V::Number(47001.0))]),
+            "session_snapshot" => map(&[(
+                "peers",
+                V::List(
+                    st.sites
+                        .iter()
+                        .map(|(node, label, port)| {
+                            map(&[
+                                ("node", text(node)),
+                                ("label", text(node)),
+                                (
+                                    "sites",
+                                    V::List(vec![map(&[
+                                        ("label", text(label)),
+                                        ("port", V::Number(*port as f64)),
+                                    ])]),
+                                ),
+                            ])
+                        })
+                        .collect(),
+                ),
+            )]),
+            _ => {
+                return map(&[
+                    ("ok", V::Bool(false)),
+                    ("error", text(&format!("no such cmd: {}", cmd))),
+                ])
+            }
+        };
+        let wrapped = match cmd.as_str() {
+            "mesh_peers" => map(&[("peers", result)]),
+            "mesh_networks" => map(&[("networks", result)]),
+            _ => result,
+        };
+        map(&[("ok", V::Bool(true)), ("result", wrapped)])
+    }
+}
+
+#[test]
+fn t_examples_enclave_serves_where_there_is_no_mesh() {
+    // covers: B5, G4
+    // A machine with no mesh node is an ordinary machine — the app is closed,
+    // it was never installed, or (WSL) the node is on the other side of the
+    // kernel boundary. The site must still serve, and must say which state it
+    // is in rather than showing an empty roster that looks like a lonely one.
+    //
+    // This is the regression for a build that faulted on every mesh read: the
+    // enclave's `start` stack called `arrive()`, the fault propagated, and the
+    // whole example refused to come up — "1 of 18 did not start".
+    let dir = staged("enclave");
+    // A socket that is not there, named — so nothing is spawned and the
+    // outcome does not depend on what the machine running the suite installed.
+    bind_mesh_to(&dir, &dir.join("no-node-here.sock"));
+    let (port, stop, join) = start(dir.clone());
+
+    let (status, _, html) = req(port, "GET", "/", None, None);
+    assert_eq!(status, 200, "the site serves without a mesh: {}", html);
+    assert!(
+        html.contains("no mesh here: nothing is listening"),
+        "the room says why it is empty, not just that it is: {}",
+        html
+    );
+    assert!(
+        html.contains("nothing is listening at"),
+        "and the panel carries the correction, in the page: {}",
+        html
+    );
+    // The one deliberate publish still fails loudly: `run --mesh` printed a
+    // promise, and a site nobody can reach reported as published would be the
+    // quiet-wrong this language refuses.
+    let mut link = ashlar::mesh::Link::new();
+    let refused = link
+        .publish(&dir, port, "enclave", "enclave.app")
+        .unwrap_err();
+    assert!(refused.contains("nothing is listening"), "{}", refused);
+    let report = link.report(&dir);
+    assert!(!report.ok(), "`ashlar mesh` is the question, so it is told");
+    assert_eq!(
+        report.problems.len(),
+        1,
+        "one absent node, one problem: {:?}",
+        report.problems
+    );
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(unix)]
+#[test]
+fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
+    // covers: B5, G4
+    // The mesh is a capability, not a builtin: one `foreign` space reached
+    // across the one boundary (§9.10), bound to the worker this toolchain
+    // ships. What is faked here is the mesh NODE's socket, not the space — so
+    // the adapter, its wire, and the vendored library are all the shipped ones
+    // and only the network is stood in for.
+    let dir = staged("enclave");
+    let node = fake_node::start();
+    node.state.lock().unwrap().name = "chris's laptop".to_string();
+    bind_mesh_to(&dir, &node.socket);
+    let (port, stop, join) = start(dir.clone());
+
+    // An empty mesh says so. A roster that renders nothing when it knows
+    // nothing is indistinguishable from one that is broken.
+    let (status, _, html) = req(port, "GET", "/", None, None);
+    assert_eq!(status, 200);
+    assert!(
+        html.contains("nobody else here yet"),
+        "the empty room says so: {}",
+        html
+    );
+    assert!(
+        html.contains("Nobody has said anything."),
+        "rather than rendering blank: {}",
+        html
+    );
+
+    // The mesh this app is on is the one its OWN source layered onto the
+    // vendored setting — not the shared default the library ships with.
+    assert!(
+        html.contains(">enclave<"),
+        "the panel names the app's own mesh, from the layered setting: {}",
+        html
+    );
+
+    // The machine's name is the machine's. The panel shows what the NODE
+    // says it is called, and joining the mesh did not change it — an earlier
+    // build set the identity label from the app's `label` setting, renaming
+    // its owner's node on every mesh that node was on.
+    assert!(
+        html.contains("title=\"chris&#x27;s laptop\"") || html.contains("title=\"chris's laptop\""),
+        "you are in your own room, under the name your machine's owner gave it: {}",
+        html
+    );
+    {
+        let st = node.state.lock().unwrap();
+        assert!(
+            !st.asked.iter().any(|c| c == "mesh_identity_set_label"),
+            "arriving on a mesh must never rename the node: {:?}",
+            st.asked
+        );
+        assert!(
+            st.networks.iter().any(|n| n == "enclave"),
+            "it joins the mesh the program named, and that is all it writes: {:?}",
+            st.networks
+        );
+    }
+
+    let (status, _, peers) = req(port, "GET", "/api/peers", None, None);
+    assert_eq!(status, 200);
+    assert_eq!(peers.trim(), "[]", "no peers, over HTTP too");
+
+    // Someone arrives.
+    let page_id = attr_of(&html, "data-ash-page").unwrap();
+    let mut ws = ws_open(port);
+    ws_send(&mut ws, &format!("{{\"page\":\"{}\"}}", page_id));
+    std::thread::sleep(std::time::Duration::from_millis(80));
+    {
+        let mut st = node.state.lock().unwrap();
+        st.peers = vec![
+            ("n1".to_string(), "ada".to_string(), "active".to_string()),
+            ("n2".to_string(), "grace".to_string(), "offline".to_string()),
+        ];
+        // Presence carries the display form of an id (`pubkey-SUFFIX`) while
+        // the roster answers the bare key; a site whose peer is on this mesh
+        // must survive that difference.
+        st.sites = vec![("n1-7F3A2".to_string(), "ada's pad".to_string(), 8080)];
+    }
+    // …and the node says so, down the connection it holds open. Nothing in
+    // this program polls: the worker is subscribed, the push names the
+    // collection, and every view that read the roster is dirtied by it.
+    node.announce("allmystuff://session");
+
+    // Nobody polled — not the browser, not the program. The node pushed, the
+    // worker named the collection, and every view that read it re-rendered
+    // and patched over the socket (§9.3, §9.10). The library used to carry a
+    // three-second schedule for this, which was both late and, on a quiet
+    // mesh, entirely wasted work.
+    let patch = ws_expect(&mut ws, "ada", 8);
+    assert!(patch.contains("grace"), "the whole roster patches, not one row: {}", patch);
+    assert!(
+        patch.contains("who-face who-here"),
+        "presence is visible: a connected peer carries the live class: {}",
+        patch
+    );
+    // Somebody says something. The mesh IS the room — everyone holding its id
+    // is in it — so the id every member computes is derived from the mesh's
+    // name, with no host to mint one or be offline.
+    let room = ashlar::meshd::room_of("enclave");
+    node.hears("n1", &room, "anyone about?");
+    let patch = ws_expect(&mut ws, "anyone about?", 8);
+    assert!(
+        patch.contains("class=\"said\""),
+        "a line arriving patches the conversation, unasked: {}",
+        patch
+    );
+    // A line for another room on the same mesh is somebody else's traffic.
+    node.hears("n1", "ashlar:elsewhere", "not for this app");
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    // And this side can answer. Type into the box, submit it, and what the
+    // node was asked to transmit is what the person typed — to the room the
+    // mesh's name derives, not to a room somebody had to be given.
+    let (_, _, page) = req(port, "GET", "/", None, None);
+    let (inst, typed) = event_target(&page, "oninput", 0).unwrap();
+    ws_send(
+        &mut ws,
+        &format!(
+            "{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"oninput\",\"value\":\"here\"}}}}",
+            inst, typed
+        ),
+    );
+    let after = ws_expect(&mut ws, "here", 8);
+    let (inst, submit) = event_target(&after, "onsubmit", 0).unwrap();
+    ws_send(
+        &mut ws,
+        &format!(
+            "{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onsubmit\"}}}}",
+            inst, submit
+        ),
+    );
+    let mine = ws_expect(&mut ws, "line mine", 8);
+    assert!(
+        mine.contains("line mine"),
+        "your own words read as yours, not as everyone else's: {}",
+        mine
+    );
+    assert!(
+        mine.contains("when\">now<"),
+        "and carry when they were said: {}",
+        mine
+    );
+    // The room noticed the arrivals itself. Nobody sent those: every member
+    // computes them from the roster it already watches, so they cost no
+    // traffic and no two members can disagree about who was there.
+    assert!(
+        mine.contains("<p class=\"notice\">ada joined</p>"),
+        "an arrival is a notice, not a message: {}",
+        mine
+    );
+    assert!(
+        !mine.contains("grace joined"),
+        "and only for somebody who is actually here — grace is offline: {}",
+        mine
+    );
+    // A member puts a file up. The room's file lane is NOT the share
+    // subsystem: the token's allow-list is the members, so nothing durable is
+    // granted and nothing has to be revoked.
+    node.hears_shared("n1", &room, "tok9", "notes.txt");
+    let shelf = ws_expect(&mut ws, "notes.txt", 8);
+    assert!(
+        shelf.contains("drop-name"),
+        "an offer arrives as a push and patches the shelf: {}",
+        shelf
+    );
+    // Nothing is fetched until somebody asks — an offer is a list, not a
+    // transfer. Ask, and the bytes land under the site's own assets, where a
+    // `files` part serves them like anything else.
+    let (inst, get) = event_target(&shelf, "onclick", 0).unwrap();
+    ws_send(
+        &mut ws,
+        &format!(
+            "{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onclick\"}}}}",
+            inst, get
+        ),
+    );
+    let after = ws_expect(&mut ws, "/room/notes.txt", 8);
+    assert!(
+        after.contains("<a href=\"/room/notes.txt\""),
+        "a fetched file is an ordinary link on this site: {}",
+        after
+    );
+    {
+        let st = node.state.lock().unwrap();
+        assert_eq!(st.fetched, vec!["tok9".to_string()], "one fetch, by token");
+    }
+    let (status, _, body) = req(port, "GET", "/room/notes.txt", None, None);
+    assert_eq!((status, body.trim()), (200, "hi"), "and it serves");
+
+    drop(ws);
+    {
+        let st = node.state.lock().unwrap();
+        assert_eq!(
+            st.sent,
+            vec![format!("chat|{}|here", room)],
+            "one line, to the room the mesh's own name derives"
+        );
+    }
+
+    let (_, _, page) = req(port, "GET", "/", None, None);
+    assert!(
+        page.contains("anyone about?"),
+        "what was heard is on the page: {}",
+        page
+    );
+    assert!(
+        !page.contains("not for this app"),
+        "another room's traffic is not this program's to show: {}",
+        page
+    );
+
+    // The same roster over HTTP: one handler, two transports (G2).
+    let (_, _, peers) = req(port, "GET", "/api/peers", None, None);
+    assert!(peers.contains("\"label\":\"ada\""), "{}", peers);
+    assert!(peers.contains("\"here\":false"), "presence crosses as it is: {}", peers);
+
+    // What `ashlar run --mesh` does, against the same binding: publish the
+    // port this origin is serving, ask what the mesh now says, and take it
+    // back off. The site is published to a mesh named at RUN time — the
+    // program said nothing about it, which is the whole of B5 here.
+    let mut link = ashlar::mesh::Link::new();
+    let landed = link
+        .publish(&dir, port, "enclave", "enclave.app")
+        .expect("the mesh answers `expose`");
+    assert_eq!(landed.network, "enclave");
+    assert!(
+        landed.line().contains("mesh `enclave`"),
+        "the line a runner reads names the mesh: {}",
+        landed.line()
+    );
+    let report = link.report(&dir);
+    assert!(report.ok(), "the mesh answered every question: {:?}", report.problems);
+    assert!(
+        report.facts.iter().any(|(k, v)| k == "published" && v == "enclave.app"),
+        "the published site is reported back: {:?}",
+        report.facts
+    );
+    link.withdraw(&dir, port).expect("the mesh answers `unexpose`");
+    let after = link.report(&dir);
+    assert!(
+        after.facts.iter().any(|(k, v)| k == "published" && v == "nothing"),
+        "and taking it back off is visible to the same link: {:?}",
+        after.facts
+    );
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn t_examples_locker_scopes_storage_per_user() {
     // `peruser stored` gives each signed-in user their own isolated, persisted
     // data (ADR-0015). Proven here: anonymous access is refused, two users
@@ -1633,7 +2501,7 @@ fn t_examples_gallery_frames_a_chosen_example() {
     // Every example the settings name is in the sidebar, under its heading.
     for name in [
         "counter", "todo", "chat", "poll", "ticker", "pong", "foundry", "press", "guardrails",
-        "diary", "locker", "ledger", "abacus", "commons", "slate", "hello",
+        "diary", "locker", "ledger", "abacus", "enclave", "commons", "slate", "hello",
     ] {
         assert!(
             html.contains(&format!(">{}<", name)),

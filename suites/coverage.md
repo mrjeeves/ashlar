@@ -50,7 +50,7 @@ half — a program may *depend* on a location it cannot know, via a `setting`
 deployment supplies — is proved in T-G by
 `t_g_missing_required_setting_refuses_before_serving` (every gap named with its
 shape, refused before a port is bound), in `t_examples`' gallery test (a page of
-fifteen addresses whose source has none), and in `settings.rs`'s own unit
+seventeen addresses whose source has none), and in `settings.rs`'s own unit
 tests. B1 is `t_f.rs`'s relocation test; B2 is the `t_a4`
 corpus; B6 is `resolve.rs`'s own unit tests, since the space-header rule is a
 parse-time structural property.
@@ -101,11 +101,39 @@ no external crate reachable from the workspace. G5 (no registry) is the same
 check plus `vendor`'s copy-in semantics in `t_e.rs` — the absence of version
 resolution is proven by there being nothing to resolve.
 
-`t_examples` sits across all of these rather than under one letter: all sixteen
-projects compile clean, are canonically formatted, and are driven at runtime
-over real HTTP and WebSockets — including `gallery`, the showcase page, whose
-driving test asserts it renders fifteen addresses that appear nowhere in its
-source.
+`t_examples` sits across all of these rather than under one letter: all
+eighteen projects compile clean, are canonically formatted, and are driven at
+runtime over real HTTP and WebSockets — including `gallery`, the showcase page,
+whose driving test asserts it renders seventeen addresses that appear nowhere in
+its source.
+
+One of those projects is driven against a co-process rather than the system it
+names — `abacus` against Python — and skips with a printed reason when that
+language is absent. `enclave` is driven twice, against the worker this
+toolchain ships: once with the mesh node's own control socket stood up by the
+test, which is unix-only because `std` binds a Unix socket and cannot create a
+named pipe, and once against a socket that is not there at all, on every
+platform. The second is the regression for a build whose every mesh read
+faulted, so a machine with no node — closed, uninstalled, or across a WSL
+boundary — could not start the site at all. It also pins the rule that a
+program joining a mesh never renames the machine it runs on. The first drives
+the worker PUSH (§9.10): the fake node streams an event down the connection it
+holds open, and the page patches with nothing in the program polling — the
+`{"changed": …}` line's own shape is pinned in `foreign.rs`. It drives
+transmitting the same way: a peer's line arrives as a push and patches, a line
+for another room on the same mesh is ignored, and typing into the box sends to
+the room the mesh's own name derives. It drives the room's other two lanes to
+the same depth: a file offered arrives on the shelf, is fetched only when asked,
+and then serves from the site as an ordinary `image/jpeg` or text; and a camera
+is refused until the person at the other machine allows it, after which the JPEG
+frames the mesh carries render as an `img` whose `seq` moves. What the suite
+cannot reach is a real capture device, which is in `docs/roadmap.md`.
+`enclave` also carries the G5 half `vendor` cannot check: its
+`vendor/mesh/` is asserted byte-identical to `lib/mesh/`, because a vendored
+dependency that drifts from its source is the version skew a registry exists to
+manage and this language refuses to have. What the stand-in cannot prove — two real machines, and what the
+network decides between them — is named in `docs/roadmap.md` rather than
+implied by a green run.
 
 ## Machine-readable index
 

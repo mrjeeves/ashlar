@@ -13,21 +13,24 @@
 
 mod cli {
     use ashlar::diag::Diag;
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     pub const USAGE: &str = "usage:\n  \
         ashlar check [path] [--human]\n  \
         ashlar fix [id] [path]\n  \
         ashlar build [path]\n  \
         ashlar fmt [path] [--check]\n  \
-        ashlar run [part] [path] [--port n]\n  \
+        ashlar run [part] [path] [--port n] [--mesh [network]]\n  \
         ashlar rename <space-part-or-prop> <new-name> [path] [--plan]\n  \
         ashlar rekind <part.prop> <kind> [path] [--plan]\n  \
         ashlar move <part> <space> [path] [--plan]\n  \
         ashlar radius <full-name> [path]\n  \
     ashlar delta [path]\n  \
         ashlar vendor <source> [path]\n  \
-        ashlar foreign check [space] [path]\n";
+        ashlar foreign check [space] [path]\n  \
+        ashlar mesh [path]\n  \
+        ashlar mesh install\n  \
+        ashlar mesh worker [socket]\n";
 
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub enum Cmd {
@@ -35,7 +38,15 @@ mod cli {
         Fix { path: String, id: Option<String> },
         Build { path: String },
         Fmt { path: String, check_only: bool },
-        Run { path: String, part: Option<String>, port: Option<u16> },
+        Run {
+            path: String,
+            part: Option<String>,
+            port: Option<u16>,
+            /// `--mesh` with no name means the mesh the machine's daemon
+            /// calls its default; `--mesh <name>` names one. Absent is
+            /// `None`: a site is not published unless asked.
+            mesh: Option<String>,
+        },
         Rename { target: String, new_name: String, path: String, plan_only: bool },
         Rekind { target: String, kind: String, path: String, plan_only: bool },
         Move { part: String, space: String, path: String, plan_only: bool },
@@ -43,6 +54,9 @@ mod cli {
         Delta { path: String },
         Vendor { source: String, path: String },
         ForeignCheck { space: Option<String>, path: String },
+        Mesh { path: String },
+        MeshInstall,
+        MeshWorker { socket: Option<String> },
     }
 
     /// Parse the command and its arguments (everything after the binary
@@ -226,7 +240,8 @@ mod cli {
                 // any port without editing a line.
                 let mut positionals: Vec<String> = Vec::new();
                 let mut port: Option<u16> = None;
-                let mut it = rest.iter();
+                let mut mesh: Option<String> = None;
+                let mut it = rest.iter().peekable();
                 while let Some(a) = it.next() {
                     if a == "--port" {
                         let v = it
@@ -236,6 +251,23 @@ mod cli {
                             .parse()
                             .map_err(|_| format!("`--port` takes a number, not `{}`", v))?;
                         port = Some(n);
+                    } else if a == "--mesh" {
+                        // The name is optional: `--mesh` alone takes the
+                        // machine's default mesh, `--mesh home` names one. A
+                        // following `--flag` is the next flag, and a token
+                        // naming a directory is the project path — the same
+                        // rule this command already uses to tell a part name
+                        // from a path.
+                        let named = match it.peek() {
+                            Some(v) if !v.starts_with("--") && !Path::new(v.as_str()).is_dir() => {
+                                Some((*v).clone())
+                            }
+                            _ => None,
+                        };
+                        if named.is_some() {
+                            it.next();
+                        }
+                        mesh = Some(named.unwrap_or_default());
                     } else if a.starts_with("--") {
                         return Err(format!("unknown flag `{}`", a));
                     } else {
@@ -259,7 +291,33 @@ mod cli {
                         )
                     }
                 };
-                Ok(Cmd::Run { path, part, port })
+                Ok(Cmd::Run { path, part, port, mesh })
+            }
+            "mesh" => {
+                // `ashlar mesh worker` is the co-process the two mesh spaces
+                // derive to (§9.10): the runtime spawns it, and it speaks the
+                // control sockets the mesh daemons already expose. It is a
+                // real command all the same, so a person can drive it by hand
+                // to see exactly what a site sees.
+                if rest.first().map(String::as_str) == Some("install") {
+                    if rest.len() > 1 {
+                        return Err("`mesh install` takes no arguments".to_string());
+                    }
+                    return Ok(Cmd::MeshInstall);
+                }
+                if rest.first().map(String::as_str) == Some("worker") {
+                    if rest.len() > 2 {
+                        return Err("`mesh worker` takes at most a socket to speak to".to_string());
+                    }
+                    // Naming the socket says where the node already is, so the
+                    // worker connects to that one and starts nothing — the
+                    // same relationship `foreign.json` has to every other
+                    // derived binding (ADR-0017).
+                    return Ok(Cmd::MeshWorker { socket: rest.get(1).cloned() });
+                }
+                Ok(Cmd::Mesh {
+                    path: one_path(rest)?,
+                })
             }
             "fmt" => {
                 let mut path: Option<String> = None;
@@ -317,7 +375,10 @@ mod cli {
             Cmd::Fix { path, id } => run_fix(&path, id.as_deref()),
             Cmd::Build { path } => run_build(&path),
             Cmd::Fmt { path, check_only } => run_fmt(&path, check_only),
-            Cmd::Run { path, part, port } => run_serve(&path, part, port),
+            Cmd::Run { path, part, port, mesh } => run_serve(&path, part, port, mesh),
+            Cmd::Mesh { path } => run_mesh(&path),
+            Cmd::MeshInstall => run_mesh_install(),
+            Cmd::MeshWorker { socket } => ashlar::meshd::run(socket.map(PathBuf::from)),
             Cmd::Rename { target, new_name, path, plan_only } => {
                 run_refactor(&path, plan_only, |srcs| plan_rename(srcs, &target, &new_name))
             }
@@ -470,6 +531,9 @@ mod cli {
                     if let Some(file) = binding_file_with_key(root, old) {
                         println!("  {}  key `{}`", file, old);
                     }
+                }
+                for note in &plan.notes {
+                    println!("  note: {}", note);
                 }
                 0
             }
@@ -784,6 +848,9 @@ mod cli {
         for (old, new) in &plan.foreign_renames {
             eprintln!("  {} -> {}", old, new);
         }
+        for note in &plan.notes {
+            eprintln!("  note: {}", note);
+        }
         if let Some((old, new)) = &plan.foreign_key_rename {
             if let Some(file) = binding_file_with_key(root, old) {
                 eprintln!("  {}  key `{}` -> `{}`", file, old, new);
@@ -870,18 +937,137 @@ mod cli {
         Ok(())
     }
 
-    fn run_serve(path: &str, part: Option<String>, port: Option<u16>) -> i32 {
+    /// `ashlar run [part] [--port n] [--mesh [network]]` (§9.1, §11).
+    ///
+    /// `--mesh` publishes the port this origin is serving to a private mesh,
+    /// so the people on it reach the site with no proxy, no forwarded port
+    /// and no public address (ADR-0013). It is `--port`'s sibling: `--port`
+    /// says where this origin listens, `--mesh` says who can reach it, and
+    /// neither is written in source (B5).
+    ///
+    /// Publishing failing does NOT stop the server. A site that is up and
+    /// unpublished is a site; a process that refused to serve because a
+    /// daemon was missing is an outage, and the reason is one line above the
+    /// address either way.
+    fn run_serve(
+        path: &str,
+        part: Option<String>,
+        port: Option<u16>,
+        mesh: Option<String>,
+    ) -> i32 {
         let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-        match ashlar::http::serve(
-            std::path::PathBuf::from(path),
-            part,
-            port,
-            |port| eprintln!("serving on http://127.0.0.1:{}", port),
-            stop,
-        ) {
+        let root = std::path::PathBuf::from(path);
+        // One link for the whole run: the co-process that published the site
+        // is the one asked to take it back down.
+        let link: std::sync::Arc<std::sync::Mutex<ashlar::mesh::Link>> =
+            std::sync::Arc::new(std::sync::Mutex::new(ashlar::mesh::Link::new()));
+        let published: std::sync::Arc<std::sync::Mutex<Option<u16>>> =
+            std::sync::Arc::new(std::sync::Mutex::new(None));
+        let on_bind = {
+            let root = root.clone();
+            let mesh = mesh.clone();
+            let link = link.clone();
+            let published = published.clone();
+            move |port: u16, root_part: &str| {
+                if let (Some(network), Ok(mut link)) = (&mesh, link.lock()) {
+                    match link.publish(&root, port, network, root_part) {
+                        Ok(p) => {
+                            if let Ok(mut bound) = published.lock() {
+                                *bound = Some(port);
+                            }
+                            eprintln!("{}", p.line());
+                        }
+                        Err(e) => {
+                            eprintln!("not published: {}", e);
+                            eprintln!("`ashlar mesh` reports what this machine's mesh can do.");
+                        }
+                    }
+                }
+                eprintln!("serving {} on http://127.0.0.1:{}", root_part, port);
+            }
+        };
+        let outcome = ashlar::http::serve(root.clone(), part, port, on_bind, stop);
+        // Leaving the mesh is the counterpart of joining it, and it runs on
+        // the way out of a clean shutdown and a failed one alike: the daemon
+        // outlives this process, so a site left published is one a peer can
+        // still see and never reach.
+        let bound = published.lock().ok().and_then(|b| *b);
+        if let (Some(port), Ok(mut link)) = (bound, link.lock()) {
+            if let Err(e) = link.withdraw(&root, port) {
+                eprintln!("warning: could not take the site off the mesh: {}", e);
+            }
+        }
+        match outcome {
             Ok(()) => 0,
             Err(e) => {
                 eprintln!("{}", e);
+                1
+            }
+        }
+    }
+
+    /// `ashlar mesh` (§11): what this machine's mesh can answer, before a
+    /// request finds out. The sibling of `ashlar foreign check` — the mesh is
+    /// reached across the same boundary, so its reachability is proven the
+    /// same way, on demand, against the bindings in force.
+    fn run_mesh(path: &str) -> i32 {
+        let report = ashlar::mesh::Link::new().report(Path::new(path));
+        for (name, value) in &report.facts {
+            println!("{:<10} {}", name, value);
+        }
+        for problem in &report.problems {
+            println!("unreachable {}", problem);
+        }
+        if report.ok() {
+            0
+        } else {
+            1
+        }
+    }
+
+    /// `ashlar mesh install` (§9.10): bring the mesh to a machine that has
+    /// none, by running the installer its makers publish.
+    ///
+    /// A command somebody types, never something `run` does for them. It
+    /// fetches a script and executes it — the ordinary shape of an install,
+    /// and not a thing a server should do because a page was opened. So it
+    /// prints what it will run, first, every time.
+    fn run_mesh_install() -> i32 {
+        if ashlar::meshd::node_answers() {
+            println!("a mesh node is already answering on this machine.");
+            println!("`ashlar mesh` says what it can do.");
+            return 0;
+        }
+        let argv = ashlar::meshd::install_command();
+        println!("running the AllMyStuff installer:");
+        // Quote the script so the line is one somebody can paste back.
+        println!(
+            "  {} {}",
+            argv[..argv.len() - 1].join(" "),
+            argv.last().map(|a| format!("'{}'", a)).unwrap_or_default()
+        );
+        let ran = std::process::Command::new(&argv[0]).args(&argv[1..]).status();
+        match ran {
+            Ok(status) if status.success() => {
+                if ashlar::meshd::node_answers() {
+                    println!("the mesh is here. `ashlar run --mesh` publishes a site to it.");
+                    0
+                } else {
+                    // Installed but not running is the ordinary end state: the
+                    // node starts with the app, or with the next call that
+                    // needs it. Saying so beats claiming failure.
+                    println!("installed. The node starts with the app, or with the first call that needs it.");
+                    0
+                }
+            }
+            Ok(status) => {
+                eprintln!("the installer exited with {}.", status);
+                eprintln!("Install AllMyStuff by hand, or set ASHLAR_MESH_NODE to a node binary.");
+                1
+            }
+            Err(e) => {
+                eprintln!("could not run `{}`: {}", argv[0], e);
+                eprintln!("Install AllMyStuff by hand, or set ASHLAR_MESH_NODE to a node binary.");
                 1
             }
         }
@@ -1225,7 +1411,8 @@ mod cli {
                 Cmd::Run {
                     path: ".".to_string(),
                     part: Some("chat.app".to_string()),
-                    port: None
+                    port: None,
+                    mesh: None
                 }
             );
             let cmd = parse(&args(&["run", "chat.app", "."])).unwrap();
@@ -1234,7 +1421,8 @@ mod cli {
                 Cmd::Run {
                     path: ".".to_string(),
                     part: Some("chat.app".to_string()),
-                    port: None
+                    port: None,
+                    mesh: None
                 }
             );
         }
@@ -1249,14 +1437,91 @@ mod cli {
                 Cmd::Run {
                     path: "somewhere".to_string(),
                     part: Some("app".to_string()),
-                    port: Some(8091)
+                    port: Some(8091),
+                    mesh: None
                 }
             );
             // A bare `--port` with a value and no positionals is fine too.
             let cmd = parse(&args(&["run", "--port", "9000"])).unwrap();
             assert_eq!(
                 cmd,
-                Cmd::Run { path: ".".to_string(), part: None, port: Some(9000) }
+                Cmd::Run { path: ".".to_string(), part: None, port: Some(9000), mesh: None }
+            );
+        }
+
+        #[test]
+        fn run_publishes_to_a_mesh_named_or_default() {
+            // covers: B5
+            // `--mesh` alone is the machine's default mesh; a following word
+            // names one. Both are deployment facts, exactly like `--port`.
+            assert_eq!(
+                parse(&args(&["run", "--mesh"])).unwrap(),
+                Cmd::Run {
+                    path: ".".to_string(),
+                    part: None,
+                    port: None,
+                    mesh: Some(String::new())
+                }
+            );
+            assert_eq!(
+                parse(&args(&["run", "--mesh", "enclave"])).unwrap(),
+                Cmd::Run {
+                    path: ".".to_string(),
+                    part: None,
+                    port: None,
+                    mesh: Some("enclave".to_string())
+                }
+            );
+            // A flag after `--mesh` is the next flag, not the mesh's name.
+            assert_eq!(
+                parse(&args(&["run", "--mesh", "--port", "8091"])).unwrap(),
+                Cmd::Run {
+                    path: ".".to_string(),
+                    part: None,
+                    port: Some(8091),
+                    mesh: Some(String::new())
+                }
+            );
+            // And a directory after it is the project path — the same rule
+            // that tells `run <part>` from `run <path>`.
+            let here = std::env::temp_dir().to_string_lossy().to_string();
+            assert_eq!(
+                parse(&args(&["run", "--mesh", &here])).unwrap(),
+                Cmd::Run {
+                    path: here,
+                    part: None,
+                    port: None,
+                    mesh: Some(String::new())
+                }
+            );
+            // Absent means unpublished: a site does not join a mesh by
+            // running.
+            assert!(matches!(
+                parse(&args(&["run"])).unwrap(),
+                Cmd::Run { mesh: None, .. }
+            ));
+        }
+
+        #[test]
+        fn mesh_takes_an_optional_path() {
+            assert_eq!(
+                parse(&args(&["mesh"])).unwrap(),
+                Cmd::Mesh { path: ".".to_string() }
+            );
+            assert_eq!(
+                parse(&args(&["mesh", "proj"])).unwrap(),
+                Cmd::Mesh { path: "proj".to_string() }
+            );
+            // `install` and `worker` are the two words that are not a path.
+            assert_eq!(parse(&args(&["mesh", "install"])).unwrap(), Cmd::MeshInstall);
+            assert!(parse(&args(&["mesh", "install", "proj"])).is_err());
+            assert_eq!(
+                parse(&args(&["mesh", "worker"])).unwrap(),
+                Cmd::MeshWorker { socket: None }
+            );
+            assert_eq!(
+                parse(&args(&["mesh", "worker", "/tmp/n.sock"])).unwrap(),
+                Cmd::MeshWorker { socket: Some("/tmp/n.sock".to_string()) }
             );
         }
 
@@ -1344,6 +1609,13 @@ mod cli {
 }
 
 fn main() {
+    // The mesh spaces derive to `ashlar mesh worker` (§9.10), and `ashlar` is
+    // not always on PATH. Say where this binary is so the boundary can spawn
+    // it; nothing else reads this, and a program embedding the library sets
+    // nothing, which is what keeps it from spawning ITSELF as a worker.
+    if let Ok(exe) = std::env::current_exe() {
+        std::env::set_var("ASHLAR_SELF", exe);
+    }
     let args: Vec<String> = std::env::args().skip(1).collect();
     match cli::parse(&args) {
         Ok(cmd) => std::process::exit(cli::run(cmd)),

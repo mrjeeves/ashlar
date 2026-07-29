@@ -31,7 +31,7 @@ fn start(root: PathBuf) -> (u16, Arc<AtomicBool>, std::thread::JoinHandle<()>) {
     let stop2 = stop.clone();
     let (tx, rx) = mpsc::channel();
     let join = std::thread::spawn(move || {
-        let r = http::serve(root, None, Some(0), move |port| tx.send(port).unwrap(), stop2);
+        let r = http::serve(root, None, Some(0), move |port, _| tx.send(port).unwrap(), stop2);
         if let Err(e) = r {
             panic!("serve failed: {}", e);
         }
@@ -44,7 +44,7 @@ fn start(root: PathBuf) -> (u16, Arc<AtomicBool>, std::thread::JoinHandle<()>) {
 /// is a delivered behavior here, not an accident, so it needs asserting.
 fn start_expecting_failure(root: PathBuf) -> String {
     let stop = Arc::new(AtomicBool::new(false));
-    match http::serve(root, None, Some(0), |_| {}, stop) {
+    match http::serve(root, None, Some(0), |_, _| {}, stop) {
         Ok(()) => panic!("expected startup to refuse, but it served"),
         Err(e) => e,
     }
@@ -60,7 +60,7 @@ fn start_with_liveness(
     let stop2 = stop.clone();
     let (tx, rx) = mpsc::channel();
     let join = std::thread::spawn(move || {
-        let r = http::serve_with_liveness(root, None, Some(0), move |port| tx.send(port).unwrap(), stop2, live);
+        let r = http::serve_with_liveness(root, None, Some(0), move |port, _| tx.send(port).unwrap(), stop2, live);
         if let Err(e) = r {
             panic!("serve failed: {}", e);
         }
@@ -1513,6 +1513,88 @@ char* lies(const char* args) {
 }
 
 #[test]
+fn t_g_foreign_command_transport_reaches_a_program_with_no_adapter() {
+    // covers: G4, ADR-0017
+    // The floor this transport exists to lower: reaching what is ALREADY on
+    // the machine should cost nothing. No ABI, no envelope, no co-process
+    // protocol — argv in, stdout out. The one example using `native` needs a
+    // 165-line C-ABI shim and a Rust toolchain to run a `select`, and a
+    // capability priced like that is one an author does not reach for.
+    if std::process::Command::new("python3").arg("-V").output().is_err() {
+        eprintln!("t_g_foreign_command: no python3; skipping");
+        return;
+    }
+    let app = r#"space tools
+
+foreign shout: (text) -> text
+foreign rows: (text) -> data
+foreign refuse: (text) -> text
+
+part Server {
+  port = 0
+}
+
+part say {
+  route = "/say/{word}"
+  handle pipe = (req: std.Request) => shout(req.params["word"]!)
+}
+
+part query {
+  route = "/rows"
+  handle pipe = (req: std.Request) => rows("two")
+}
+
+part nope {
+  route = "/nope"
+  handle pipe = (req: std.Request) => refuse("x")
+}
+"#;
+    // An ordinary program. It knows nothing about Ashlar: it reads argv and
+    // prints. That is the whole contract.
+    let program = r#"
+import sys, json
+what, arg = sys.argv[1], sys.argv[2]
+if what == "shout":
+    print(arg.upper())
+elif what == "rows":
+    print(json.dumps([{"n": 1}, {"n": 2}]))
+else:
+    sys.stderr.write("this program declined\n")
+    sys.exit(3)
+"#;
+    let root = fixture("foreign_command", &[("app.ash", app)]);
+    std::fs::create_dir_all(root.join("foreign")).unwrap();
+    std::fs::write(root.join("foreign/tool.py"), program).unwrap();
+    std::fs::write(
+        root.join("foreign.json"),
+        r#"{"tools":{"via":"command","run":["python3","foreign/tool.py"]}}"#,
+    )
+    .unwrap();
+
+    let (port, stop, join) = start(root);
+
+    // The name is the subcommand, the arguments follow it, and what the
+    // program printed is the answer.
+    let (status, body) = http_get(port, "/say/stone");
+    assert_eq!((status, body.as_str()), (200, "STONE"), "command transport");
+
+    // Output that parses as JSON IS the value, shape-checked like any other
+    // — which is what makes a tool that speaks JSON usable with no adapter.
+    let (status, body) = http_get(port, "/rows");
+    assert_eq!(status, 200);
+    assert!(body.contains("\"n\":2"), "{}", body);
+
+    // A non-zero exit is a fault carrying what the program said on stderr,
+    // because that is where programs put the reason.
+    let (status, body) = http_get(port, "/nope");
+    assert_eq!(status, 500);
+    assert!(body.contains("this program declined"), "{}", body);
+
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+}
+
+#[test]
 fn t_g_foreign_worker_transport_and_error_envelope() {
     // covers ADR-0017: a capability backed by a co-process — no shared
     // library, no C ABI, no compiler. Also the shared result envelope
@@ -1942,7 +2024,7 @@ part ping {
 
     // Unnamed with two candidates: an error naming both.
     let stop = Arc::new(AtomicBool::new(false));
-    let err = http::serve(root.clone(), None, Some(0), |_| {}, stop).unwrap_err();
+    let err = http::serve(root.clone(), None, Some(0), |_, _| {}, stop).unwrap_err();
     assert!(err.contains("more than one part declares `port`"), "{}", err);
     assert!(err.contains("multi.alpha") && err.contains("multi.beta"), "{}", err);
 
@@ -1952,7 +2034,7 @@ part ping {
         root.clone(),
         Some("multi.ping".to_string()),
         Some(0),
-        |_| {},
+        |_, _| {},
         stop,
     )
     .unwrap_err();
@@ -1967,7 +2049,7 @@ part ping {
             root,
             Some("multi.beta".to_string()),
             Some(0),
-            move |port| tx.send(port).unwrap(),
+            move |port, _| tx.send(port).unwrap(),
             stop2,
         )
         .unwrap();
@@ -2769,7 +2851,7 @@ part link {
     // No settings.json at all: both required settings are named, WITH their
     // shapes, and the defaulted one is not (it has a value).
     let stop = Arc::new(AtomicBool::new(false));
-    let err = http::serve(root.clone(), None, Some(0), |_| {}, stop).unwrap_err();
+    let err = http::serve(root.clone(), None, Some(0), |_, _| {}, stop).unwrap_err();
     assert!(err.contains("site.app.endpoint : text"), "{}", err);
     assert!(err.contains("site.app.label : text"), "{}", err);
     assert!(
@@ -2787,7 +2869,7 @@ part link {
     )
     .unwrap();
     let stop = Arc::new(AtomicBool::new(false));
-    let err = http::serve(root.clone(), None, Some(0), |_| {}, stop).unwrap_err();
+    let err = http::serve(root.clone(), None, Some(0), |_, _| {}, stop).unwrap_err();
     assert!(err.contains("1 setting(s)"), "{}", err);
     assert!(err.contains("site.app.label"), "{}", err);
     assert!(!err.contains("site.app.endpoint :"), "supplied is not missing: {}", err);
@@ -2799,7 +2881,7 @@ part link {
     )
     .unwrap();
     let stop = Arc::new(AtomicBool::new(false));
-    let err = http::serve(root.clone(), None, Some(0), |_| {}, stop).unwrap_err();
+    let err = http::serve(root.clone(), None, Some(0), |_, _| {}, stop).unwrap_err();
     assert!(err.contains("site.app.endpoint"), "{}", err);
     assert!(err.contains("text"), "the cause must name the expected shape: {}", err);
 

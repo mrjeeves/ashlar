@@ -20,7 +20,7 @@ use crate::tokens::{Pos, Span};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 
 // -- the binding file -------------------------------------------------------
 
@@ -35,6 +35,13 @@ pub enum Via {
     },
     /// A co-process: argv, run from the project root.
     Worker { run: Vec<String> },
+    /// An ordinary program, run once per call. `run` is the command; `args`
+    /// maps an Ashlar name to the argv items that select it, defaulting to
+    /// the name itself — the same relationship `symbols` has to an export.
+    Command {
+        run: Vec<String>,
+        args: BTreeMap<String, Vec<String>>,
+    },
     /// A service that speaks the same envelope over HTTP.
     Http { url: String },
 }
@@ -48,13 +55,67 @@ impl Via {
         }
     }
 
+    /// The derived default for one space. One name derives to a co-process
+    /// instead of a library, because the capability it names belongs to the
+    /// machine rather than to the project (see [`derived_worker`]).
+    pub fn derived_for(space: &str) -> Via {
+        match derived_worker(space) {
+            Some(run) => Via::Worker { run },
+            None => Via::derived(),
+        }
+    }
+
     pub fn label(&self) -> &'static str {
         match self {
             Via::Native { .. } => "native",
             Via::Worker { .. } => "worker",
+            Via::Command { .. } => "command",
             Via::Http { .. } => "http",
         }
     }
+}
+
+/// The one space naming the mesh: who else is on the private network this
+/// machine joined, and the sites they serve.
+pub const MESH_SPACE: &str = "mesh";
+
+/// The space whose derived default is a co-process rather than a native
+/// library — and the command is this toolchain, in worker mode.
+///
+/// The derivation rule (ADR-0017) answers "where does this capability live"
+/// with a path inside the project, which is right for a capability the project
+/// supplies and wrong for one the machine already runs. The mesh node is the
+/// second kind, installed once and shared by everything on the box, exactly
+/// like the proxy that terminates TLS in front of the origin (ADR-0013).
+///
+/// What it must NOT do is make the mesh ship an Ashlar-shaped adapter. That is
+/// the failure this whole ADR exists to end: a boundary that only works once
+/// the foreign system has been re-authored for us is not a boundary. So the
+/// adapter is ours — `ashlar mesh worker` speaks the one control socket that
+/// node already exposes to its own clients (§9.10) — and the mechanism is the
+/// ordinary worker transport, so a `foreign.json` entry still overrides it,
+/// `check` still reports an unknown key, and the manifest still records
+/// whichever won.
+pub fn derived_worker(space: &str) -> Option<Vec<String>> {
+    match space {
+        MESH_SPACE => Some(vec![
+            "ashlar".to_string(),
+            "mesh".to_string(),
+            "worker".to_string(),
+        ]),
+        _ => None,
+    }
+}
+
+/// Whether an argv is this toolchain answering its own derived default. A
+/// worker named `ashlar` is only findable when the toolchain is on PATH, and
+/// it very often is not — a `cargo run` build, a binary in a release
+/// directory. The CLI therefore publishes its own path as `ASHLAR_SELF`, and
+/// spawning uses it for exactly this argv and nothing else, so the derived
+/// default works wherever `ashlar` was started from without turning every
+/// worker into a guess about what is running.
+pub fn is_self_worker(run: &[String]) -> bool {
+    run.len() == 3 && run[0] == "ashlar" && run[1] == "mesh" && run[2] == "worker"
 }
 
 /// Where the binding file lives: `ASHLAR_FOREIGN` if set, else
@@ -65,6 +126,30 @@ pub fn binding_path(root: &Path) -> PathBuf {
         Ok(p) if !p.is_empty() => PathBuf::from(p),
         _ => root.join("foreign.json"),
     }
+}
+
+/// The `run` array a `worker` and a `command` both need.
+fn argv(fields: &BTreeMap<String, V>, space: &str) -> Result<Vec<String>, String> {
+    let Some(V::List(items)) = fields.get("run") else {
+        return Err(format!(
+            "binding for `{}` needs `run`, a list like [\"sqlite3\", \"app.db\"].",
+            space
+        ));
+    };
+    let mut run = Vec::new();
+    for it in items {
+        let V::Text(a) = it else {
+            return Err(format!(
+                "binding for `{}`: every `run` entry must be a text.",
+                space
+            ));
+        };
+        run.push(a.clone());
+    }
+    if run.is_empty() {
+        return Err(format!("binding for `{}`: `run` must name a command.", space));
+    }
+    Ok(run)
 }
 
 /// Parse a binding file. A malformed one is loud: a program whose deployment
@@ -82,7 +167,7 @@ pub fn parse_bindings(text: &str) -> Result<BTreeMap<String, Via>, String> {
             Some(V::Text(v)) => v.clone(),
             Some(_) => return Err(format!("binding for `{}`: `via` must be a text.", space)),
             None => return Err(format!(
-                "binding for `{}` has no `via`; use \"native\", \"worker\", or \"http\".",
+                "binding for `{}` has no `via`; use \"native\", \"worker\", \"command\", or \"http\".",
                 space
             )),
         };
@@ -111,24 +196,44 @@ pub fn parse_bindings(text: &str) -> Result<BTreeMap<String, Via>, String> {
                 }
                 Via::Native { library, symbols }
             }
-            "worker" => {
-                let Some(V::List(items)) = fields.get("run") else {
-                    return Err(format!(
-                        "binding for `{}`: a worker needs `run`, a list like [\"python3\", \"foreign/x.py\"].",
-                        space
-                    ));
-                };
-                let mut run = Vec::new();
-                for it in items {
-                    let V::Text(a) = it else {
-                        return Err(format!("binding for `{}`: every `run` entry must be a text.", space));
-                    };
-                    run.push(a.clone());
+            "worker" => Via::Worker {
+                run: argv(&fields, &space)?,
+            },
+            "command" => {
+                let run = argv(&fields, &space)?;
+                // Which argv items select this name. Absent means the name
+                // itself, so `git` + `status` is the whole binding; present
+                // and empty means the program takes the arguments alone,
+                // which is how a tool that is one command (`sqlite3`) binds.
+                let mut args: BTreeMap<String, Vec<String>> = BTreeMap::new();
+                match fields.get("args") {
+                    Some(V::Map(m)) => {
+                        for (k, v) in m {
+                            let V::List(items) = v else {
+                                return Err(format!(
+                                    "binding for `{}`: `args` for `{}` must be a list of text.",
+                                    space, k
+                                ));
+                            };
+                            let mut fixed = Vec::new();
+                            for it in items {
+                                let V::Text(a) = it else {
+                                    return Err(format!(
+                                        "binding for `{}`: `args` for `{}` must be a list of text.",
+                                        space, k
+                                    ));
+                                };
+                                fixed.push(a.clone());
+                            }
+                            args.insert(k.clone(), fixed);
+                        }
+                    }
+                    Some(_) => {
+                        return Err(format!("binding for `{}`: `args` must be an object.", space))
+                    }
+                    None => {}
                 }
-                if run.is_empty() {
-                    return Err(format!("binding for `{}`: `run` must name a command.", space));
-                }
-                Via::Worker { run }
+                Via::Command { run, args }
             }
             "http" => {
                 let Some(V::Text(url)) = fields.get("url") else {
@@ -144,7 +249,7 @@ pub fn parse_bindings(text: &str) -> Result<BTreeMap<String, Via>, String> {
             }
             other => {
                 return Err(format!(
-                    "binding for `{}`: unknown `via` \"{}\"; use \"native\", \"worker\", or \"http\".",
+                    "binding for `{}`: unknown `via` \"{}\"; use \"native\", \"worker\", \"command\", or \"http\".",
                     space, other
                 ))
             }
@@ -259,12 +364,12 @@ fn key_span(text: &str, key: &str) -> Span {
 pub fn describe(root: &Path, space: &str) -> (String, String) {
     let via = Boundary::new()
         .via(root, space)
-        .unwrap_or_else(|_| Via::derived());
+        .unwrap_or_else(|_| Via::derived_for(space));
     let detail = match &via {
         Via::Native { library, .. } => library
             .clone()
             .unwrap_or_else(|| format!("foreign/{}", space)),
-        Via::Worker { run } => run.join(" "),
+        Via::Worker { run } | Via::Command { run, .. } => run.join(" "),
         Via::Http { url } => url.clone(),
     };
     (via.label().to_string(), detail)
@@ -277,6 +382,42 @@ pub fn derived_library_paths(space: &str) -> Vec<String> {
         .iter()
         .map(|ext| format!("foreign/{}{}", space, ext))
         .collect()
+}
+
+/// What a rename must SAY when it moves a space onto or off one of the two
+/// derived-worker names (E3). Nothing moves on disk — the binding is the name
+/// itself — so a rename that says nothing would silently swap which transport
+/// a capability is reached by, which is the failure ADR-0017 recorded for the
+/// binding file's keys. `None` when neither end is one of those names.
+pub fn derived_worker_radius(old: &str, new: &str) -> Option<String> {
+    match (derived_worker(old), derived_worker(new)) {
+        (None, None) => None,
+        (Some(run), None) => Some(format!(
+            "`{}` derives to the co-process `{}`; `{}` derives to a native library at `foreign/{}`. \
+             Bind `{}` in foreign.json to keep the co-process.",
+            old,
+            run.join(" "),
+            new,
+            new,
+            new
+        )),
+        (None, Some(run)) => Some(format!(
+            "`{}` derives to a native library at `foreign/{}`; `{}` derives to the co-process `{}`. \
+             Bind `{}` in foreign.json to keep the library.",
+            old,
+            old,
+            new,
+            run.join(" "),
+            new
+        )),
+        (Some(old_run), Some(new_run)) => Some(format!(
+            "`{}` derives to the co-process `{}`; `{}` derives to `{}`.",
+            old,
+            old_run.join(" "),
+            new,
+            new_run.join(" ")
+        )),
+    }
 }
 
 /// Diagnose the binding file against the program's spaces. Two conditions,
@@ -383,12 +524,28 @@ pub struct Boundary {
     bindings: Option<BTreeMap<String, Via>>,
     libs: BTreeMap<String, usize>,
     workers: BTreeMap<String, Worker>,
+    changed: Changed,
 }
+
+/// Collections a worker said changed while nobody was asking: `(space, shape)`
+/// pairs, drained by the server loop.
+///
+/// This is the boundary's ONE unsolicited path. A worker answers calls, and
+/// may also volunteer `{"changed": "<Shape>"}` at any moment; the runtime
+/// marks that collection and every view that read it re-renders (§9.10). A
+/// co-process that watches something — a mesh roster, a table, a directory —
+/// therefore pushes, and a page follows it in the time the server loop takes
+/// to come round, rather than in the time some schedule was guessed at.
+pub type Changed = std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>;
 
 struct Worker {
     child: Child,
     stdin: ChildStdin,
-    out: BufReader<ChildStdout>,
+    /// Answers, in order, from the reader thread. The thread exists so a
+    /// pushed line is seen when it is SENT rather than when the next call
+    /// happens to read the pipe — which is the whole difference between a
+    /// roster that is live and one that is three seconds stale.
+    answers: std::sync::mpsc::Receiver<Result<String, String>>,
 }
 
 impl Default for Boundary {
@@ -403,6 +560,16 @@ impl Boundary {
             bindings: None,
             libs: BTreeMap::new(),
             workers: BTreeMap::new(),
+            changed: Changed::default(),
+        }
+    }
+
+    /// Collections pushed since this was last asked. The server loop drains
+    /// it every turn and dirties each one's readers.
+    pub fn take_changed(&self) -> Vec<(String, String)> {
+        match self.changed.lock() {
+            Ok(mut q) => std::mem::take(&mut *q),
+            Err(_) => Vec::new(),
         }
     }
 
@@ -427,7 +594,7 @@ impl Boundary {
             .bindings(root)?
             .get(space)
             .cloned()
-            .unwrap_or_else(Via::derived))
+            .unwrap_or_else(|| Via::derived_for(space)))
     }
 
     /// Call `space.name` with `args`, returning the decoded result. The
@@ -445,6 +612,7 @@ impl Boundary {
                 self.call_native(root, space, &library, &symbol, args)
             }
             Via::Worker { run } => self.call_worker(root, space, &run, name, args),
+            Via::Command { run, args: which } => call_command(root, &run, &which, name, args),
             Via::Http { url } => call_http(&url, name, args),
         }
     }
@@ -546,7 +714,7 @@ impl Boundary {
         args: Vec<V>,
     ) -> Result<V, String> {
         if !self.workers.contains_key(space) {
-            let w = spawn_worker(root, run)
+            let w = spawn_worker(root, run, space, self.changed.clone())
                 .map_err(|e| format!("foreign worker for `{}` could not start: {}", space, e))?;
             self.workers.insert(space.to_string(), w);
         }
@@ -586,24 +754,54 @@ impl Drop for Boundary {
 
 impl Worker {
     /// One request, one response line. Any I/O failure is the caller's cue to
-    /// reap this worker.
+    /// reap this worker. Pushed lines never arrive here — the reader thread
+    /// has already put them where the server loop will find them.
     fn exchange(&mut self, request: &str) -> Result<String, String> {
         self.stdin
             .write_all(request.as_bytes())
             .and_then(|_| self.stdin.write_all(b"\n"))
             .and_then(|_| self.stdin.flush())
             .map_err(|e| format!("could not write to it ({})", e))?;
-        let mut line = String::new();
-        match self.out.read_line(&mut line) {
-            Ok(0) => Err("it closed its output without answering".to_string()),
-            Ok(_) => Ok(line),
-            Err(e) => Err(format!("could not read its answer ({})", e)),
+        match self.answers.recv() {
+            Ok(answer) => answer,
+            Err(_) => Err("it closed its output without answering".to_string()),
         }
     }
 }
 
-fn spawn_worker(root: &Path, run: &[String]) -> Result<Worker, std::io::Error> {
-    let mut child = Command::new(&run[0])
+/// The collection a pushed line names, or `None` for an ordinary answer.
+///
+/// A worker that never pushes is unaffected: `{"ok":…}` and `{"error":…}` are
+/// answers, and so is anything else, which is what keeps the check in
+/// `probe_worker` honest about a co-process that speaks nonsense.
+pub fn pushed_collection(line: &str) -> Option<String> {
+    match from_json(line.trim()) {
+        Some(V::Map(m)) if m.len() == 1 => match m.get("changed") {
+            Some(V::Text(shape)) if !shape.trim().is_empty() => Some(shape.trim().to_string()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn spawn_worker(
+    root: &Path,
+    run: &[String],
+    space: &str,
+    changed: Changed,
+) -> Result<Worker, std::io::Error> {
+    // The derived mesh binding names this toolchain, which is not always on
+    // PATH under the name `ashlar`, so the CLI records where it lives and the
+    // fallback uses that. It is NOT `current_exe`: this library is embedded in
+    // other programs (its own test harness, for one), and spawning whatever
+    // binary happens to be running as a mesh worker answers with that
+    // program's output — which arrives here as "returned malformed JSON",
+    // three layers from the cause.
+    let program: PathBuf = match (is_self_worker(run), std::env::var("ASHLAR_SELF")) {
+        (true, Ok(path)) if !path.is_empty() => PathBuf::from(path),
+        _ => PathBuf::from(&run[0]),
+    };
+    let mut child = Command::new(program)
         .args(&run[1..])
         .current_dir(root)
         .stdin(Stdio::piped())
@@ -614,10 +812,39 @@ fn spawn_worker(root: &Path, run: &[String]) -> Result<Worker, std::io::Error> {
         .spawn()?;
     let stdin = child.stdin.take().expect("piped");
     let stdout = child.stdout.take().expect("piped");
+    // One thread per worker, reading its output for as long as it lives. A
+    // pushed line is routed to the changed queue the moment it arrives; an
+    // answer goes to whoever is waiting. Reading only inside `exchange` would
+    // leave a push sitting in the pipe until the next call, which is a poll
+    // wearing a push's clothes.
+    let (tx, answers) = std::sync::mpsc::channel();
+    let space = space.to_string();
+    std::thread::spawn(move || {
+        let mut out = BufReader::new(stdout);
+        loop {
+            let mut line = String::new();
+            match out.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {
+                    if let Some(shape) = pushed_collection(&line) {
+                        if let Ok(mut q) = changed.lock() {
+                            q.push((space.clone(), shape));
+                        }
+                    } else if tx.send(Ok(line)).is_err() {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(format!("could not read its answer ({})", e)));
+                    break;
+                }
+            }
+        }
+    });
     Ok(Worker {
         child,
         stdin,
-        out: BufReader::new(stdout),
+        answers,
     })
 }
 
@@ -778,6 +1005,16 @@ pub fn check_space(root: &Path, space: &str, names: &[String]) -> Reach {
                 Err(e) => problems.push(e),
             }
         }
+        Via::Command { run, .. } => {
+            detail = run.join(" ");
+            // Is the program there? Asked by looking, not by running it: a
+            // command's arguments are the program's own, so there is no
+            // side-effect-free invocation to probe with — `sqlite3 --version`
+            // is safe and `rm --version` is a guess about someone else's CLI.
+            if let Err(e) = findable(root, &run[0]) {
+                problems.push(e);
+            }
+        }
         Via::Http { url } => {
             detail = url.clone();
             // Connect only: a POST could have side effects, and reachability
@@ -800,11 +1037,97 @@ pub fn check_space(root: &Path, space: &str, names: &[String]) -> Reach {
     }
 }
 
+/// Whether a program can be found to run: a path is a file that exists, a
+/// bare name is somewhere on `PATH`. The same question a shell asks, and the
+/// most `check` can prove without running somebody's command for them.
+pub fn findable(root: &Path, program: &str) -> Result<(), String> {
+    let named_path = program.contains('/') || program.contains('\\');
+    if named_path {
+        let direct = root.join(program);
+        if Path::new(program).is_file() || direct.is_file() {
+            return Ok(());
+        }
+        return Err(format!("`{}` is not a file on this machine.", program));
+    }
+    let path = std::env::var_os("PATH").unwrap_or_default();
+    for dir in std::env::split_paths(&path) {
+        if dir.join(program).is_file() {
+            return Ok(());
+        }
+        // Windows spells the same program with an extension.
+        for ext in ["exe", "bat", "cmd"] {
+            if dir.join(format!("{}.{}", program, ext)).is_file() {
+                return Ok(());
+            }
+        }
+    }
+    Err(format!(
+        "`{}` is not on PATH. Install it, name its full path in foreign.json, \
+         or bind this space to something else.",
+        program
+    ))
+}
+
+/// Run an ordinary program and take its output as the answer.
+///
+/// This is the transport for what is already on the machine: `sqlite3`,
+/// `git`, `ffmpeg`, a shell script, a Python file. No ABI, no envelope, no
+/// adapter to write — the reason it exists is that the `native` transport
+/// asks for a C-ABI shim before you can run a `select`, and a capability that
+/// costs 165 lines of marshalling to reach is one an author will not reach for.
+///
+/// argv is `run`, then the items that select this name (the name itself
+/// unless `args` says otherwise), then the arguments as text. Output is the
+/// answer: JSON if it parses as JSON, else the text as it stands. A non-zero
+/// exit is a fault carrying what the program said on stderr, which is where
+/// programs put the reason.
+fn call_command(
+    root: &Path,
+    run: &[String],
+    which: &BTreeMap<String, Vec<String>>,
+    name: &str,
+    args: Vec<V>,
+) -> Result<V, String> {
+    let mut argv: Vec<String> = run.to_vec();
+    match which.get(name) {
+        Some(fixed) => argv.extend(fixed.iter().cloned()),
+        None => argv.push(name.to_string()),
+    }
+    argv.extend(args.iter().map(as_argument));
+    let out = Command::new(&argv[0])
+        .args(&argv[1..])
+        .current_dir(root)
+        .output()
+        .map_err(|e| format!("could not run `{}`: {}", argv[0], e))?;
+    if !out.status.success() {
+        let said = String::from_utf8_lossy(&out.stderr).trim().to_string();
+        return Err(if said.is_empty() {
+            format!("`{}` exited with {}", argv.join(" "), out.status)
+        } else {
+            said
+        });
+    }
+    let said = String::from_utf8_lossy(&out.stdout).trim().to_string();
+    Ok(from_json(&said).unwrap_or(V::Text(said)))
+}
+
+/// One argument as a program expects it: a text is itself, a number or bool
+/// is what it prints as, and a list or map is JSON — because a command line
+/// carries text, and the only lossless text for a structure is its JSON.
+fn as_argument(value: &V) -> String {
+    match value {
+        V::Text(t) => t.clone(),
+        V::None => String::new(),
+        other => to_json(other),
+    }
+}
+
 /// Spawn a worker, send one probe call, and require a well-formed JSON line
 /// back within a few seconds. Runs the read on its own thread so a worker
 /// that never answers fails the check instead of hanging it.
 fn probe_worker(root: &Path, run: &[String]) -> Result<(), String> {
-    let mut w = spawn_worker(root, run).map_err(|e| format!("could not start `{}`: {}", run.join(" "), e))?;
+    let mut w = spawn_worker(root, run, "probe", Changed::default())
+        .map_err(|e| format!("could not start `{}`: {}", run.join(" "), e))?;
     let request = request_line("__ping", Vec::new());
     let write = w
         .stdin
@@ -816,19 +1139,15 @@ fn probe_worker(root: &Path, run: &[String]) -> Result<(), String> {
         let _ = w.child.wait();
         return Err(format!("could not write to the worker: {}", e));
     }
-    let (tx, rx) = std::sync::mpsc::channel();
-    let mut out = w.out;
-    std::thread::spawn(move || {
-        let mut line = String::new();
-        let r = out.read_line(&mut line).map(|n| (n, line));
-        let _ = tx.send(r);
-    });
-    let answered = rx.recv_timeout(std::time::Duration::from_secs(5));
+    // The reader thread is already draining it, so this waits on the answer
+    // rather than on the pipe — a worker that never answers fails the check
+    // instead of hanging it.
+    let answered = w.answers.recv_timeout(std::time::Duration::from_secs(5));
     let _ = w.child.kill();
     let _ = w.child.wait();
     match answered {
-        Ok(Ok((0, _))) => Err("the worker closed its output without answering.".to_string()),
-        Ok(Ok((_, line))) => {
+        Ok(Err(e)) => Err(format!("the worker could not be read: {}", e)),
+        Ok(Ok(line)) => {
             if from_json(line.trim()).is_some() {
                 Ok(())
             } else {
@@ -838,7 +1157,9 @@ fn probe_worker(root: &Path, run: &[String]) -> Result<(), String> {
                 ))
             }
         }
-        Ok(Err(e)) => Err(format!("could not read the worker's answer: {}", e)),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            Err("the worker closed its output without answering.".to_string())
+        }
         Err(_) => Err("the worker did not answer within 5s (is its output line-buffered and flushed?).".to_string()),
     }
 }
@@ -963,6 +1284,70 @@ mod tests {
     }
 
     #[test]
+    fn the_mesh_space_derives_to_a_co_process() {
+        // covers: B5, G4
+        // And the co-process is US. The mesh does not ship an Ashlar-shaped
+        // adapter and must not have to: this toolchain speaks the socket it
+        // already exposes.
+        let mut b = Boundary::new();
+        let root = std::env::temp_dir();
+        let ours = Via::Worker {
+            run: vec![
+                "ashlar".to_string(),
+                "mesh".to_string(),
+                "worker".to_string(),
+            ],
+        };
+        assert_eq!(b.via(&root, MESH_SPACE).unwrap(), ours);
+        // A neighbouring name is not it: the rule is one name, not a prefix,
+        // so `mesh.anything` stays an ordinary space.
+        assert_eq!(b.via(&root, "mesh.sites").unwrap(), Via::derived());
+        assert_eq!(b.via(&root, "meshx").unwrap(), Via::derived());
+    }
+
+    #[test]
+    fn a_binding_file_still_overrides_the_mesh_derivation() {
+        // The derived worker is a default, not a law: deployment names the
+        // transport, exactly as it does for every other space (ADR-0017).
+        let bindings =
+            parse_bindings(r#"{"mesh":{"via":"http","url":"http://127.0.0.1:9000/rpc"}}"#)
+                .unwrap();
+        assert_eq!(
+            bindings.get(MESH_SPACE),
+            Some(&Via::Http {
+                url: "http://127.0.0.1:9000/rpc".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn renaming_onto_or_off_a_mesh_name_is_reported() {
+        // covers: E3
+        assert_eq!(derived_worker_radius("tools", "chat.data"), None);
+        let off = derived_worker_radius(MESH_SPACE, "tools").expect("leaving the mesh name reports");
+        assert!(off.contains("ashlar mesh worker") && off.contains("foreign/tools"), "{}", off);
+        let onto = derived_worker_radius("tools", MESH_SPACE).expect("entering it reports");
+        assert!(onto.contains("ashlar mesh worker"), "{}", onto);
+    }
+
+    #[test]
+    fn only_our_own_derived_argv_falls_back_to_this_executable() {
+        assert!(is_self_worker(&[
+            "ashlar".to_string(),
+            "mesh".to_string(),
+            "worker".to_string()
+        ]));
+        // Anything a deployment wrote is spawned exactly as written.
+        assert!(!is_self_worker(&["ashlar".to_string(), "mesh".to_string()]));
+        assert!(!is_self_worker(&[
+            "python3".to_string(),
+            "mesh".to_string(),
+            "worker".to_string()
+        ]));
+        assert!(!is_self_worker(&[]));
+    }
+
+    #[test]
     fn the_envelope_decodes_three_ways() {
         // A bare value is the result; `error` faults; `ok` is the escape hatch.
         assert_eq!(decode("[1,2]", "s", "n").unwrap(), V::List(vec![V::Number(1.0), V::Number(2.0)]));
@@ -1021,6 +1406,96 @@ mod key_tests {
         let span = key_span(text, "tools");
         assert_eq!((span.start.line, span.start.col), (2, 3));
         assert_eq!(span.end.line, 2);
+    }
+
+    #[test]
+    fn a_command_binding_reaches_a_program_with_no_adapter() {
+        // The point of this transport: what is already on the machine should
+        // cost nothing to reach. `native` asks for a C-ABI shim before you can
+        // run a `select` — 165 lines of marshalling in the one example that
+        // uses it — and an author does not reach for that.
+        let bound = parse_bindings(
+            r#"{ "db": { "via": "command", "run": ["sqlite3", "-json", "app.db"],
+                         "args": { "query": [] } },
+                 "vcs": { "via": "command", "run": ["git"] } }"#,
+        )
+        .unwrap();
+        assert_eq!(
+            bound.get("db"),
+            Some(&Via::Command {
+                run: vec!["sqlite3".into(), "-json".into(), "app.db".into()],
+                args: [("query".to_string(), vec![])].into_iter().collect(),
+            })
+        );
+        // No `args` entry means the name IS the subcommand, which is how
+        // every tool shaped like `git status` binds with nothing written.
+        assert_eq!(
+            bound.get("vcs"),
+            Some(&Via::Command {
+                run: vec!["git".into()],
+                args: BTreeMap::new(),
+            })
+        );
+        assert_eq!(bound["db"].label(), "command");
+        assert!(parse_bindings(r#"{ "db": { "via": "command" } }"#)
+            .unwrap_err()
+            .contains("needs `run`"));
+        assert!(
+            parse_bindings(r#"{ "db": { "via": "command", "run": ["x"], "args": { "q": "s" } } }"#)
+                .unwrap_err()
+                .contains("list of text")
+        );
+    }
+
+    #[test]
+    fn an_argument_crosses_as_the_text_a_command_line_carries() {
+        assert_eq!(as_argument(&V::Text("a b".into())), "a b");
+        assert_eq!(as_argument(&V::Number(3.0)), "3");
+        assert_eq!(as_argument(&V::Bool(true)), "true");
+        assert_eq!(as_argument(&V::None), "");
+        // A structure has one lossless text, and it is its JSON.
+        assert_eq!(
+            as_argument(&V::List(vec![V::Number(1.0), V::Text("x".into())])),
+            "[1,\"x\"]"
+        );
+    }
+
+    #[test]
+    fn a_command_that_is_not_there_is_named_before_a_request_finds_out() {
+        let root = std::env::temp_dir();
+        assert!(findable(&root, "sh").is_ok() || cfg!(windows));
+        let missing = findable(&root, "definitely-not-a-real-program-xyz").unwrap_err();
+        assert!(missing.contains("is not on PATH"), "{}", missing);
+        assert!(missing.contains("foreign.json"), "the fix is named: {}", missing);
+        let bad_path = findable(&root, "./nope/nothing").unwrap_err();
+        assert!(bad_path.contains("is not a file"), "{}", bad_path);
+    }
+
+    #[test]
+    fn a_push_is_told_from_an_answer_by_shape_alone() {
+        // The unsolicited line is the whole of the push protocol, so what
+        // counts as one has to be unambiguous: exactly `{"changed": "<Shape>"}`
+        // and nothing else. Anything wider would swallow a worker's answer
+        // that happened to carry a `changed` field of its own.
+        assert_eq!(
+            pushed_collection(r#"{"changed":"mesh.Peer"}"#),
+            Some("mesh.Peer".to_string())
+        );
+        assert_eq!(
+            pushed_collection("  {\"changed\": \" Row \"}  \n"),
+            Some("Row".to_string())
+        );
+        for answer in [
+            r#"{"ok":{"changed":"mesh.Peer"}}"#,
+            r#"{"changed":"mesh.Peer","ok":1}"#,
+            r#"{"changed":""}"#,
+            r#"{"changed":7}"#,
+            r#"{"ok":[1,2]}"#,
+            r#"{"error":"no"}"#,
+            "not json at all",
+        ] {
+            assert_eq!(pushed_collection(answer), None, "{}", answer);
+        }
     }
 
     #[test]

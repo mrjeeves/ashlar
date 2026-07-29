@@ -47,6 +47,7 @@ $examples = @(
   @{ name = 'locker';     port = 8091 }
   @{ name = 'ledger';     port = 8092 }
   @{ name = 'abacus';     port = 8095 }
+  @{ name = 'enclave';    port = 8096 }
   @{ name = 'commons';    port = 8093 }
   @{ name = 'hello';      port = 8094 }
   @{ name = 'slate';      port = 8097 }
@@ -91,6 +92,24 @@ if ($onWindows) {
       & $bin foreign check examples/ledger 2>&1 | ForEach-Object { Write-Host "    $_" }
     }
   }
+}
+
+# Two examples reach something this repository does not ship. `abacus` faults
+# at its boundary without it, which reads as a broken page rather than a
+# missing part; `enclave` serves a roster that is empty for a reason worth
+# stating before it is read as "nobody is out there".
+if (-not (Get-Command python3 -ErrorAction SilentlyContinue)) {
+  Write-Host ''
+  Write-Host '  python3 is not on PATH, so `abacus` will serve and then fault at its'
+  Write-Host '  boundary — its worker is Python.'
+  Write-Host ''
+}
+if (-not (Test-Path '\\.\pipe\allmystuff-node')) {
+  Write-Host ''
+  Write-Host '  No mesh node is listening here, so `enclave` will serve with an empty'
+  Write-Host '  roster that says why. Install AllMyStuff and it shows the real one —'
+  Write-Host '  the mesh THIS machine is on, not a demo of one.'
+  Write-Host ''
 }
 
 $procs = @()

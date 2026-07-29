@@ -1670,6 +1670,17 @@ impl<'a> Evaluator<'a> {
         Ok(value)
     }
 
+    /// A worker said a collection changed while nobody was asking (§9.10).
+    /// Same edge as an `updates` call, minus the call: every view that read
+    /// the collection re-renders, so a co-process that WATCHES something —
+    /// a mesh roster, a table, a directory — makes a page follow it without
+    /// the program running a schedule to ask.
+    pub fn foreign_changed(&mut self, space: &str, shape: &str) {
+        let name: Vec<String> = shape.split('.').map(str::to_string).collect();
+        let key = format!("collection:{}", self.resolve_collection(space, &name));
+        self.dirty_readers(&key);
+    }
+
     /// Resolve a foreign's reactive collection name to a stable reactivity
     /// key. A bare `Entry` resolves in the foreign's own space, then by
     /// unique bare part, so `reads`/`writes` of the same shape — even across

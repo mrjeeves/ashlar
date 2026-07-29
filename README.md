@@ -385,6 +385,27 @@ Likewise, the binary is an origin server. TLS and modern HTTP terminate at a
 reverse proxy rather than inside a hand-written cryptographic stack. A
 zero-dependency rule is not permission to counterfeit expertise.
 
+A private mesh is the same shape of admission. One space name — `mesh`: who
+else is on the network this machine joined, what they say, and the sites they
+serve — reaches the mesh node the machine already runs, over that same
+boundary, through an adapter this toolchain provides rather than one the mesh
+was made to ship for us. The language grows nothing to do it.
+
+What that buys is a room. A program that vendors [`lib/mesh`](lib/mesh) gets
+`talk` and `speak` — everyone holding the program's mesh id can say something
+to everyone else, with no host to admit them and no server in the middle —
+plus `grid`, a live roster of who is there, and `panel`, the settings in force.
+The mesh id is the whole of the secret, so distributing the build distributes
+the key, and a group changes its locks by rolling a new one. An app that would
+rather not share a room with every other Ashlar site names its own mesh by
+layering one setting, which is what [`examples/enclave`](examples/enclave)
+does.
+
+The same mesh can carry the origin itself: `ashlar run --mesh` publishes the
+port the site is serving to that network and to nobody else — no forwarded
+port, no public address, no third party holding the session. Where any of it
+actually is stays a deployment fact.
+
 Constraint is valuable only while it serves the vision.
 
 ## Proof is part of the product
@@ -422,7 +443,7 @@ A metaphysics without a test is marketing.
 | `ashlar check` | Compile and emit JSON Lines diagnostics; `--human` renders prose. |
 | `ashlar fix [id]` | Apply machine-safe corrections from the last check. |
 | `ashlar build` | Check the program and derive its manifest. |
-| `ashlar run [part] [--port n]` | Build, serve, watch, and hot-reload. |
+| `ashlar run [part] [--port n] [--mesh [network]]` | Build, serve, watch, and hot-reload; `--mesh` publishes the site to a private mesh. |
 | `ashlar fmt` | Produce canonical, comment-preserving, meaning-preserving source. |
 | `ashlar radius <name>` | Report a rename's complete blast radius without changing a byte. |
 | `ashlar delta` | Report what this tree changed about the program's derived state since the last build. |
@@ -431,6 +452,7 @@ A metaphysics without a test is marketing.
 | `ashlar move <part> <space>` | Move a part and repair the visibility graph. |
 | `ashlar vendor <source>` | Copy an external source tree into the program; there is no registry. |
 | `ashlar foreign check` | Prove declared foreign names are reachable on this deployment. |
+| `ashlar mesh` | Report what this machine's mesh answers: identity, roster, published sites. |
 
 ## The record is allowed to contradict itself
 

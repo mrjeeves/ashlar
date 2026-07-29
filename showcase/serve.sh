@@ -31,8 +31,8 @@ else
   echo "      it may predate this checkout."
 fi
 
-# name:port — the map examples/gallery/settings.json mirrors for the sixteen it
-# frames. Keep them in sync; t_examples_showcase_launchers_agree_on_every_port
+# name:port — the map examples/gallery/settings.json mirrors for the seventeen
+# it frames. Keep them in sync; t_examples_showcase_launchers_agree_on_every_port
 # asserts they are.
 EXAMPLES=(
   "gallery:8080"
@@ -49,6 +49,7 @@ EXAMPLES=(
   "locker:8091"
   "ledger:8092"
   "abacus:8095"
+  "enclave:8096"
   "commons:8093"
   "hello:8094"
   "slate:8097"
@@ -96,9 +97,28 @@ if build_ledger_shim; then
   fi
 else
   echo
-  echo "  The other fifteen examples are unaffected. ledger's page will serve"
+  echo "  The other seventeen examples are unaffected. ledger's page will serve"
   echo "  but its store will fault at the boundary, with that same correction."
   echo "  \`abacus\` is the foreign example that needs no compiler at all."
+  echo
+fi
+
+# Two examples reach something this repository does not ship. Say so here:
+# `abacus` faults at its boundary without it, which reads as a broken page
+# rather than a missing part, and `enclave` serves a roster that is empty for
+# a reason worth stating before it is read as "nobody is out there".
+if ! command -v python3 >/dev/null 2>&1; then
+  echo
+  echo "  python3 is not on PATH, so \`abacus\` will serve and then fault at its"
+  echo "  boundary — its worker is Python."
+  echo
+fi
+if [ ! -S "${MYOWNMESH_HOME:-$HOME/.myownmesh}/allmystuff-node.sock" ] \
+   && [ ! -S "$HOME/.myownmesh/allmystuff-node.sock" ]; then
+  echo
+  echo "  No mesh node is listening here, so \`enclave\` will serve with an empty"
+  echo "  roster that says why. Install AllMyStuff and it shows the real one —"
+  echo "  the mesh THIS machine is on, not a demo of one."
   echo
 fi
 

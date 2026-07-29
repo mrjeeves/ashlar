@@ -21,6 +21,69 @@ that exact baseline after the reference moved into the contract. Serves **A3**.
 Proven by: a 25-fixture run under `suites/t_a3/PROTOCOL.md`, recorded with the
 agent surface and revision it used.
 
+**The mesh is proven on one box, not across two.** `examples/enclave` ships no
+binding, so it reaches the mesh node on the machine that runs it; `t_examples`
+drives the whole contract against the node's own control socket, stood up by
+the test, and two full stacks on one box — two identities, two published
+sites — have been driven end to end: each saw the other in its roster and
+rendered the other's site as a link its node had mapped locally. What one box
+cannot show is the part the network decides: signaling between two real
+machines, ICE across a NAT, and a roster losing a node that actually went away.
+Serves **B5, G4**. Proven by: a hand-run gate on two machines, recorded like
+T-BROWSER's — a second node's site opened from the first, and `ashlar mesh`
+agreeing with the node on both. The Windows half of the socket rides the same
+gate: a named pipe is opened here with `std` alone, and no test creates one,
+because `std` can connect to a named pipe but cannot serve it.
+
+**The `command` transport has a test but no corpus site.** It is driven in
+`t_g` against a real program over real HTTP, which proves the transport. What
+it does not yet prove is the claim it was added for: that reaching a resource
+on the machine is cheap enough that an example prefers it. `examples/ledger`
+still pays a 165-line C-ABI shim and a Rust toolchain for a `select`, and the
+showcase still skips it when `rustc` is missing. Serves **G4, A2**. Proven by:
+`ledger` reaching SQLite without a shim — or, where `sqlite3`'s CLI cannot take
+values, a script small enough that the diff itself is the argument.
+
+**Nothing brings a missing capability.** `check` says a program is not on
+`PATH` and `ashlar mesh install` brings the mesh, but every other space is left
+at "install it yourself". The general form is the same shape: a binding may say
+how to obtain what it names, and one command runs it for whatever is missing —
+without becoming a registry, which G5 forbids on purpose. Serves **G4, G5**.
+Proven by: a project whose capability is absent, made reachable by one command
+that resolves no versions and consults no index.
+
+**`mesh.browser` has no corpus site any more.** The room is the point and the
+example's page is the room, so the site list came off it. `nearby` still works
+and `ashlar run --mesh` is still driven, but the ELEMENT that renders a peer's
+sites is now rendered by nothing the suite runs. Serves **A2**. Proven by: an
+example that shows sites because it is about sites, or the element's removal.
+
+**A camera's frames have never crossed two machines.** `watch` opens an MJPEG
+route, follows the batches, and writes each JPEG where the site serves it; the
+whole path is driven in the corpus, and against two real nodes the gate is
+proven — `allow` records the share the node demands, and without it a media
+offer is refused. What has NOT run is a real camera: this machine has none, so
+no frame produced by a capture device has ever reached an Ashlar page. Serves
+**G4**. Proven by: the two-machine gate, with a face on one screen.
+
+**A refused camera waits instead of saying so.** The node rejects a media offer
+ASYNCHRONOUSLY — `connect_route` succeeds and a `RouteControl::Reject` comes
+back afterwards — so a peer who has not shared their camera renders as "waiting
+for them", forever, rather than as the node's own sentence. The refusal is
+caught only when it arrives synchronously. Serves **D3, G4**. Proven by: a
+watch on an unsharing peer showing the reason within seconds.
+
+**The room has no typing indicator, and cannot have one here.** A room-event
+kind the protocol does not define arrives as `unknown` (ADR-0017 §5d), so
+"somebody is typing" has nowhere to ride that does not abuse a kind meant for
+something else. Serves **G4**. Proven by: a `typing` kind upstream, or a
+carrier that is not somebody else's vocabulary.
+
+**Audio is not carried at all.** Only video is: the `AudioFrame` lane exists and
+nothing here reads it, and a browser cannot play raw frames from a `<img>`-shaped
+trick the way it can draw JPEG. Serves **G4**. Proven by: a room where somebody
+can be heard.
+
 **Capabilities with no corpus site.** An adversarial read listed ten. Four
 now have one — the directory form of `files`, `log.debug`, `log.warn`, and
 duration units beyond `ms`, all in `examples/ticker`. Still undefended:

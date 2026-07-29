@@ -1115,13 +1115,13 @@ fn html_escape(s: &str) -> String {
 // ---------------------------------------------------------------------------
 
 /// Run the project at `root`. `override_port` (tests) wins over the
-/// program's `port`; `ready` receives the bound port; `stop` ends the
-/// loop from another thread.
+/// program's `port`; `ready` receives the bound port and the server root's
+/// full name; `stop` ends the loop from another thread.
 pub fn serve(
     root: PathBuf,
     root_part: Option<String>,
     override_port: Option<u16>,
-    ready: impl FnOnce(u16),
+    ready: impl FnOnce(u16, &str),
     stop: Arc<AtomicBool>,
 ) -> Result<(), String> {
     serve_with_liveness(root, root_part, override_port, ready, stop, Liveness::default())
@@ -1133,7 +1133,7 @@ pub fn serve_with_liveness(
     root: PathBuf,
     root_part: Option<String>,
     override_port: Option<u16>,
-    ready: impl FnOnce(u16),
+    ready: impl FnOnce(u16, &str),
     stop: Arc<AtomicBool>,
     live: Liveness,
 ) -> Result<(), String> {
@@ -1337,7 +1337,7 @@ pub fn serve_with_liveness(
             l.set_nonblocking(true)
                 .map_err(|e| format!("nonblocking failed: {}", e))?;
             if let Some(r) = ready.take() {
-                r(l.local_addr().map(|a| a.port()).unwrap_or(port));
+                r(l.local_addr().map(|a| a.port()).unwrap_or(port), &port_part);
             }
             listener = Some(l);
         }
@@ -1641,6 +1641,13 @@ pub fn serve_with_liveness(
                     eprintln!("spawned task failed: {}", fault);
                 }
             }
+            // A worker pushed (§9.10): a collection changed with no call to
+            // notice it. Draining here is what makes a foreign collection as
+            // live as state — the loop is already awake for sockets, so the
+            // page follows the co-process rather than a schedule.
+            for (space, shape) in ev.foreign.take_changed() {
+                ev.foreign_changed(&space, &shape);
+            }
             // Instances dirtied outside an event (schedules, spawned
             // tasks) re-render and broadcast.
             if !ev.dirty_instances.is_empty() {
@@ -1884,6 +1891,16 @@ fn try_serve_files(ev: &mut Evaluator, root: &std::path::Path, path: &str) -> Op
                     Some("js") => "text/javascript",
                     Some("json") => "application/json",
                     Some("png") => "image/png",
+                    // A room serves what its people pass around, and a
+                    // camera frame is the case that found this list short.
+                    Some("jpg") | Some("jpeg") => "image/jpeg",
+                    Some("gif") => "image/gif",
+                    Some("webp") => "image/webp",
+                    Some("mp4") => "video/mp4",
+                    Some("webm") => "video/webm",
+                    Some("mp3") => "audio/mpeg",
+                    Some("wav") => "audio/wav",
+                    Some("pdf") => "application/pdf",
                     Some("svg") => "image/svg+xml",
                     Some("txt") => "text/plain",
                     Some("ico") => "image/x-icon",

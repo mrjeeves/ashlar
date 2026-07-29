@@ -30,7 +30,8 @@
         { "name": "diary", "blurb": "Sessions and an allow-guarded page", "url": "http://127.0.0.1:8090" },
         { "name": "locker", "blurb": "Per-user storage, isolated by construction", "url": "http://127.0.0.1:8091" },
         { "name": "ledger", "blurb": "A real SQLite datastore over foreign", "url": "http://127.0.0.1:8092" },
-        { "name": "abacus", "blurb": "A Python worker — no compiler, no C ABI", "url": "http://127.0.0.1:8095" }
+        { "name": "abacus", "blurb": "A Python worker — no compiler, no C ABI", "url": "http://127.0.0.1:8095" },
+        { "name": "enclave", "blurb": "A private mesh: who else is running this", "url": "http://127.0.0.1:8096" }
       ]
     },
     {

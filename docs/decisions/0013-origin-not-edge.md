@@ -49,6 +49,30 @@ What the binary does carry, so it sits behind a proxy correctly:
   filesystem — so a crash mid-flush leaves the whole old file or the
   whole new one, never a truncated `.ashlar-state.json`.
 
+## The second edge (2026-07-27)
+
+A proxy is not the only thing that can sit between a browser and this
+origin. A **private mesh** is the other: the machine's mesh daemon joins a
+network only its members can see, publishes a local port to them, and
+proxies their connections in. `ashlar run --mesh` asks it to publish the
+port the origin is already serving.
+
+The decision above is unchanged, and that is the point — the binary does
+not grow a mesh any more than it grew TLS. It does not speak the mesh's
+protocol, hold its keys, or link its code (G1); it names a capability and
+the machine's daemon answers, across the boundary ADR-0017 already built.
+Two consequences follow from *this* ADR rather than that one:
+
+- **The origin stays an origin.** A published site is reachable through
+  loopback, exactly as it is behind nginx. Nothing about a request changes
+  because it arrived over a mesh, including the `X-Forwarded-Proto` rule —
+  a mesh hop is not TLS, and a site that needs `Secure` cookies still needs
+  a terminating proxy in front.
+- **Which edge is in force is deployment's.** `--mesh` is `--port`'s
+  sibling: one says where this origin listens, the other says who can reach
+  it, and neither is written in source (B5). A program cannot tell, and
+  must not try.
+
 ## Consequences
 
 - The origin stays tiny, zero-dependency, and free of the largest

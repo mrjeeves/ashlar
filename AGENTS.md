@@ -1,8 +1,8 @@
 # AGENTS.md — the working contract, and the language
 
 You are working on **Ashlar**, an AI-first composition language. This is the
-one file to read before touching anything: the contract first, the complete
-language reference second. Humans start at `README.md`; the two must never
+one file to read before touching anything: the contract first, the reference
+second. Humans start at `README.md`; the two must never
 disagree, and fixing a disagreement is part of your task.
 `docs/writing-ashlar.md` collects the traps that catch agents who guess.
 
@@ -15,20 +15,18 @@ TESTS           The current best encoding of the requirements. Revised freely.
 CODE            Whatever makes the tests pass.
 ```
 
-Lower layers yield to higher ones — always. "The test is inconvenient" is never
-a reason to change a test; "the test mis-encodes the requirement" is the only
-one. Everything below the vision is **yours to change without asking**, provided
-the change serves the layer above and arrives with the evidence and tests that
-show it does. Requirements are revised by **execution**: a stuck test reports a
-requirement that is unsatisfiable, never one that is wrong and perfectly
-satisfiable, and those are the expensive ones. `docs/requirements.md` §1–2
-argues both points; read it once.
+Lower layers yield to higher ones — always. "The test is inconvenient" never
+justifies changing a test; "the test mis-encodes the requirement" is the only
+thing that does. Everything below the vision is **yours to change without
+asking**, provided the change serves the layer above and arrives with the
+evidence and tests that show it does. Requirements are revised by **execution**,
+not argument (`docs/requirements.md` §1–2).
 
 Stop and say so in exactly two cases: **the vision looks wrong** (the user's to
 change — argue, never edit), or **you cannot get the evidence** (an agent read
 needs a fresh agent, a benchmark needs a machine). Neither covers "this is
-large" or "this reverses an ADR": both are normal, and new evidence outranks a
-record made on older evidence.
+large" or "this reverses an ADR": both are normal, and new evidence outranks
+an older record.
 
 ## Hard rules (each has a test with teeth)
 
@@ -37,8 +35,8 @@ record made on older evidence.
    WebSockets, PBKDF2 are hand-rolled. Write the code; don't add a crate.
 3. **`unsafe` appears exactly twice**, both `#[cfg(unix)]`: `dlopen`/`dlsym` in
    `foreign.rs`, and `signal` in `http.rs`, whose handler only sets an
-   `AtomicBool` (ADR-0029). Never add a third for a capability — `worker` and
-   `http` are safe Rust and run wherever Rust runs.
+   `AtomicBool` (ADR-0029). Never add a third for a capability: `worker` and
+   `http` are safe Rust.
 4. **No stubs** (`t_no_stubs`): no `todo!`, `unimplemented!`, no commented-out
    "coming soon". A construct that doesn't fully work does not exist.
 5. **Diagnostic ids are stable** (`docs/diagnostics.md`): reuse an id with a new
@@ -46,8 +44,8 @@ record made on older evidence.
    renumbered, with its catalog row in the same commit.
 6. **Diagnostics are corrections.** One-sentence cause, correction specific
    enough to apply without judgment. Machine edits leave the program strictly
-   better (D2) and never change what a name resolves to (D6). T-D5 watches both
-   numbers: mean rounds-to-clean, and what share of the corpus is fixable at all.
+   better (D2) and never change what a name resolves to (D6). T-D5 watches the
+   mean rounds-to-clean and the share of the corpus that is fixable at all.
 7. **No false positives.** `Unknown` absorbs what the checker cannot prove. When
    in doubt, stay silent and note the gap.
 8. **Examples are corpus** (`t_examples`): everything under `examples/` compiles
@@ -74,8 +72,7 @@ pinned by `t_meta_toolchain_floor_is_declared_and_reachable`; "zero warnings"
 means on the floor too. `suites/coverage.md` maps every requirement to its test
 and T-META checks that map both ways — read it rather than a list here. Two
 suites cannot run in CI: **T-A3**, the agent-read gate
-(`suites/t_a3/PROTOCOL.md`), which runs with this file in context to match the
-real authoring environment; and **T-BROWSER**
+(`suites/t_a3/PROTOCOL.md`), run with this file in context; and **T-BROWSER**
 (`suites/t_browser/`), needing a browser and node. Every new behavior lands
 with the test that catches its regression.
 
@@ -85,7 +82,7 @@ with the test that catches its regression.
 |---|---|
 | language behavior | the reference below + a test + (if user-visible failure) `docs/diagnostics.md` |
 | a diagnostic's cause/fix | its `docs/diagnostics.md` row |
-| a design trade | **EDIT the ADR that owns it.** A new file only when it reverses or supersedes one; an ADR that deferred its own implementation closes in place with a Resolution. Carrying out a decision already made spawns no file |
+| a design trade | **EDIT the ADR that owns it.** A new file only when it reverses or supersedes one; an ADR that deferred its implementation closes in place with a Resolution. Carrying out a decision already made spawns no file |
 | work found but not done | `docs/roadmap.md`, with its requirement and the test that will prove it. Delivered work does NOT go there |
 | anything in `README.md` | keep README, this file, and reality agreeing |
 | the reference below | re-run T-A1/A2/A5 and eyeball the budget |
@@ -386,8 +383,7 @@ Access:
 
 Division by zero and `!` on `none` are the two runtime faults expressions can
 raise; both carry the source location and fail the surrounding request or task
-(§9.2). They are undetectable at build time because they depend on runtime
-values. Field access on a `data` value is the third thing left to runtime and
+(§9.2). They are undetectable at build time: both depend on runtime values. Field access on a `data` value is the third thing left to runtime and
 the only silent one: a runtime union has no fields to check, so `e.data.valeu`
 answers `none` rather than failing the build.
 
@@ -434,7 +430,7 @@ argument, where it is single-use. "Inside an argument" includes a list or map
 literal written there, which is how an event handler reaches an element's attrs
 (§9.4). It cannot be bound with `let`, put in a property's own list or map,
 stored in a field, or returned: a function is either named or handed straight
-to a call, never squirrelled away unnamed. A *named* function — a property
+to a call. A *named* function — a property
 whose value is a function — is a value: `Part.save` may be passed, stored, and
 referenced, because it has a name the toolchain can rename and track. Function
 properties may call each other, recursion included, through their names.
@@ -456,9 +452,9 @@ Every diagnostic identifies a location, states the cause in one sentence, and
 states the correction specifically enough to apply without judgment. When a
 `fix` with `edits` is present, applying it produces source that compiles past
 that error without introducing a new one and never changes what a name resolves
-to; `ashlar fix` applies such fixes. Where no edit is derivable without a
-judgment the author has not made — an ambiguous name, above — `edits` is empty
-and the note names every candidate. `id`s are stable, `req` names the
+to; `ashlar fix` applies such fixes. Where no edit is derivable without a judgment
+the author has not made — an ambiguous name — `edits` is empty and the note
+names every candidate. `id`s are stable, `req` names the
 requirement enforced, and `ashlar check --human` renders the same diagnostics
 as prose. Warnings never block a build; errors do.
 
@@ -475,10 +471,10 @@ program's single one, or errors listing candidates if there is not exactly one;
 `ashlar run chat.app` names one explicitly. The bound port is the root's `port`
 unless `ashlar run --port 8091` overrides it — a deployment fact bound at run
 time, never written in source (B5). On start the runtime loads stored state
-(§9.3), then calls the root's `start` stack if declared. On shutdown — `SIGINT`
-or `SIGTERM` on unix — it calls `stop`, prints what that stack logged, then
+(§9.3), then calls the root's `start` stack if declared. On shutdown — `SIGINT` or
+`SIGTERM` on unix — it calls `stop`, prints what that stack logged, then
 flushes stored state; elsewhere a signal is not caught and only stored state
-survives, which it does anyway, being flushed whenever it changes. A source
+survives, flushed whenever it changes. A source
 change rebuilds and hot-reloads in place: state properties carry over by full
 name, open pages reconnect and re-render, and a change that fails to compile
 emits diagnostics and leaves the old program running.
@@ -545,8 +541,7 @@ part Store {
 - `stored` — persisted by the runtime's embedded store, keyed by the property's
   full name; survives restarts. Values are validated against the current shape
   at startup: a field added since the value was written is filled from its
-  default, one with no default is a startup error naming every gap at once. A
-  defaulted field is a migration, a required one a refusal to guess.
+  default, one with no default is a startup error naming every gap at once.
 - `peruser` — a modifier before `state` or `stored`: the value is scoped to the
   current user, each isolated from every other by construction. Reading or
   writing one with no user in scope — an anonymous request, a scheduled task,
@@ -554,8 +549,7 @@ part Store {
   shared value. Whether a user is in scope is a fact about the call, not the
   declaration, so it is not decidable at build time.
 
-Every state property is reactive, and because views render on the server with
-no client code (§9.4) that reach is universal: any view that read a value
+Every state property is reactive: any view that read a value
 re-renders when it changes — a shared value across every client, a `peruser`
 value only its own user's.
 
@@ -603,7 +597,7 @@ the focused field, its caret and typing in flight; a server-side change to the
 value (a cleared draft) still wins. An attr value is text, the name of a
 function property, or an inline function of zero or one parameter
 (`(e: std.Event) => ...`; `std.Event` has `name: text` and `data: data`).
-Serving a view part from a `route` wires all of this up; no other setup exists.
+Serving a view part from a `route` wires this up; no other setup exists.
 
 A `title` element names the page: it sets the browser tab and re-renders like
 any other element, so a title reading state follows it.
@@ -624,8 +618,7 @@ part pad {
 Appearance is bound by name, never location. Elements carry `class` names and a
 stylesheet supplies the rules. The server root names its sheet — `style = "app"`
 resolves to `assets/app.css` like `files` (§9.8), a missing declared sheet is a
-build error, and the runtime links it into every page. CSS is a foreign language
-for appearance, the presentation peer of `foreign` (§9.10). A `style` string
+build error, and the runtime links it into every page. A `style` string
 attribute is the wrong tool and unchecked; give the element a `class`.
 
 ### 9.5 Channels
@@ -644,13 +637,11 @@ reactivity (§9.3) rides the same broadcast and needs no channel.
 
 Handlers run in subscription order, and a fault in one is logged without
 stopping the others or failing the publisher — the rule `spawn` follows
-(§9.9), because a subscriber is someone else's code.
+(§9.9): a subscriber is someone else's code.
 
-A socket can die with neither end told and TCP never says so. The runtime
-therefore heartbeats every open socket and sheds a peer that stops answering; a
+The runtime heartbeats every open socket and sheds a peer that stops answering; a
 page missing the beats it is owed marks `<html>` with `data-ash-offline` and
-reconnects when the server returns. Style that attribute: a stale page that
-looks live is the one failure this language will not leave silent.
+reconnects when the server returns. Style that attribute.
 
 ### 9.6 Auth
 
@@ -711,9 +702,8 @@ part robots {
 }
 ```
 
-The single-file form answers the absolute paths a program does not choose —
-`/favicon.ico`, `/robots.txt`, `/.well-known/...` — without taking `/` from a
-page.
+The single-file form answers absolute paths a program does not choose —
+`/favicon.ico`, `/robots.txt` — without taking `/` from a page.
 
 ### 9.9 Logging and failure
 
@@ -725,8 +715,7 @@ timestamp, level, message, data, and source location.
 request ends with that status (500 if unstated), the current task logs it.
 There is no catching — a condition worth recovering from is worth a
 `none`-returning function and a `??`. `fail` never returns, so it fits any shape
-and refusing costs one call: `number(t) ?? fail(400, "not a number")` rejects
-where `?? 0` would invent.
+and refusing costs one call: `number(t) ?? fail(400, "not a number")`.
 
 ### 9.10 Foreign functions
 
@@ -753,6 +742,7 @@ is `E001`:
 |---|---|---|
 | `native` | `dlopen`, C ABI `char* f(const char* args_json)`; needs a POSIX loader | `library`, `symbols` |
 | `worker` | a co-process speaking JSON Lines on stdin/stdout | `run` |
+| `command` | an ordinary program, run per call: argv in, stdout out | `run`, `args` |
 | `http` | POST to a URL (plaintext; TLS terminates at a proxy) | `url` |
 
 ```json
@@ -761,18 +751,26 @@ is `E001`:
              "symbols": { "lookup": "geo_lookup_v2" } } }
 ```
 
-`symbols` binds an Ashlar name to a differently-spelled export, so an existing
-library keeps its own names. Every transport carries one envelope: a request is
+`symbols` binds an Ashlar name to a differently-spelled export, and `args`
+does the same for a command: the argv items selecting one name, defaulting to
+the name itself, so `git` + `status` needs no entry. A command's arguments
+follow as text, its stdout is the answer — JSON if it parses, else text — and a
+non-zero exit is a fault carrying its stderr. The other three transports carry one envelope: a request is
 `{"call": name, "args": [...]}`, an answer is a bare value, `{"ok": value}`, or
 `{"error": text}` — the last a fault carrying that message. A `native` library
-may export `ashlar_free(char*)` to take its buffer back. A worker is therefore
-a loop in any language: read a line, decode `call` and `args`, print one JSON
-answer, flush.
+may export `ashlar_free(char*)` to take its buffer back.
 
-Reachability is not a build-time fact — the machine that compiles is not the
-machine that deploys — so `ashlar foreign check` proves it on demand against the
-bindings in force, before a request finds out. Foreign calls may block; the
+Reachability is not a build-time fact, so `ashlar foreign check` proves it on
+demand against the bindings in force, before a request finds out. Foreign calls may block; the
 runtime schedules around them.
+
+One space derives to a co-process instead of a library, and it is this
+toolchain: `mesh` — who is on the private network this machine joined, what
+they say, what they pass around, and the sites they serve. `ashlar mesh worker` speaks the
+control socket the mesh already exposes to its own clients. `ashlar run --mesh` publishes
+the port it is serving through it, reaching that network and nobody else;
+`ashlar mesh` says what it answers, and `ashlar mesh install` brings one to a
+machine with none.
 
 A foreign call may name a reactive collection, so a store behind the boundary
 is live without leaving the language:
@@ -791,7 +789,9 @@ foreign all: () -> [Row] watches Row
 `watches <Shape>` makes the call a dependency edge — a view calling it
 re-renders when the collection changes — and `updates <Shape>` marks that
 collection changed, so every view that read it re-renders and patches across
-every connected client (§9.3). The collection is the data shape it names;
+every connected client (§9.3). A worker may also print `{"changed": "<Shape>"}`
+unasked, at any time: the same edge with no call, so a co-process that watches
+something pushes and the page follows it, with nothing polling. The collection is the data shape it names;
 `watches`/`updates` are contextual (ordinary names elsewhere), and one resolving
 to no part is E001.
 
@@ -844,9 +844,8 @@ JSON object keyed by full property name — `{"site.app.endpoint": "..."}`. One
 with a default is optional; one without is required, and starting without it
 fails before the first request, naming every missing setting and its shape at
 once. A supplied value that does not fit its shape fails the same way. Read a
-setting like any other property; it is immutable, so cannot be assigned. This
-is how a location reaches a program without being written in source (B5): the
-name binds, the value is deployment's. A key naming no declared setting is
+setting like any other property; it is immutable, so cannot be assigned. A key
+naming no declared setting is
 `E001`, a value of the wrong shape `E006`.
 
 ## 10. The build and the manifest
@@ -868,7 +867,8 @@ single-file change re-checks in under 100ms at a thousand files.
 |---|---|
 | `ashlar check` | compile; emit diagnostics as JSON lines (`--human` for prose) |
 | `ashlar build` | check, then write the manifest and executable image |
-| `ashlar run [part] [--port n]` | build, then start the server root, watching for changes; `--port` overrides the bound port |
+| `ashlar run [part] [--port n] [--mesh [network]]` | build, then start the server root, watching for changes; `--port` overrides the bound port, `--mesh` publishes the site to a private mesh (§9.10) |
+| `ashlar mesh` | print what this machine's mesh answers: identity, roster, published sites |
 | `ashlar fmt` | rewrite source into canonical formatting |
 | `ashlar fix [id]` | apply machine-applicable fixes from the last check |
 | `ashlar rename <full-name> <new-name>` | rename a space, part, or property |
@@ -881,23 +881,20 @@ single-file change re-checks in under 100ms at a thousand files.
 Refactors are commands, not text edits. Each computes and reports its complete
 blast radius from the manifest, applies atomically or not at all — refusing with
 a reason if the radius cannot be fully computed — leaves no stale reference
-behind, and reverses to the same program, though not the same bytes: `rename` and `rekind` substitute names in place and reverse
-byte-identically, while `move` adds the `use` lines both sides need and never
-removes one, so reversing it returns the same program with those lines present
-(ADR-0018). Every added line appears in the radius, and `radius` answers "what
-would this touch" without touching it.
+behind, and reverses to the same program, though not the same bytes: `rename` and `rekind` reverse byte-identically, while
+`move` adds the `use` lines both sides need and never removes one, so reversing
+it returns the same program with those lines present (ADR-0018). Every added line appears in the radius.
 
 Adding a `use` has no command and the widest reach of any edit: it can
-resequence composition order anywhere downstream (§3), so it is reported, not
-commanded. Against the previous build's manifest, an edit that resequences
+resequence composition order downstream (§3), so it is reported, not commanded. Against the previous build's manifest, an edit that resequences
 any part's layers raises `W002` naming the part and its order before and after;
 `ashlar delta` prints the report. No manifest, no baseline, no claim.
 
 ## 12. What programs cannot do
 
 Each is a compile error naming the Ashlar construct instead: no macros,
-user-defined syntax, or operator overloading — the surface does not extend, so
-this reference stays complete; no single-name imports or aliases; no
+user-defined syntax, or operator overloading — the surface does not extend; no
+single-name imports or aliases; no
 exceptions, `while`, truthiness, or text interpolation; no classes or
 inheritance (layers on parts); no registry or version resolution (dependencies
 are vendored); no dynamic access to anything named (computed keys reach data

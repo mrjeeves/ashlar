@@ -11,12 +11,12 @@ Every example wears the same restrained dark skin — one house palette,
 declared per project as `assets/<name>.css` and bound by `class` name
 (§9.4, ADR-0016). To flip through them all at once, run `./showcase/serve.sh`
 (it starts each example on its own port) and open <http://127.0.0.1:8080> —
-`gallery`, below, which frames the other sixteen.
+`gallery`, below, which frames the other seventeen.
 
 ## gallery
 
 The showcase itself, and the reason `setting` exists. It renders a sidebar
-of every other example with a live frame — sixteen addresses — and its
+of every other example with a live frame — seventeen addresses — and its
 source contains not one of them. `Catalog` declares
 `setting groups: [Group]`, deployment fills it in from `settings.json`,
 and starting without it refuses by name rather than serving dead frames
@@ -236,6 +236,44 @@ boundary, so a drifting worker faults at the call site rather than leaking bad
 data. Typing re-runs the worker over the socket and patches the figures, and
 `ashlar foreign check` proves the worker speaks the protocol before any request
 does. Needs `python3`; the driving test skips loudly without it.
+
+## enclave
+
+A chat program for the people who hold this program's mesh id, and nobody
+else. No server in the middle, no account, no address anyone wrote down: the
+id baked into the build IS the invite, so distributing the program distributes
+the key, and a group changes its locks by rolling a new one.
+
+The whole app is one element. `enclave.ash` is a `port`, a `start` that joins
+the mesh, one setting layered to take its own room rather than the shared
+area, and:
+
+```ash
+el(mesh.room, {})
+```
+
+Everything inside that — who is here across the top, the conversation, the
+files people drop into it, the line you type in — is the vendored `mesh`
+space. Your own words sit on the other side of the thread and read as yours; a
+run of lines from one person says their name once; arrivals are notices the
+room works out for itself from the roster, so they cost no traffic and no two
+members can disagree about who was there; a file appears where it was put,
+with its size and a button that fetches it; and everything carries how long
+ago it happened. What was said survives the site restarting.
+
+None of that is the language. The `mesh` space is `foreign` (§9.10) and derives
+to `ashlar mesh worker`, which drives the control socket the mesh node already
+exposes to its own clients — so a project that wants a room writes no binding,
+and the mesh ships nothing on Ashlar's behalf. Nothing polls, in the browser or
+in the program: the node streams presence and messages to its own clients, the
+worker is one of them, and a push re-renders every view that read what moved.
+
+On a machine with no mesh node the site still serves, and the room's header
+says why instead of showing an empty room that looks merely quiet. Its driving
+test stands up the node's own control socket and lets the shipped worker drive
+it, so what is faked is the network and nothing else; a second test runs it
+against a socket that is not there at all. What two machines would prove is
+open in `docs/roadmap.md`, not implied here.
 
 ## locker
 
