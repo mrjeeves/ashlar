@@ -304,3 +304,13 @@ body {
   font: inherit;
   cursor: pointer;
 }
+
+/* The room is the page; everything else sits to one side. */
+.aside {
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 12px;
+  opacity: 0.85;
+}

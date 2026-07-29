@@ -1808,8 +1808,8 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
     assert_eq!(status, 200);
     assert!(html.contains("No one else here yet."), "the empty roster is stated: {}", html);
     assert!(
-        html.contains("No sites on this mesh yet."),
-        "so is the empty site list: {}",
+        html.contains("Nothing on the shelf.") && html.contains("Nobody is on camera."),
+        "and so is every other lane, rather than rendering blank: {}",
         html
     );
 
@@ -1879,17 +1879,6 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
     assert!(
         patch.contains("mesh-dot mesh-dot-here"),
         "presence is visible: a connected peer carries the live class: {}",
-        patch
-    );
-    assert!(
-        patch.contains("ada&#x27;s pad") || patch.contains("ada's pad"),
-        "a peer's site appears in the browser: {}",
-        patch
-    );
-    assert!(
-        patch.contains("127.0.0.1:47001"),
-        "the link is the address the mesh handed back at runtime, which appears \
-         nowhere in source (B5): {}",
         patch
     );
     // Somebody says something. The mesh IS the room — everyone holding its id

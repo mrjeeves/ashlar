@@ -52,6 +52,12 @@ without becoming a registry, which G5 forbids on purpose. Serves **G4, G5**.
 Proven by: a project whose capability is absent, made reachable by one command
 that resolves no versions and consults no index.
 
+**`mesh.browser` has no corpus site any more.** The room is the point and the
+example's page is the room, so the site list came off it. `nearby` still works
+and `ashlar run --mesh` is still driven, but the ELEMENT that renders a peer's
+sites is now rendered by nothing the suite runs. Serves **A2**. Proven by: an
+example that shows sites because it is about sites, or the element's removal.
+
 **A camera's frames have never crossed two machines.** `watch` opens an MJPEG
 route, follows the batches, and writes each JPEG where the site serves it; the
 whole path is driven in the corpus, and against two real nodes the gate is

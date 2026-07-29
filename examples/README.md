@@ -275,7 +275,13 @@ a separate, deliberate act by the person at the machine. After it, frames cross
 as JPEG rather than H.264, and a peer's face is an ordinary `img` whose `src`
 carries the frame number. No decoder, no client code, no new language surface.
 
-The site half is the smaller point, kept because it makes one:
+Nothing here asks the node on a render. The worker keeps what a page needs in
+memory and refills it when the event stream says something moved, so a room
+renders from memory — the earlier build made a socket round trip per view per
+render, and got slower the more there was in the room.
+
+The site half is not on this page — a room is a room — but the capability is
+here:
 `ashlar run --mesh` publishes the port the origin is serving to that mesh, and
 `ashlar mesh` says what the machine can answer. The example binds nothing, so
 it talks to the node this machine runs — and on a machine with no node it still

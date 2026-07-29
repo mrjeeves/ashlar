@@ -59,6 +59,35 @@ pub const SAID_SHAPE: &str = "mesh.Said";
 /// The collection the room's offered files live in.
 pub const OFFER_SHAPE: &str = "mesh.Offer";
 
+/// What this worker knows without asking, refreshed when the node says
+/// something moved.
+///
+/// The node is one socket and every question costs a round trip. A page that
+/// renders a roster, a panel, a face row and a site list was asking it a dozen
+/// times per render, and `who()` asked once per message — so a room with a
+/// conversation in it got slower the more there was to say. The event stream
+/// already says when anything changed, so this is filled in then and read for
+/// free until the next time.
+#[derive(Debug, Clone, Default)]
+pub struct Known {
+    /// id, label, here.
+    pub peers: Vec<(String, String, bool)>,
+    /// The display-form id of each peer presence knows, for route endpoints.
+    pub addresses: Vec<String>,
+    /// node, label, port — what each peer advertises.
+    pub sites: Vec<(String, String, u16)>,
+    /// id and state of every route this node holds. A route exists before it
+    /// works and can be refused after it exists, so "connected" is this and
+    /// not the fact that opening one returned an id.
+    pub routes: Vec<(String, String)>,
+    /// This machine: id, label.
+    pub me: (String, String),
+    /// Whether the last refresh reached the node at all.
+    pub reachable: bool,
+    /// Why not, when it did not.
+    pub note: String,
+}
+
 /// The collection a watched camera's newest frame lives in.
 pub const SEEN_SHAPE: &str = "mesh.Seen";
 
@@ -193,21 +222,6 @@ pub const KEPT: usize = 200;
 /// else can guess is the one the program was written with (§9.12).
 pub fn room_of(network: &str) -> String {
     format!("ashlar:{}", network)
-}
-
-/// A stable summary of the node's raw peer list, so an event that merely
-/// re-states the session can be told from one that changed it.
-pub fn roster_print(peers: &V) -> String {
-    let list = match at(peers, "peers") {
-        Some(V::List(l)) => l,
-        _ => return String::new(),
-    };
-    let mut rows: Vec<String> = list
-        .iter()
-        .map(|p| format!("{}:{}", field(p, "device_id"), field(p, "status")))
-        .collect();
-    rows.sort();
-    rows.join(",")
 }
 
 /// The unsolicited line: "this collection changed, nobody asked".
@@ -396,37 +410,50 @@ impl Session {
     /// renders either way: `reachable` is what the panel reads, and `note` is
     /// the correction it prints instead of a blank identity.
     fn here(&mut self) -> Result<V, Trouble> {
-        match self.node.ask("mesh_identity", V::Map(BTreeMap::new())) {
-            Ok(identity) => {
-                let peers = self.peers().unwrap_or_default();
-                let id = field(&identity, "device_id");
-                // A node its owner never named still has to render as
-                // something. The roster answers an unlabelled peer with its
-                // id; this node is a peer to everyone else, so it answers the
-                // same way rather than with a blank row.
-                let label = {
-                    let given = field(&identity, "label");
-                    if given.trim().is_empty() {
-                        id.clone()
-                    } else {
-                        given.trim().to_string()
-                    }
-                };
-                Ok(place(&id, &label, &self.network(), peers.len(), true, ""))
-            }
-            Err(t) if t.absent() => Ok(place("", "", &self.network(), 0, false, t.why())),
-            Err(t) => Err(t),
+        let mut known = self.node.known();
+        // Nothing learned yet — a page rendered in the moment before the
+        // event stream's first pass. Ask now rather than answer "no mesh"
+        // about a mesh nobody has looked for.
+        if !known.reachable && known.note.is_empty() {
+            self.node.learn();
+            known = self.node.known();
         }
+        if !known.reachable {
+            return Ok(place("", "", &self.network(), 0, false, &known.note));
+        }
+        // A node its owner never named still has to render as something: the
+        // roster answers an unlabelled peer with its id, and this node is a
+        // peer to everyone else.
+        let label = match known.me.1.trim() {
+            "" => known.me.0.clone(),
+            named => named.to_string(),
+        };
+        Ok(place(
+            &known.me.0,
+            &label,
+            &self.network(),
+            known.peers.len(),
+            true,
+            "",
+        ))
     }
 
+    /// The roster, from memory. Every one of these was a round trip, and a
+    /// page makes several per render.
     fn peers(&self) -> Result<Vec<V>, Trouble> {
-        let mut args = BTreeMap::new();
-        args.insert("network".to_string(), V::Text(self.network()));
-        let answer = self.node.ask("mesh_peers", V::Map(args))?;
-        let Some(V::List(list)) = at(&answer, "peers") else {
-            return Ok(Vec::new());
-        };
-        Ok(list.iter().map(peer_row).collect())
+        Ok(self
+            .node
+            .known()
+            .peers
+            .iter()
+            .map(|(id, label, here)| {
+                map(&[
+                    ("id", V::Text(id.clone())),
+                    ("label", V::Text(label.clone())),
+                    ("here", V::Bool(*here)),
+                ])
+            })
+            .collect())
     }
 
     /// Every mesh this node is on, with how many peers are on each.
@@ -494,6 +521,9 @@ impl Session {
                 Err(t) => return Err(t),
             }
         }
+        // Arriving changes which roster is ours, so learn it now rather than
+        // showing an empty room until the node's next event.
+        self.node.learn();
         self.here()
     }
 
@@ -819,15 +849,11 @@ impl Session {
     /// advert says what it serves; mapping it binds a local port the node
     /// proxies over the mesh, so the link a page renders is ordinary loopback.
     fn nearby(&self) -> Result<Vec<V>, Trouble> {
-        let snapshot = self.node.ask("session_snapshot", V::Map(BTreeMap::new()))?;
-        // Presence reaches every network this node joined, so the snapshot
-        // mixes peers from all of them. Keep the ones on THIS mesh — the
-        // roster already names them — rather than showing another mesh's
-        // links under this one's heading.
-        let mine: Vec<String> = self
-            .peers()?
+        let known = self.node.known();
+        let mine: Vec<String> = known
+            .peers
             .iter()
-            .map(|p| canonical(&field(p, "id")))
+            .map(|(id, _, _)| canonical(id))
             .filter(|id| !id.is_empty())
             .collect();
         let mappings = self
@@ -835,29 +861,33 @@ impl Session {
             .ask("site_mappings", V::Map(BTreeMap::new()))
             .unwrap_or(V::List(vec![]));
         let mut out = Vec::new();
-        for (peer, port, label) in peer_sites(&snapshot) {
-            if !mine.contains(&canonical(&peer)) {
+        for (peer, label, port) in &known.sites {
+            if !mine.contains(&canonical(peer)) {
                 continue;
             }
-            let local = match existing_mapping(&mappings, &peer, port) {
+            let local = match existing_mapping(&mappings, peer, *port) {
                 Some(p) => Some(p),
                 None => {
                     let mut args = BTreeMap::new();
                     args.insert("node".to_string(), V::Text(peer.clone()));
-                    args.insert("port".to_string(), V::Number(port as f64));
-                    self.node.ask("site_map", V::Map(args)).ok().and_then(|v| {
-                        match at(&v, "localPort") {
+                    args.insert("port".to_string(), V::Number(*port as f64));
+                    self.node
+                        .ask("site_map", V::Map(args))
+                        .ok()
+                        .and_then(|v| match at(&v, "localPort") {
                             Some(V::Number(n)) => Some(n as u16),
                             _ => None,
-                        }
-                    })
+                        })
                 }
             };
             // A site that will not map is still a site the peer is running.
-            // "There but unreachable from here" is a different fact from "not
-            // there", and dropping it would report the second.
             let url = local.map(local_url).unwrap_or_default();
-            out.push(site(&peer, &label, &url));
+            let shown = if label.is_empty() {
+                format!("{} :{}", self.node.who(peer), port)
+            } else {
+                label.clone()
+            };
+            out.push(site(peer, &shown, &url));
         }
         Ok(out)
     }
@@ -1443,6 +1473,8 @@ pub struct Node {
     /// What the room is offering, keyed by `peer|token` so a member's
     /// re-statement replaces its own entries and nobody else's.
     offers: std::sync::Arc<std::sync::Mutex<BTreeMap<String, Offer>>>,
+    /// Everything answerable without a socket. See [`Known`].
+    known: std::sync::Arc<std::sync::Mutex<Known>>,
     /// The newest frame from each watched camera, keyed by canonical peer.
     seen: std::sync::Arc<std::sync::Mutex<BTreeMap<String, Seen>>>,
     /// Transfers in flight, keyed `route|req` → the offer they are for. A
@@ -1461,6 +1493,7 @@ impl Node {
             heard: Node::log(),
             offers: Node::empty_shelf(),
             seen: Node::eyes(),
+            known: Node::nothing_yet(),
             pending: Node::landings(),
         }
     }
@@ -1473,8 +1506,13 @@ impl Node {
             heard: Node::log(),
             offers: Node::empty_shelf(),
             seen: Node::eyes(),
+            known: Node::nothing_yet(),
             pending: Node::landings(),
         }
+    }
+
+    fn nothing_yet() -> std::sync::Arc<std::sync::Mutex<Known>> {
+        std::sync::Arc::new(std::sync::Mutex::new(Known::default()))
     }
 
     fn eyes() -> std::sync::Arc<std::sync::Mutex<BTreeMap<String, Seen>>> {
@@ -1522,12 +1560,18 @@ impl Node {
             heard: self.heard.clone(),
             offers: self.offers.clone(),
             seen: self.seen.clone(),
+            known: self.known.clone(),
             pending: self.pending.clone(),
         };
         let socket = self.socket.clone().expect("checked");
         std::thread::spawn(move || {
             let mut last: Option<String> = None;
             loop {
+                // Learn before listening: a page rendered in the second before
+                // the first event would otherwise show an empty room.
+                if node.learn() {
+                    node.push(PEER_SHAPE);
+                }
                 wire::follow(&socket, &mut |event, payload| match event {
                     // The node re-states its session on a timer, not only when
                     // something moved. Forwarding every one would re-render
@@ -1536,7 +1580,12 @@ impl Node {
                     // event is the cue to LOOK, and the roster decides whether
                     // anyone is told.
                     "allmystuff://session" => {
-                        let now = roster_print(&node.roster());
+                        // Ask once, here, where nobody is waiting — then every
+                        // render answers from memory. The node re-states its
+                        // session on a timer, so only a roster that actually
+                        // moved is worth telling a page about.
+                        node.learn();
+                        let now = node.summary();
                         if last.as_deref() != Some(now.as_str()) {
                             last = Some(now);
                             node.push(PEER_SHAPE);
@@ -1605,13 +1654,6 @@ impl Node {
                 .is_ok(),
             None => false,
         }
-    }
-
-    /// The node's raw peer list for the mesh in force, or nothing.
-    fn roster(&self) -> V {
-        let mut args = BTreeMap::new();
-        args.insert("network".to_string(), V::Text(self.network()));
-        self.ask("mesh_peers", V::Map(args)).unwrap_or(V::None)
     }
 
     /// Record what a member says it is offering. Replacement semantics per
@@ -1685,7 +1727,116 @@ impl Node {
             heard: self.heard.clone(),
             offers: self.offers.clone(),
             seen: self.seen.clone(),
+            known: self.known.clone(),
             pending: self.pending.clone(),
+        }
+    }
+
+    /// Ask the node everything a page needs, once, and remember it.
+    ///
+    /// Called when the event stream says something moved — not per render.
+    /// Three round trips here replace a dozen there, and they happen while
+    /// nobody is waiting.
+    fn learn(&self) -> bool {
+        let identity = self.ask("mesh_identity", V::Map(BTreeMap::new()));
+        let (me, unreachable) = match &identity {
+            Ok(v) => ((field(v, "device_id"), field(v, "label")), None),
+            Err(t) => ((String::new(), String::new()), Some(t.why().to_string())),
+        };
+        let mut args = BTreeMap::new();
+        args.insert("network".to_string(), V::Text(self.network()));
+        let peers = match self.ask("mesh_peers", V::Map(args)) {
+            Ok(v) => match at(&v, "peers") {
+                Some(V::List(list)) => list
+                    .iter()
+                    .map(|p| {
+                        let id = field(p, "device_id");
+                        let status = field(p, "status").to_ascii_lowercase();
+                        let label = match field(p, "label").trim() {
+                            "" => id.clone(),
+                            named => named.to_string(),
+                        };
+                        (id, label, status == "active" || status == "shelved")
+                    })
+                    .collect(),
+                _ => Vec::new(),
+            },
+            Err(_) => Vec::new(),
+        };
+        let snapshot = self
+            .ask("session_snapshot", V::Map(BTreeMap::new()))
+            .unwrap_or(V::None);
+        let mut addresses = Vec::new();
+        let mut sites = Vec::new();
+        let mut routes = Vec::new();
+        if let Some(V::List(live)) = at(&snapshot, "routes") {
+            for r in &live {
+                let id = at(r, "route")
+                    .map(|route| field(&route, "id"))
+                    .unwrap_or_default();
+                if !id.is_empty() {
+                    routes.push((id, field(r, "state").to_ascii_lowercase()));
+                }
+            }
+        }
+        if let Some(V::List(rows)) = at(&snapshot, "peers") {
+            for row in &rows {
+                let node = field(row, "node");
+                if node.is_empty() {
+                    continue;
+                }
+                addresses.push(node.clone());
+                if let Some(V::List(advert)) = at(row, "sites") {
+                    for a in &advert {
+                        if let Some(V::Number(port)) = at(a, "port") {
+                            sites.push((node.clone(), field(a, "label"), port as u16));
+                        }
+                    }
+                }
+            }
+        }
+        let reachable = unreachable.is_none();
+        if let Ok(mut known) = self.known.lock() {
+            *known = Known {
+                peers,
+                addresses,
+                sites,
+                routes,
+                me,
+                reachable,
+                note: unreachable.unwrap_or_default(),
+            };
+        }
+        reachable
+    }
+
+    /// What the node says one route's state is, or nothing if it is gone.
+    fn route_state(&self, route: &str) -> Option<String> {
+        self.known()
+            .routes
+            .iter()
+            .find(|(id, _)| id == route)
+            .map(|(_, state)| state.clone())
+    }
+
+    /// A stable summary of what is known, so an event that merely re-states
+    /// the session can be told from one that changed it.
+    fn summary(&self) -> String {
+        let known = self.known();
+        let mut rows: Vec<String> = known
+            .peers
+            .iter()
+            .map(|(id, _, here)| format!("{}:{}", id, here))
+            .collect();
+        rows.sort();
+        rows.join(",")
+    }
+
+    /// What is known right now, without asking anyone.
+    fn known(&self) -> Known {
+        match self.known.lock() {
+            Ok(k) => k.clone(),
+            Err(_) => Known::default(),
         }
     }
 
@@ -1732,11 +1883,43 @@ impl Node {
                 };
                 if batch.is_empty() {
                     quiet += 1;
-                    // Nothing for a minute means the far end stopped. Leave
-                    // the last frame where it is: a still that says when it
-                    // stopped beats a hole where a person was.
-                    if quiet > 140 {
-                        return;
+                    // A route exists the moment it is opened and is refused
+                    // afterwards, by a message from the other machine. So
+                    // "waiting" has to be checked against what the route
+                    // actually is, or a peer who declined shows as loading
+                    // forever — which is the page claiming a connection it
+                    // does not have.
+                    if quiet == 40 || quiet > 140 {
+                        let state = node.route_state(&route);
+                        if state.as_deref() != Some("active") {
+                            node.saw(
+                                &peer,
+                                Seen {
+                                    who: node.who(&peer),
+                                    peer: peer.clone(),
+                                    url: String::new(),
+                                    seq: 0.0,
+                                    note: match state {
+                                        Some(other) => format!(
+                                            "not connected — the route to {} is {}. They may not \
+                                             have shared their camera.",
+                                            node.who(&peer),
+                                            other
+                                        ),
+                                        None => format!(
+                                            "not connected — {} closed the route. They may not \
+                                             have shared their camera.",
+                                            node.who(&peer)
+                                        ),
+                                    },
+                                },
+                            );
+                            node.push(SEEN_SHAPE);
+                            return;
+                        }
+                        if quiet > 140 {
+                            return;
+                        }
                     }
                 } else {
                     quiet = 0;
@@ -1832,17 +2015,9 @@ impl Node {
     /// presence and falls back to what it was given.
     fn addressable(&self, peer: &str) -> String {
         let want = canonical(peer);
-        if let Some(V::List(peers)) = at(
-            &self
-                .ask("session_snapshot", V::Map(BTreeMap::new()))
-                .unwrap_or(V::None),
-            "peers",
-        ) {
-            for p in &peers {
-                let node = field(p, "node");
-                if canonical(&node) == want && node.contains('-') {
-                    return node;
-                }
+        for known in &self.known().addresses {
+            if canonical(known) == want && known.contains('-') {
+                return known.clone();
             }
         }
         peer.to_string()
@@ -1854,14 +2029,9 @@ impl Node {
     /// what a name is not for.
     fn who(&self, id: &str) -> String {
         let want = canonical(id);
-        if let Some(V::List(peers)) = at(&self.roster(), "peers") {
-            for p in &peers {
-                if canonical(&field(p, "device_id")) == want {
-                    let label = field(p, "label");
-                    if !label.trim().is_empty() {
-                        return label.trim().to_string();
-                    }
-                }
+        for (peer, label, _) in &self.known().peers {
+            if canonical(peer) == want && !label.trim().is_empty() {
+                return label.trim().to_string();
             }
         }
         short(&want)
