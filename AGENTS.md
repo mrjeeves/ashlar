@@ -760,16 +760,14 @@ may export `ashlar_free(char*)` to take its buffer back. A worker is therefore
 a loop in any language: read a line, decode `call` and `args`, print one JSON
 answer, flush.
 
-Reachability is not a build-time fact — the machine that compiles is not the
-machine that deploys — so `ashlar foreign check` proves it on demand against the
-bindings in force, before a request finds out. Foreign calls may block; the
+Reachability is not a build-time fact, so `ashlar foreign check` proves it on
+demand against the bindings in force, before a request finds out. Foreign calls may block; the
 runtime schedules around them.
 
 One space name derives to a co-process rather than a library, and that
 co-process is this toolchain: `mesh` — who else is on the private network this
 machine joined, and the sites they serve. `ashlar mesh worker` speaks the
-control socket the mesh already exposes to its own clients, so nothing outside
-the project changes to make the boundary work. `ashlar run --mesh` publishes
+control socket the mesh already exposes to its own clients. `ashlar run --mesh` publishes
 the port it is serving through it, reaching that network and nobody else;
 `ashlar mesh` says what it answers.
 
@@ -790,7 +788,9 @@ foreign all: () -> [Row] watches Row
 `watches <Shape>` makes the call a dependency edge — a view calling it
 re-renders when the collection changes — and `updates <Shape>` marks that
 collection changed, so every view that read it re-renders and patches across
-every connected client (§9.3). The collection is the data shape it names;
+every connected client (§9.3). A worker may also print `{"changed": "<Shape>"}`
+unasked, at any time: the same edge with no call, so a co-process that watches
+something pushes and the page follows it, with nothing polling. The collection is the data shape it names;
 `watches`/`updates` are contextual (ordinary names elsewhere), and one resolving
 to no part is E001.
 

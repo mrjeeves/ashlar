@@ -49,16 +49,14 @@ part Network {
 }
 
 // The roster is a collection the runtime tracks: a view that read it
-// re-renders when `reread` marks it changed (§9.10). `revision` is outside
-// that on purpose — the poll below asks it every few seconds, and a call
-// that marked the collection every time it was asked would re-render every
-// connected page on a schedule instead of on a change.
+// re-renders when it changes (§9.10). Nothing here polls. The node streams
+// presence to its own clients and the worker is one of them, so a peer
+// arriving pushes, and every page that read the roster patches — the mesh
+// sets the pace, not a schedule guessing at it.
 foreign here: () -> mesh.Here watches mesh.Peer
 foreign peers: () -> [mesh.Peer] watches mesh.Peer
 foreign enter: (network: text, label: text) -> mesh.Here updates mesh.Peer
 foreign networks: () -> [mesh.Network] watches mesh.Peer
-foreign revision: () -> number
-foreign reread: () -> number updates mesh.Peer
 
 // The app's own mesh. Both values are settings: the name and shape are
 // source, the value is deployment's (§9.12) — so one program can be run on
@@ -95,21 +93,6 @@ part Mesh {
     let h = enter(network, label)
     node = h.id
     joined = true
-  }
-}
-
-// Presence is polled because a co-process answers questions; it does not
-// push (§9.10). Asking for the revision is cheap and marks nothing, so the
-// roster re-renders when it changed and not when it was merely asked about.
-// An app that wants a different cadence layers this part's `every`.
-part Watch {
-  every = "3s"
-  state seen: number = 0
-  run = () => {
-    let rev = revision()
-    if rev != seen {
-      seen = reread()
-    }
   }
 }
 

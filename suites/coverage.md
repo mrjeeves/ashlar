@@ -116,7 +116,10 @@ named pipe, and once against a socket that is not there at all, on every
 platform. The second is the regression for a build whose every mesh read
 faulted, so a machine with no node — closed, uninstalled, or across a WSL
 boundary — could not start the site at all. It also pins the rule that a
-program joining a mesh never renames the machine it runs on.
+program joining a mesh never renames the machine it runs on. The first drives
+the worker PUSH (§9.10): the fake node streams an event down the connection it
+holds open, and the page patches with nothing in the program polling — the
+`{"changed": …}` line's own shape is pinned in `foreign.rs`.
 `enclave` also carries the G5 half `vendor` cannot check: its
 `vendor/mesh/` is asserted byte-identical to `lib/mesh/`, because a vendored
 dependency that drifts from its source is the version skew a registry exists to

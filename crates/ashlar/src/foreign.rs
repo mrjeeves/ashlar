@@ -20,7 +20,7 @@ use crate::tokens::{Pos, Span};
 use std::collections::BTreeMap;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::{Path, PathBuf};
-use std::process::{Child, ChildStdin, ChildStdout, Command, Stdio};
+use std::process::{Child, ChildStdin, Command, Stdio};
 
 // -- the binding file -------------------------------------------------------
 
@@ -472,12 +472,28 @@ pub struct Boundary {
     bindings: Option<BTreeMap<String, Via>>,
     libs: BTreeMap<String, usize>,
     workers: BTreeMap<String, Worker>,
+    changed: Changed,
 }
+
+/// Collections a worker said changed while nobody was asking: `(space, shape)`
+/// pairs, drained by the server loop.
+///
+/// This is the boundary's ONE unsolicited path. A worker answers calls, and
+/// may also volunteer `{"changed": "<Shape>"}` at any moment; the runtime
+/// marks that collection and every view that read it re-renders (§9.10). A
+/// co-process that watches something — a mesh roster, a table, a directory —
+/// therefore pushes, and a page follows it in the time the server loop takes
+/// to come round, rather than in the time some schedule was guessed at.
+pub type Changed = std::sync::Arc<std::sync::Mutex<Vec<(String, String)>>>;
 
 struct Worker {
     child: Child,
     stdin: ChildStdin,
-    out: BufReader<ChildStdout>,
+    /// Answers, in order, from the reader thread. The thread exists so a
+    /// pushed line is seen when it is SENT rather than when the next call
+    /// happens to read the pipe — which is the whole difference between a
+    /// roster that is live and one that is three seconds stale.
+    answers: std::sync::mpsc::Receiver<Result<String, String>>,
 }
 
 impl Default for Boundary {
@@ -492,6 +508,16 @@ impl Boundary {
             bindings: None,
             libs: BTreeMap::new(),
             workers: BTreeMap::new(),
+            changed: Changed::default(),
+        }
+    }
+
+    /// Collections pushed since this was last asked. The server loop drains
+    /// it every turn and dirties each one's readers.
+    pub fn take_changed(&self) -> Vec<(String, String)> {
+        match self.changed.lock() {
+            Ok(mut q) => std::mem::take(&mut *q),
+            Err(_) => Vec::new(),
         }
     }
 
@@ -635,7 +661,7 @@ impl Boundary {
         args: Vec<V>,
     ) -> Result<V, String> {
         if !self.workers.contains_key(space) {
-            let w = spawn_worker(root, run)
+            let w = spawn_worker(root, run, space, self.changed.clone())
                 .map_err(|e| format!("foreign worker for `{}` could not start: {}", space, e))?;
             self.workers.insert(space.to_string(), w);
         }
@@ -675,23 +701,42 @@ impl Drop for Boundary {
 
 impl Worker {
     /// One request, one response line. Any I/O failure is the caller's cue to
-    /// reap this worker.
+    /// reap this worker. Pushed lines never arrive here — the reader thread
+    /// has already put them where the server loop will find them.
     fn exchange(&mut self, request: &str) -> Result<String, String> {
         self.stdin
             .write_all(request.as_bytes())
             .and_then(|_| self.stdin.write_all(b"\n"))
             .and_then(|_| self.stdin.flush())
             .map_err(|e| format!("could not write to it ({})", e))?;
-        let mut line = String::new();
-        match self.out.read_line(&mut line) {
-            Ok(0) => Err("it closed its output without answering".to_string()),
-            Ok(_) => Ok(line),
-            Err(e) => Err(format!("could not read its answer ({})", e)),
+        match self.answers.recv() {
+            Ok(answer) => answer,
+            Err(_) => Err("it closed its output without answering".to_string()),
         }
     }
 }
 
-fn spawn_worker(root: &Path, run: &[String]) -> Result<Worker, std::io::Error> {
+/// The collection a pushed line names, or `None` for an ordinary answer.
+///
+/// A worker that never pushes is unaffected: `{"ok":…}` and `{"error":…}` are
+/// answers, and so is anything else, which is what keeps the check in
+/// `probe_worker` honest about a co-process that speaks nonsense.
+pub fn pushed_collection(line: &str) -> Option<String> {
+    match from_json(line.trim()) {
+        Some(V::Map(m)) if m.len() == 1 => match m.get("changed") {
+            Some(V::Text(shape)) if !shape.trim().is_empty() => Some(shape.trim().to_string()),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+fn spawn_worker(
+    root: &Path,
+    run: &[String],
+    space: &str,
+    changed: Changed,
+) -> Result<Worker, std::io::Error> {
     // The derived mesh binding names this toolchain, which is not always on
     // PATH under the name `ashlar`, so the CLI records where it lives and the
     // fallback uses that. It is NOT `current_exe`: this library is embedded in
@@ -714,10 +759,39 @@ fn spawn_worker(root: &Path, run: &[String]) -> Result<Worker, std::io::Error> {
         .spawn()?;
     let stdin = child.stdin.take().expect("piped");
     let stdout = child.stdout.take().expect("piped");
+    // One thread per worker, reading its output for as long as it lives. A
+    // pushed line is routed to the changed queue the moment it arrives; an
+    // answer goes to whoever is waiting. Reading only inside `exchange` would
+    // leave a push sitting in the pipe until the next call, which is a poll
+    // wearing a push's clothes.
+    let (tx, answers) = std::sync::mpsc::channel();
+    let space = space.to_string();
+    std::thread::spawn(move || {
+        let mut out = BufReader::new(stdout);
+        loop {
+            let mut line = String::new();
+            match out.read_line(&mut line) {
+                Ok(0) => break,
+                Ok(_) => {
+                    if let Some(shape) = pushed_collection(&line) {
+                        if let Ok(mut q) = changed.lock() {
+                            q.push((space.clone(), shape));
+                        }
+                    } else if tx.send(Ok(line)).is_err() {
+                        break;
+                    }
+                }
+                Err(e) => {
+                    let _ = tx.send(Err(format!("could not read its answer ({})", e)));
+                    break;
+                }
+            }
+        }
+    });
     Ok(Worker {
         child,
         stdin,
-        out: BufReader::new(stdout),
+        answers,
     })
 }
 
@@ -904,7 +978,8 @@ pub fn check_space(root: &Path, space: &str, names: &[String]) -> Reach {
 /// back within a few seconds. Runs the read on its own thread so a worker
 /// that never answers fails the check instead of hanging it.
 fn probe_worker(root: &Path, run: &[String]) -> Result<(), String> {
-    let mut w = spawn_worker(root, run).map_err(|e| format!("could not start `{}`: {}", run.join(" "), e))?;
+    let mut w = spawn_worker(root, run, "probe", Changed::default())
+        .map_err(|e| format!("could not start `{}`: {}", run.join(" "), e))?;
     let request = request_line("__ping", Vec::new());
     let write = w
         .stdin
@@ -916,19 +991,15 @@ fn probe_worker(root: &Path, run: &[String]) -> Result<(), String> {
         let _ = w.child.wait();
         return Err(format!("could not write to the worker: {}", e));
     }
-    let (tx, rx) = std::sync::mpsc::channel();
-    let mut out = w.out;
-    std::thread::spawn(move || {
-        let mut line = String::new();
-        let r = out.read_line(&mut line).map(|n| (n, line));
-        let _ = tx.send(r);
-    });
-    let answered = rx.recv_timeout(std::time::Duration::from_secs(5));
+    // The reader thread is already draining it, so this waits on the answer
+    // rather than on the pipe — a worker that never answers fails the check
+    // instead of hanging it.
+    let answered = w.answers.recv_timeout(std::time::Duration::from_secs(5));
     let _ = w.child.kill();
     let _ = w.child.wait();
     match answered {
-        Ok(Ok((0, _))) => Err("the worker closed its output without answering.".to_string()),
-        Ok(Ok((_, line))) => {
+        Ok(Err(e)) => Err(format!("the worker could not be read: {}", e)),
+        Ok(Ok(line)) => {
             if from_json(line.trim()).is_some() {
                 Ok(())
             } else {
@@ -938,7 +1009,9 @@ fn probe_worker(root: &Path, run: &[String]) -> Result<(), String> {
                 ))
             }
         }
-        Ok(Err(e)) => Err(format!("could not read the worker's answer: {}", e)),
+        Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+            Err("the worker closed its output without answering.".to_string())
+        }
         Err(_) => Err("the worker did not answer within 5s (is its output line-buffered and flushed?).".to_string()),
     }
 }
@@ -1185,6 +1258,33 @@ mod key_tests {
         let span = key_span(text, "tools");
         assert_eq!((span.start.line, span.start.col), (2, 3));
         assert_eq!(span.end.line, 2);
+    }
+
+    #[test]
+    fn a_push_is_told_from_an_answer_by_shape_alone() {
+        // The unsolicited line is the whole of the push protocol, so what
+        // counts as one has to be unambiguous: exactly `{"changed": "<Shape>"}`
+        // and nothing else. Anything wider would swallow a worker's answer
+        // that happened to carry a `changed` field of its own.
+        assert_eq!(
+            pushed_collection(r#"{"changed":"mesh.Peer"}"#),
+            Some("mesh.Peer".to_string())
+        );
+        assert_eq!(
+            pushed_collection("  {\"changed\": \" Row \"}  \n"),
+            Some("Row".to_string())
+        );
+        for answer in [
+            r#"{"ok":{"changed":"mesh.Peer"}}"#,
+            r#"{"changed":"mesh.Peer","ok":1}"#,
+            r#"{"changed":""}"#,
+            r#"{"changed":7}"#,
+            r#"{"ok":[1,2]}"#,
+            r#"{"error":"no"}"#,
+            "not json at all",
+        ] {
+            assert_eq!(pushed_collection(answer), None, "{}", answer);
+        }
     }
 
     #[test]

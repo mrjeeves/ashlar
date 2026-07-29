@@ -189,6 +189,23 @@ dependency. A capability that works on one operating system is not a
 capability, and "the runtime is zero-dependency" was doing the arguing for a
 conclusion that was never true.
 
+**A worker may speak first.** The envelope was strictly request/response, so
+`watches`/`updates` could only fire on a call — and a collection that changes
+because something OUTSIDE the program changed has no call to fire on. The mesh
+roster made that concrete: the library carried a three-second schedule asking
+"did it move", which is late by up to three seconds, wrong on a slow answer,
+and pure waste on a quiet mesh. The node had been streaming presence to its own
+front end the whole time.
+
+So a worker may print `{"changed": "<Shape>"}` at any moment, unasked: the same
+dependency edge `updates` makes, with no call under it. The runtime reads each
+worker on its own thread — reading only inside a call would leave a push in the
+pipe until the next one, which is a poll wearing a push's clothes — and the
+server loop, already awake for sockets, dirties the collection's readers. A
+worker that never pushes is unaffected, which is why this is an addition to the
+envelope and not a version of it. The cost is one thread per worker and one
+queue; the alternative was every reactive co-process inventing its own schedule.
+
 **Being a client constrains what this may write.** A control socket carries the
 whole machine, not this program's corner of it. The adapter reads freely and
 writes only what the program itself put there — a network it joined, a port it

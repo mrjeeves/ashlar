@@ -49,6 +49,32 @@ use std::path::PathBuf;
 /// nothing and a machine told nothing meet on one area rather than two.
 pub const DEFAULT_NETWORK: &str = "ashlar";
 
+/// The collection the roster lives in, as `lib/mesh` declares it. A push
+/// names it, so every view that read a peer re-renders (§9.10).
+pub const PEER_SHAPE: &str = "mesh.Peer";
+
+/// A stable summary of the node's raw peer list, so an event that merely
+/// re-states the session can be told from one that changed it.
+pub fn roster_print(peers: &V) -> String {
+    let list = match at(peers, "peers") {
+        Some(V::List(l)) => l,
+        _ => return String::new(),
+    };
+    let mut rows: Vec<String> = list
+        .iter()
+        .map(|p| format!("{}:{}", field(p, "device_id"), field(p, "status")))
+        .collect();
+    rows.sort();
+    rows.join(",")
+}
+
+/// The unsolicited line: "this collection changed, nobody asked".
+pub fn changed(shape: &str) -> String {
+    let mut m = BTreeMap::new();
+    m.insert("changed".to_string(), V::Text(shape.to_string()));
+    to_json(&V::Map(m))
+}
+
 /// Run the worker: read one call per line, answer one per line, until stdin
 /// closes. A failure crosses as `{"error": …}` and the runtime raises it at
 /// the Ashlar call site with the message intact — worth more than a dead
@@ -59,11 +85,15 @@ pub const DEFAULT_NETWORK: &str = "ashlar";
 /// the node is, so this connects to that and starts nothing.
 pub fn run(socket: Option<PathBuf>) -> i32 {
     let stdin = std::io::stdin();
-    let mut out = std::io::stdout();
-    let mut session = Session::new(match socket {
+    let node = match socket {
         Some(path) => Node::at(path),
         None => Node::derived(),
-    });
+    };
+    // stdout is shared with the watch thread below, which pushes without
+    // being asked. One lock, so two writers never interleave a line.
+    let out = std::sync::Arc::new(std::sync::Mutex::new(std::io::stdout()));
+    node.watch(out.clone());
+    let mut session = Session::new(node);
     for line in stdin.lock().lines() {
         let Ok(line) = line else { return 1 };
         let line = line.trim();
@@ -77,11 +107,20 @@ pub fn run(socket: Option<PathBuf>) -> i32 {
             },
             Err(e) => envelope("error", V::Text(e)),
         };
-        if writeln!(out, "{}", answer).and_then(|_| out.flush()).is_err() {
+        if say(&out, &answer).is_err() {
             return 0; // the runtime hung up; nothing left to answer
         }
     }
     0
+}
+
+/// Write one line to the runtime, under the lock the watch thread shares.
+fn say(out: &std::sync::Mutex<std::io::Stdout>, line: &str) -> std::io::Result<()> {
+    let mut out = out
+        .lock()
+        .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "stdout lock"))?;
+    writeln!(out, "{}", line)?;
+    out.flush()
 }
 
 fn envelope(key: &str, value: V) -> String {
@@ -112,9 +151,6 @@ pub fn parse_call(line: &str) -> Result<(String, Vec<V>), String> {
 /// sees the same peers.
 pub struct Session {
     node: Node,
-    network: Option<String>,
-    revision: f64,
-    fingerprint: Option<String>,
 }
 
 impl Default for Session {
@@ -125,12 +161,7 @@ impl Default for Session {
 
 impl Session {
     pub fn new(node: Node) -> Session {
-        Session {
-            node,
-            network: None,
-            revision: 0.0,
-            fingerprint: None,
-        }
+        Session { node }
     }
 
     /// One call in, one answer out.
@@ -152,10 +183,6 @@ impl Session {
                 self.enter(&network, &label).map_err(String::from)
             }
             "networks" => Ok(V::List(soft(self.networks(), Vec::new())?)),
-            "revision" | "reread" => {
-                self.refresh()?;
-                Ok(V::Number(self.revision))
-            }
             // -- the sites (`mesh.sites`) ----------------------------------
             "expose" => {
                 let port = port_arg(args, 0)?;
@@ -173,7 +200,7 @@ impl Session {
             "nearby" => Ok(V::List(soft(self.nearby(), Vec::new())?)),
             other => Err(format!(
                 "no such call: `{}`. The mesh answers here, peers, networks, \
-                 enter, revision, reread; its sites answer expose, unexpose, \
+                 enter; its sites answer expose, unexpose, \
                  published, nearby.",
                 other
             )),
@@ -182,9 +209,7 @@ impl Session {
 
     /// The mesh in force: what `enter` was told, else the default area.
     fn network(&self) -> String {
-        self.network
-            .clone()
-            .unwrap_or_else(|| DEFAULT_NETWORK.to_string())
+        self.node.network()
     }
 
     // -- the roster ---------------------------------------------------------
@@ -278,8 +303,7 @@ impl Session {
             .ask("mesh_networks", V::Map(BTreeMap::new()))
             .map(|v| already_joined(&v, network))
             .unwrap_or(false);
-        self.network = Some(network.to_string());
-        self.fingerprint = None;
+        self.node.set_network(network);
         if !joined {
             match self
                 .node
@@ -294,20 +318,6 @@ impl Session {
             }
         }
         self.here()
-    }
-
-    /// Move the revision if — and only if — the roster is not what it was.
-    /// `revision` is asked on a timer and marks nothing; `reread` is the call
-    /// that marks the collection changed, so pages re-render when the roster
-    /// moved rather than on every tick (§9.10).
-    fn refresh(&mut self) -> Result<(), String> {
-        let peers = soft(self.peers(), Vec::new())?;
-        let print = fingerprint(&peers);
-        if self.fingerprint.as_deref() != Some(print.as_str()) {
-            self.fingerprint = Some(print);
-            self.revision += 1.0;
-        }
-        Ok(())
     }
 
     // -- the sites ----------------------------------------------------------
@@ -346,7 +356,7 @@ impl Session {
         // its owner never exposed.
         let exposed = with_exposed(&self.exposed()?, port, label);
         self.set_exposed(exposed)?;
-        self.network = Some(network.to_string());
+        self.node.set_network(network);
         let identity = self
             .node
             .ask("mesh_identity", V::Map(BTreeMap::new()))
@@ -553,22 +563,6 @@ pub fn peer_row(peer: &V) -> V {
         ("label", V::Text(label)),
         ("here", V::Bool(status == "active" || status == "shelved")),
     ])
-}
-
-/// A stable summary of a roster, so a poll can tell "changed" from "asked".
-pub fn fingerprint(peers: &[V]) -> String {
-    let mut rows: Vec<String> = peers
-        .iter()
-        .map(|p| {
-            format!(
-                "{}:{}",
-                field(p, "id"),
-                matches!(at(p, "here"), Some(V::Bool(true)))
-            )
-        })
-        .collect();
-    rows.sort();
-    rows.join(",")
 }
 
 /// Whether a networks answer already carries this mesh, keyed either way the
@@ -855,6 +849,9 @@ pub fn node_socket() -> Option<PathBuf> {
 pub struct Node {
     socket: Option<PathBuf>,
     start: Option<Vec<String>>,
+    /// The mesh in force. On the node rather than the session because the
+    /// watch thread reads the same roster the views do.
+    network: std::sync::Arc<std::sync::Mutex<String>>,
 }
 
 impl Node {
@@ -862,6 +859,7 @@ impl Node {
         Node {
             socket: node_socket(),
             start: Some(bring_up()),
+            network: Node::area(),
         }
     }
 
@@ -869,7 +867,85 @@ impl Node {
         Node {
             socket: Some(socket),
             start: None,
+            network: Node::area(),
         }
+    }
+
+    fn area() -> std::sync::Arc<std::sync::Mutex<String>> {
+        std::sync::Arc::new(std::sync::Mutex::new(DEFAULT_NETWORK.to_string()))
+    }
+
+    /// Follow the node's event stream for as long as this worker lives, and
+    /// push a line to the runtime whenever the roster moved.
+    ///
+    /// The node already streams what its own GUI redraws on: one connection
+    /// carrying `__subscribe_events`, then a frame per event. So a roster is
+    /// not something to ask about on a timer — the earlier build polled every
+    /// three seconds, which is both late and, on a quiet mesh, entirely
+    /// wasted. Presence arrives when it arrives, and the page follows it.
+    ///
+    /// A machine with no node has nothing to subscribe to. That is not a
+    /// failure here: the reads already answer (`Trouble::Absent`), so this
+    /// simply retries, quietly, in case a node appears later — which on a
+    /// laptop that opens the app after the site is up, it does.
+    pub fn watch(&self, out: std::sync::Arc<std::sync::Mutex<std::io::Stdout>>) {
+        if self.socket.is_none() {
+            return;
+        }
+        let node = Node {
+            socket: self.socket.clone(),
+            start: None, // a listener never starts a daemon
+            network: self.network.clone(),
+        };
+        let socket = self.socket.clone().expect("checked");
+        std::thread::spawn(move || {
+            let mut last: Option<String> = None;
+            loop {
+                wire::follow(&socket, &mut |event| {
+                    // The node re-states its session on a timer, not only when
+                    // something moved. Forwarding every one would re-render
+                    // every connected page every few seconds forever — the
+                    // poll this replaced, wearing the node's clothes. So the
+                    // event is the cue to LOOK, and the roster decides whether
+                    // anyone is told.
+                    if event != "allmystuff://session" {
+                        return;
+                    }
+                    let now = roster_print(&node.roster());
+                    if last.as_deref() != Some(now.as_str()) {
+                        last = Some(now);
+                        let _ = say(&out, &changed(PEER_SHAPE));
+                    }
+                });
+                // The node went away or was never there. Wait before asking
+                // again: a tight loop against a missing socket is a busy wait
+                // with a nicer name.
+                std::thread::sleep(std::time::Duration::from_secs(5));
+            }
+        });
+    }
+
+    /// The mesh in force: what `enter` was told, else the default area. Shared
+    /// with the watch thread, which needs the same answer to ask the node for
+    /// the same roster the views are reading.
+    pub fn network(&self) -> String {
+        match self.network.lock() {
+            Ok(n) => n.clone(),
+            Err(_) => DEFAULT_NETWORK.to_string(),
+        }
+    }
+
+    pub fn set_network(&self, network: &str) {
+        if let Ok(mut n) = self.network.lock() {
+            *n = network.to_string();
+        }
+    }
+
+    /// The node's raw peer list for the mesh in force, or nothing.
+    fn roster(&self) -> V {
+        let mut args = BTreeMap::new();
+        args.insert("network".to_string(), V::Text(self.network()));
+        self.ask("mesh_peers", V::Map(args)).unwrap_or(V::None)
     }
 
     /// One request to the node: a length-prefixed JSON frame out, one frame
@@ -1091,6 +1167,60 @@ mod wire {
             .map_err(|_| Trouble::Refused(format!("{}'s answer was not UTF-8", binary)))
     }
 
+    /// Subscribe to the node's event stream and call `on` for each event
+    /// name, until the connection ends. Returns then — the caller decides
+    /// whether to come back.
+    ///
+    /// The node's own front end reads this connection; so does this. One
+    /// frame per event, tag 2, carrying `{"kind":"emit","event":…}`. Nothing
+    /// is sent back: this is a listener, and a listener that also talks is a
+    /// second client competing with the first for one identity.
+    pub fn follow(socket: &Path, on: &mut dyn FnMut(&str)) {
+        // Never start a node to listen to it. Bringing one up is a decision a
+        // call makes; a background listener that spawned a daemon would start
+        // somebody's mesh because a page happened to be open.
+        let Ok(mut stream) = open(socket) else { return };
+        let hello = br#"{"cmd":"__subscribe_events","args":{}}"#;
+        let len = (hello.len() as u32) + 1;
+        if stream
+            .write_all(&len.to_be_bytes())
+            .and_then(|_| stream.write_all(&[0u8]))
+            .and_then(|_| stream.write_all(hello))
+            .and_then(|_| stream.flush())
+            .is_err()
+        {
+            return;
+        }
+        loop {
+            let mut head = [0u8; 4];
+            if stream.read_exact(&mut head).is_err() {
+                return;
+            }
+            let len = u32::from_be_bytes(head) as usize;
+            if len == 0 || len > 64 * 1024 * 1024 {
+                return;
+            }
+            let mut body = vec![0u8; len];
+            if stream.read_exact(&mut body).is_err() {
+                return;
+            }
+            // Tag 0 is the subscribe ack; tag 2 is an event. Anything else on
+            // this connection is not ours to interpret.
+            if body[0] != 2 {
+                continue;
+            }
+            let Ok(text) = String::from_utf8(body[1..].to_vec()) else {
+                return;
+            };
+            if let Some(super::V::Text(event)) = super::from_json(&text)
+                .as_ref()
+                .and_then(|v| super::at(v, "event"))
+            {
+                on(&event);
+            }
+        }
+    }
+
     /// The bytes a request becomes, so the framing is checkable without a node.
     #[cfg(test)]
     pub fn frame(payload: &str) -> Vec<u8> {
@@ -1164,47 +1294,6 @@ mod tests {
         assert_eq!(at(&row, "label"), Some(text("ada")));
         let row = peer_row(&map(&[]));
         assert_eq!(at(&row, "label"), Some(text("unknown")));
-    }
-
-    #[test]
-    fn a_fingerprint_moves_on_change_and_not_on_asking() {
-        let a = vec![peer_row(&map(&[
-            ("device_id", text("n1")),
-            ("status", text("active")),
-        ]))];
-        let b = vec![peer_row(&map(&[
-            ("device_id", text("n1")),
-            ("status", text("active")),
-        ]))];
-        assert_eq!(
-            fingerprint(&a),
-            fingerprint(&b),
-            "asking twice is not a change"
-        );
-        let c = vec![peer_row(&map(&[
-            ("device_id", text("n1")),
-            ("status", text("offline")),
-        ]))];
-        assert_ne!(
-            fingerprint(&a),
-            fingerprint(&c),
-            "presence moving IS a change"
-        );
-        let d = vec![
-            peer_row(&map(&[
-                ("device_id", text("n1")),
-                ("status", text("active")),
-            ])),
-            peer_row(&map(&[
-                ("device_id", text("n2")),
-                ("status", text("active")),
-            ])),
-        ];
-        assert_ne!(
-            fingerprint(&a),
-            fingerprint(&d),
-            "a peer arriving IS a change"
-        );
     }
 
     #[test]
@@ -1400,10 +1489,6 @@ mod tests {
         for read in ["peers", "networks", "published", "nearby"] {
             assert_eq!(s.dispatch(read, &[]), Ok(V::List(vec![])), "{}", read);
         }
-        // The first ask sets the baseline; asking again with nothing there
-        // must not move it, or every poll would re-render every page.
-        let first = s.dispatch("revision", &[]).expect("a read answers");
-        assert_eq!(s.dispatch("revision", &[]), Ok(first));
         // `enter` is called from a `start` stack: a fault there is a program
         // that will not start at all, which is how one absent daemon took a
         // whole site down.

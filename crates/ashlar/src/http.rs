@@ -1641,6 +1641,13 @@ pub fn serve_with_liveness(
                     eprintln!("spawned task failed: {}", fault);
                 }
             }
+            // A worker pushed (§9.10): a collection changed with no call to
+            // notice it. Draining here is what makes a foreign collection as
+            // live as state — the loop is already awake for sockets, so the
+            // page follows the co-process rather than a schedule.
+            for (space, shape) in ev.foreign.take_changed() {
+                ev.foreign_changed(&space, &shape);
+            }
             // Instances dirtied outside an event (schedules, spawned
             // tasks) re-render and broadcast.
             if !ev.dirty_instances.is_empty() {

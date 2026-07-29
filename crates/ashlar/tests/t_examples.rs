@@ -1265,7 +1265,32 @@ mod fake_node {
     pub struct Fake {
         pub state: Arc<Mutex<State>>,
         pub socket: std::path::PathBuf,
+        /// Connections that asked to be told when something moves. The real
+        /// node holds these for its GUI; the worker is one more subscriber.
+        watchers: Arc<Mutex<Vec<std::os::unix::net::UnixStream>>>,
         stop: Arc<AtomicBool>,
+    }
+
+    impl Fake {
+        /// Say the session moved, the way the node does when presence
+        /// changes. Nothing polls: this is what the page follows.
+        pub fn announce(&self, event: &str) {
+            let body = to_json(&map(&[
+                ("kind", text("emit")),
+                ("event", text(event)),
+                ("payload", V::Map(BTreeMap::new())),
+            ]));
+            let bytes = body.as_bytes();
+            let len = (bytes.len() as u32) + 1;
+            let mut held = self.watchers.lock().unwrap();
+            held.retain_mut(|w| {
+                w.write_all(&len.to_be_bytes())
+                    .and_then(|_| w.write_all(&[2u8]))
+                    .and_then(|_| w.write_all(bytes))
+                    .and_then(|_| w.flush())
+                    .is_ok()
+            });
+        }
     }
 
     impl Drop for Fake {
@@ -1290,7 +1315,9 @@ mod fake_node {
         listener.set_nonblocking(true).unwrap();
         let state = Arc::new(Mutex::new(State::default()));
         let stop = Arc::new(AtomicBool::new(false));
-        let (s, t) = (state.clone(), stop.clone());
+        let watchers: Arc<Mutex<Vec<std::os::unix::net::UnixStream>>> =
+            Arc::new(Mutex::new(Vec::new()));
+        let (s, t, w) = (state.clone(), stop.clone(), watchers.clone());
         std::thread::spawn(move || {
             while !t.load(Ordering::Relaxed) {
                 match listener.accept() {
@@ -1299,14 +1326,29 @@ mod fake_node {
                         let Some(payload) = read_frame(&mut stream) else {
                             continue;
                         };
-                        let reply = to_json(&handle(&s, &payload));
-                        let bytes = reply.as_bytes();
-                        let len = (bytes.len() as u32) + 1;
-                        let _ = stream
-                            .write_all(&len.to_be_bytes())
-                            .and_then(|_| stream.write_all(&[0u8]))
-                            .and_then(|_| stream.write_all(bytes))
-                            .and_then(|_| stream.flush());
+                        let ack = |stream: &mut std::os::unix::net::UnixStream, body: String| {
+                            let bytes = body.as_bytes();
+                            let len = (bytes.len() as u32) + 1;
+                            let _ = stream
+                                .write_all(&len.to_be_bytes())
+                                .and_then(|_| stream.write_all(&[0u8]))
+                                .and_then(|_| stream.write_all(bytes))
+                                .and_then(|_| stream.flush());
+                        };
+                        // A subscriber keeps its connection: the node streams
+                        // events down it until one side goes away.
+                        if matches!(
+                            ashlar::meshd::at(&from_json(&payload).unwrap_or(V::None), "cmd"),
+                            Some(V::Text(ref c)) if c == "__subscribe_events"
+                        ) {
+                            ack(
+                                &mut stream,
+                                to_json(&map(&[("ok", V::Bool(true)), ("result", V::None)])),
+                            );
+                            w.lock().unwrap().push(stream);
+                            continue;
+                        }
+                        ack(&mut stream, to_json(&handle(&s, &payload)));
                     }
                     Err(_) => std::thread::sleep(std::time::Duration::from_millis(5)),
                 }
@@ -1315,6 +1357,7 @@ mod fake_node {
         Fake {
             state,
             socket,
+            watchers,
             stop,
         }
     }
@@ -1564,11 +1607,16 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
         // must survive that difference.
         st.sites = vec![("n1-7F3A2".to_string(), "ada's pad".to_string(), 8080)];
     }
+    // …and the node says so, down the connection it holds open. Nothing in
+    // this program polls: the worker is subscribed, the push names the
+    // collection, and every view that read the roster is dirtied by it.
+    node.announce("allmystuff://session");
 
-    // Nobody polled from the browser and nobody clicked. The schedule in the
-    // vendored library noticed the roster's revision move, the `updates`
-    // annotation marked the collection, and every view that read it
-    // re-rendered — server-driven, over the socket (§9.3, §9.10).
+    // Nobody polled — not the browser, not the program. The node pushed, the
+    // worker named the collection, and every view that read it re-rendered
+    // and patched over the socket (§9.3, §9.10). The library used to carry a
+    // three-second schedule for this, which was both late and, on a quiet
+    // mesh, entirely wasted work.
     let patch = ws_expect(&mut ws, "ada", 8);
     assert!(patch.contains("grace"), "the whole roster patches, not one row: {}", patch);
     assert!(
