@@ -29,6 +29,7 @@ mod cli {
         ashlar vendor <source> [path]\n  \
         ashlar foreign check [space] [path]\n  \
         ashlar mesh [path]\n  \
+        ashlar mesh install\n  \
         ashlar mesh worker [socket]\n";
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -54,6 +55,7 @@ mod cli {
         Vendor { source: String, path: String },
         ForeignCheck { space: Option<String>, path: String },
         Mesh { path: String },
+        MeshInstall,
         MeshWorker { socket: Option<String> },
     }
 
@@ -297,6 +299,12 @@ mod cli {
                 // control sockets the mesh daemons already expose. It is a
                 // real command all the same, so a person can drive it by hand
                 // to see exactly what a site sees.
+                if rest.first().map(String::as_str) == Some("install") {
+                    if rest.len() > 1 {
+                        return Err("`mesh install` takes no arguments".to_string());
+                    }
+                    return Ok(Cmd::MeshInstall);
+                }
                 if rest.first().map(String::as_str) == Some("worker") {
                     if rest.len() > 2 {
                         return Err("`mesh worker` takes at most a socket to speak to".to_string());
@@ -369,6 +377,7 @@ mod cli {
             Cmd::Fmt { path, check_only } => run_fmt(&path, check_only),
             Cmd::Run { path, part, port, mesh } => run_serve(&path, part, port, mesh),
             Cmd::Mesh { path } => run_mesh(&path),
+            Cmd::MeshInstall => run_mesh_install(),
             Cmd::MeshWorker { socket } => ashlar::meshd::run(socket.map(PathBuf::from)),
             Cmd::Rename { target, new_name, path, plan_only } => {
                 run_refactor(&path, plan_only, |srcs| plan_rename(srcs, &target, &new_name))
@@ -1016,6 +1025,54 @@ mod cli {
         }
     }
 
+    /// `ashlar mesh install` (§9.10): bring the mesh to a machine that has
+    /// none, by running the installer its makers publish.
+    ///
+    /// A command somebody types, never something `run` does for them. It
+    /// fetches a script and executes it — the ordinary shape of an install,
+    /// and not a thing a server should do because a page was opened. So it
+    /// prints what it will run, first, every time.
+    fn run_mesh_install() -> i32 {
+        if ashlar::meshd::node_answers() {
+            println!("a mesh node is already answering on this machine.");
+            println!("`ashlar mesh` says what it can do.");
+            return 0;
+        }
+        let argv = ashlar::meshd::install_command();
+        println!("running the AllMyStuff installer:");
+        // Quote the script so the line is one somebody can paste back.
+        println!(
+            "  {} {}",
+            argv[..argv.len() - 1].join(" "),
+            argv.last().map(|a| format!("'{}'", a)).unwrap_or_default()
+        );
+        let ran = std::process::Command::new(&argv[0]).args(&argv[1..]).status();
+        match ran {
+            Ok(status) if status.success() => {
+                if ashlar::meshd::node_answers() {
+                    println!("the mesh is here. `ashlar run --mesh` publishes a site to it.");
+                    0
+                } else {
+                    // Installed but not running is the ordinary end state: the
+                    // node starts with the app, or with the next call that
+                    // needs it. Saying so beats claiming failure.
+                    println!("installed. The node starts with the app, or with the first call that needs it.");
+                    0
+                }
+            }
+            Ok(status) => {
+                eprintln!("the installer exited with {}.", status);
+                eprintln!("Install AllMyStuff by hand, or set ASHLAR_MESH_NODE to a node binary.");
+                1
+            }
+            Err(e) => {
+                eprintln!("could not run `{}`: {}", argv[0], e);
+                eprintln!("Install AllMyStuff by hand, or set ASHLAR_MESH_NODE to a node binary.");
+                1
+            }
+        }
+    }
+
     /// `ashlar foreign check [space]` (§9.10, ADR-0017): prove every declared
     /// foreign name is actually reachable — dlsym each native symbol, or make
     /// the worker speak the protocol — so an unreachable capability is a
@@ -1454,6 +1511,17 @@ mod cli {
             assert_eq!(
                 parse(&args(&["mesh", "proj"])).unwrap(),
                 Cmd::Mesh { path: "proj".to_string() }
+            );
+            // `install` and `worker` are the two words that are not a path.
+            assert_eq!(parse(&args(&["mesh", "install"])).unwrap(), Cmd::MeshInstall);
+            assert!(parse(&args(&["mesh", "install", "proj"])).is_err());
+            assert_eq!(
+                parse(&args(&["mesh", "worker"])).unwrap(),
+                Cmd::MeshWorker { socket: None }
+            );
+            assert_eq!(
+                parse(&args(&["mesh", "worker", "/tmp/n.sock"])).unwrap(),
+                Cmd::MeshWorker { socket: Some("/tmp/n.sock".to_string()) }
             );
         }
 

@@ -769,7 +769,8 @@ co-process is this toolchain: `mesh` — who else is on the private network this
 machine joined, what they say, and the sites they serve. `ashlar mesh worker` speaks the
 control socket the mesh already exposes to its own clients. `ashlar run --mesh` publishes
 the port it is serving through it, reaching that network and nobody else;
-`ashlar mesh` says what it answers.
+`ashlar mesh` says what it answers, and `ashlar mesh install` brings one to a
+machine with none.
 
 A foreign call may name a reactive collection, so a store behind the boundary
 is live without leaving the language:
@@ -883,8 +884,7 @@ blast radius from the manifest, applies atomically or not at all — refusing wi
 a reason if the radius cannot be fully computed — leaves no stale reference
 behind, and reverses to the same program, though not the same bytes: `rename` and `rekind` reverse byte-identically, while
 `move` adds the `use` lines both sides need and never removes one, so reversing
-it returns the same program with those lines present (ADR-0018). Every added line appears in the radius, and `radius` answers "what
-would this touch" without touching it.
+it returns the same program with those lines present (ADR-0018). Every added line appears in the radius.
 
 Adding a `use` has no command and the widest reach of any edit: it can
 resequence composition order downstream (§3), so it is reported, not commanded. Against the previous build's manifest, an edit that resequences

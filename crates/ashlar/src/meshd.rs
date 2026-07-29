@@ -897,6 +897,47 @@ pub fn bring_up() -> Vec<String> {
     vec!["allmystuff-serve".to_string()]
 }
 
+/// Where the mesh comes from when the machine has none: the vendor's own
+/// installer, run verbatim.
+///
+/// It downloads verified binaries, puts them on `PATH`, and sets up the mesh
+/// daemon the node runs on — which is more than this toolchain could do
+/// without a TLS client it does not have and a release channel it does not
+/// own. Re-implementing any of that would be a second, worse installer that
+/// goes stale the first time theirs changes.
+pub const INSTALLER: &str = "https://allmystuff.works/install.sh";
+pub const INSTALLER_WINDOWS: &str = "https://allmystuff.works/install.ps1";
+
+/// The command `ashlar mesh install` runs, and prints before running.
+///
+/// This fetches a script and executes it, which is what the vendor documents
+/// and what every install of this kind does. It is therefore a command
+/// somebody types, never something `run` does on their behalf: a site that
+/// silently downloaded and executed a remote script because a page was opened
+/// would be a different and much worse program.
+pub fn install_command() -> Vec<String> {
+    if cfg!(windows) {
+        vec![
+            "powershell".to_string(),
+            "-NoProfile".to_string(),
+            "-Command".to_string(),
+            format!("irm {} | iex", INSTALLER_WINDOWS),
+        ]
+    } else {
+        vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            format!("curl -fsSL {} | sh", INSTALLER),
+        ]
+    }
+}
+
+/// Whether a node answers right now — asked before installing, so a machine
+/// that already has one is told rather than re-installed.
+pub fn node_answers() -> bool {
+    Node::derived().listening()
+}
+
 /// Where the installers put it. The Unix installer writes `/usr/local/bin` or
 /// `~/.local/bin`; the Windows one `%LOCALAPPDATA%\Programs`; the desktop app
 /// carries the node inside its bundle.
@@ -1079,6 +1120,18 @@ impl Node {
     pub fn set_network(&self, network: &str) {
         if let Ok(mut n) = self.network.lock() {
             *n = network.to_string();
+        }
+    }
+
+    /// Is anything listening? Asked without starting one — the question is
+    /// whether this machine HAS a mesh, and spawning a daemon to answer it
+    /// would make every asking true.
+    pub fn listening(&self) -> bool {
+        match &self.socket {
+            Some(path) => Node::at(path.clone())
+                .ask("mesh_identity", V::Map(BTreeMap::new()))
+                .is_ok(),
+            None => false,
         }
     }
 
@@ -1292,9 +1345,10 @@ mod wire {
             .spawn();
         if spawned.is_err() {
             let why = format!(
-                "no mesh node on this machine: could not start `{}`. Install \
-                 AllMyStuff, set ASHLAR_MESH_NODE to the node binary, or bind \
-                 the `mesh` space in foreign.json to something else.",
+                "no mesh node on this machine: could not start `{}`. Run \
+                 `ashlar mesh install` to bring one, set ASHLAR_MESH_NODE to a \
+                 node binary, or bind the `mesh` space in foreign.json to \
+                 something else.",
                 binary
             );
             remember(&why);
@@ -1679,6 +1733,23 @@ mod tests {
         assert_eq!(canonical("aaa-11111"), "aaa");
         assert_eq!(canonical("aaa"), "aaa");
         assert_eq!(canonical(""), "");
+    }
+
+    #[test]
+    fn installing_runs_what_the_mesh_publishes_and_nothing_of_ours() {
+        // A second, worse installer is the temptation here: fetch a release,
+        // check a hash, put it somewhere. Theirs already does that, sets up
+        // the daemon the node needs, and changes without asking us.
+        let argv = install_command();
+        let line = argv.join(" ");
+        assert!(line.contains("allmystuff.works/install"), "{}", line);
+        if cfg!(windows) {
+            assert_eq!(argv[0], "powershell");
+            assert!(line.contains("install.ps1"), "{}", line);
+        } else {
+            assert_eq!(argv[0], "sh");
+            assert!(line.contains("install.sh"), "{}", line);
+        }
     }
 
     #[test]
