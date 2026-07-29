@@ -1260,6 +1260,8 @@ mod fake_node {
         pub minted: Vec<String>,
         /// Every token this node was asked to fetch.
         pub fetched: Vec<String>,
+        /// Where the last registered download sink writes.
+        pub landed: String,
         /// `room|text` for every line this node was asked to transmit.
         pub sent: Vec<String>,
         /// Every command this node was asked to run. The rename regression is
@@ -1402,7 +1404,39 @@ mod fake_node {
                             w.lock().unwrap().push(stream);
                             continue;
                         }
-                        ack(&mut stream, to_json(&handle(&s, &payload)));
+                        let answered = handle(&s, &payload);
+                        // A fetch's chunks stream to disk and never reach a
+                        // poll queue; the node says it landed with an event.
+                        let finished = matches!(
+                            ashlar::meshd::at(&from_json(&payload).unwrap_or(V::None), "cmd"),
+                            Some(V::Text(ref c)) if c == "file_send"
+                        );
+                        ack(&mut stream, to_json(&answered));
+                        if finished {
+                            let landed = s.lock().unwrap().landed.clone();
+                            let body = to_json(&map(&[
+                                ("kind", text("emit")),
+                                ("event", text("allmystuff://file-saved")),
+                                (
+                                    "payload",
+                                    map(&[
+                                        ("route", text("route-1")),
+                                        ("req", V::Number(1.0)),
+                                        ("path", text(&landed)),
+                                    ]),
+                                ),
+                            ]));
+                            let bytes = body.as_bytes();
+                            let len = (bytes.len() as u32) + 1;
+                            let mut held = w.lock().unwrap();
+                            held.retain_mut(|c| {
+                                c.write_all(&len.to_be_bytes())
+                                    .and_then(|_| c.write_all(&[2u8]))
+                                    .and_then(|_| c.write_all(bytes))
+                                    .and_then(|_| c.flush())
+                                    .is_ok()
+                            });
+                        }
                     }
                     Err(_) => std::thread::sleep(std::time::Duration::from_millis(5)),
                 }
@@ -1550,7 +1584,8 @@ mod fake_node {
                     .join(format!("ashlar_fetched_{}", std::process::id()));
                 std::fs::write(&landing, b"hi
 ").unwrap();
-                text(&landing.to_string_lossy())
+                st.landed = landing.to_string_lossy().into_owned();
+                text(&st.landed)
             }
             "file_send" => {
                 st.fetched.push(
@@ -1562,21 +1597,6 @@ mod fake_node {
                         .unwrap_or_default(),
                 );
                 V::None
-            }
-            // One frame, `[u32 le len][json]`, saying the transfer ended.
-            "file_poll" => {
-                let frame = to_json(&map(&[
-                    ("kind", text("chunk")),
-                    ("req", V::Number(1.0)),
-                    ("eof", V::Bool(true)),
-                ]));
-                let mut bytes: Vec<V> = (frame.len() as u32)
-                    .to_le_bytes()
-                    .iter()
-                    .map(|b| V::Number(*b as f64))
-                    .collect();
-                bytes.extend(frame.bytes().map(|b| V::Number(b as f64)));
-                V::List(bytes)
             }
             "site_mappings" => V::List(vec![]),
             // The node binds a local port and proxies it over the mesh; the

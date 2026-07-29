@@ -39,7 +39,7 @@
 //! whose node was closed, uninstalled, or (WSL) on the other side of the
 //! kernel boundary.
 
-use crate::eval::{from_json, to_json, V};
+use crate::eval::{from_json, to_json, to_text, V};
 use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
@@ -534,9 +534,17 @@ impl Session {
             .ask("mesh_identity", V::Map(BTreeMap::new()))
             .map(|v| field(&v, "device_id"))
             .unwrap_or_default();
+        // The route runs FROM the source TO the sink, and the source is an
+        // endpoint handle, not a bare node: `<peer>:shared` is what marks the
+        // lane fetch-only, and the node checks that the fetcher is the route's
+        // `to`. Opening it the other way round yields a route that exists and
+        // refuses every request on it.
         let mut open = BTreeMap::new();
-        open.insert("from".to_string(), V::Text(me));
-        open.insert("to".to_string(), V::Text(peer.to_string()));
+        open.insert(
+            "from".to_string(),
+            V::Text(format!("{}:shared", self.node.addressable(peer))),
+        );
+        open.insert("to".to_string(), V::Text(me));
         open.insert("media".to_string(), V::Text("shared".to_string()));
         let route = match self.node.ask("connect_route", V::Map(open))? {
             V::Text(id) => id,
@@ -547,10 +555,6 @@ impl Session {
                 "the node opened no route to that peer.".to_string(),
             ));
         }
-        let mut watch = BTreeMap::new();
-        watch.insert("route_id".to_string(), V::Text(route.clone()));
-        let _ = self.node.ask("file_watch", V::Map(watch));
-
         // The sink is registered BEFORE the request, so the first chunk
         // cannot race it — the node's own comment, and its own ordering.
         let req = 1.0;
@@ -558,7 +562,7 @@ impl Session {
         sink.insert("route_id".to_string(), V::Text(route.clone()));
         sink.insert("req".to_string(), V::Number(req));
         sink.insert("name".to_string(), V::Text(name.to_string()));
-        let landed = as_text(&self.node.ask("file_download", V::Map(sink))?);
+        let _landed = as_text(&self.node.ask("file_download", V::Map(sink))?);
 
         let mut event = BTreeMap::new();
         event.insert("kind".to_string(), V::Text("fetch".to_string()));
@@ -567,41 +571,26 @@ impl Session {
         let mut send = BTreeMap::new();
         send.insert("route_id".to_string(), V::Text(route.clone()));
         send.insert("event".to_string(), V::Map(event));
-        self.node.ask("file_send", V::Map(send))?;
+        // A route is offered, then accepted: it exists before it is usable,
+        // and the node says so rather than queueing. Ask again until it takes.
+        let mut asked = Err(Trouble::Refused("never asked".to_string()));
+        for _ in 0..100 {
+            asked = self.node.ask("file_send", V::Map(send.clone()));
+            match &asked {
+                Err(Trouble::Refused(why)) if why.contains("active") => {
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+                _ => break,
+            }
+        }
+        asked?;
 
-        let url = self.drain(&route, &landed, name)?;
+        let url = self.node.await_landing(&route, req, name)?;
         let mut close = BTreeMap::new();
         close.insert("route_id".to_string(), V::Text(route));
         let _ = self.node.ask("disconnect_route", V::Map(close));
         self.node.fetched(peer, token, &url);
         Ok(V::Text(url))
-    }
-
-    /// Drive the transfer to its end, then put the bytes where the site can
-    /// serve them. Polling is the node's own shape here — it hands a window
-    /// its buffered frames — and the file is done when the host says `eof`
-    /// or refuses.
-    fn drain(&self, route: &str, landed: &str, name: &str) -> Result<String, Trouble> {
-        let mut args = BTreeMap::new();
-        args.insert("route_id".to_string(), V::Text(route.to_string()));
-        for _ in 0..600 {
-            let frames = self.node.ask("file_poll", V::Map(args.clone()))?;
-            for frame in file_frames(&frames) {
-                match field(&frame, "kind").as_str() {
-                    "err" => return Err(Trouble::Refused(field(&frame, "reason"))),
-                    "chunk" if matches!(at(&frame, "eof"), Some(V::Bool(true))) => {
-                        return place_under_assets(landed, name)
-                            .map_err(Trouble::Refused);
-                    }
-                    _ => {}
-                }
-            }
-            std::thread::sleep(std::time::Duration::from_millis(50));
-        }
-        Err(Trouble::Refused(format!(
-            "`{}` never finished arriving.",
-            name
-        )))
     }
 
     /// The roster's ids, which are the room's members.
@@ -824,7 +813,7 @@ pub fn file_frames(polled: &V) -> Vec<V> {
     frames_from_bytes(text.as_bytes())
 }
 
-fn frames_from_bytes(bytes: &[u8]) -> Vec<V> {
+pub fn frames_from_bytes(bytes: &[u8]) -> Vec<V> {
     let mut out = Vec::new();
     let mut at = 0usize;
     while at + 4 <= bytes.len() {
@@ -1279,6 +1268,10 @@ pub struct Node {
     /// What the room is offering, keyed by `peer|token` so a member's
     /// re-statement replaces its own entries and nobody else's.
     offers: std::sync::Arc<std::sync::Mutex<BTreeMap<String, Offer>>>,
+    /// Finished transfers, keyed `route|req`. A fetch's chunks stream
+    /// straight to disk and never reach a poll queue, so the node says it
+    /// landed the only way it can: an event, on the stream already open.
+    saved: std::sync::Arc<std::sync::Mutex<BTreeMap<String, Result<String, String>>>>,
 }
 
 impl Node {
@@ -1289,6 +1282,7 @@ impl Node {
             network: Node::area(),
             heard: Node::log(),
             offers: Node::empty_shelf(),
+            saved: Node::landings(),
         }
     }
 
@@ -1299,7 +1293,12 @@ impl Node {
             network: Node::area(),
             heard: Node::log(),
             offers: Node::empty_shelf(),
+            saved: Node::landings(),
         }
+    }
+
+    fn landings() -> std::sync::Arc<std::sync::Mutex<BTreeMap<String, Result<String, String>>>> {
+        std::sync::Arc::new(std::sync::Mutex::new(BTreeMap::new()))
     }
 
     fn empty_shelf() -> std::sync::Arc<std::sync::Mutex<BTreeMap<String, Offer>>> {
@@ -1337,6 +1336,7 @@ impl Node {
             network: self.network.clone(),
             heard: self.heard.clone(),
             offers: self.offers.clone(),
+            saved: self.saved.clone(),
         };
         let socket = self.socket.clone().expect("checked");
         std::thread::spawn(move || {
@@ -1362,6 +1362,23 @@ impl Node {
                     "allmystuff://room" => {
                         if let Some(shape) = node.remember(payload) {
                             let _ = say(&out, &changed(shape));
+                        }
+                    }
+                    // A fetch finished (or failed). The chunks went to disk
+                    // without passing through any queue, so this event is the
+                    // only place the outcome exists.
+                    "allmystuff://file-saved" => {
+                        let key = format!(
+                            "{}|{}",
+                            field(payload, "route"),
+                            field(payload, "req")
+                        );
+                        let outcome = match at(payload, "error") {
+                            Some(V::Text(why)) if !why.is_empty() => Err(why),
+                            _ => Ok(field(payload, "path")),
+                        };
+                        if let Ok(mut done) = node.saved.lock() {
+                            done.insert(key, outcome);
                         }
                     }
                     _ => {}
@@ -1447,6 +1464,30 @@ impl Node {
         }
     }
 
+    /// Wait for the node to say where a fetch landed, then put the bytes
+    /// where the site can serve them.
+    ///
+    /// Chunks stream straight to disk — `feed_download` consumes them and
+    /// never queues them — so there is nothing to poll for. The outcome
+    /// arrives as an event on the stream this worker already follows.
+    fn await_landing(&self, route: &str, req: f64, name: &str) -> Result<String, Trouble> {
+        let key = format!("{}|{}", route, to_text(&V::Number(req)));
+        for _ in 0..600 {
+            let outcome = self.saved.lock().ok().and_then(|mut d| d.remove(&key));
+            match outcome {
+                Some(Ok(landed)) => {
+                    return place_under_assets(&landed, name).map_err(Trouble::Refused)
+                }
+                Some(Err(why)) => return Err(Trouble::Refused(why)),
+                None => std::thread::sleep(std::time::Duration::from_millis(50)),
+            }
+        }
+        Err(Trouble::Refused(format!(
+            "`{}` never finished arriving.",
+            name
+        )))
+    }
+
     /// Mark one offer openable, once its bytes are here.
     fn fetched(&self, peer: &str, token: &str, url: &str) {
         if let Ok(mut shelf) = self.offers.lock() {
@@ -1489,6 +1530,33 @@ impl Node {
             }
             _ => None,
         }
+    }
+
+    /// A peer's id in the form a ROUTE needs: the display form,
+    /// `pubkey-SUFFIX`.
+    ///
+    /// This distinction is not cosmetic and it fails silently, which is the
+    /// worst combination. The roster and room messages carry bare pubkeys;
+    /// presence carries the display form. Open a route whose endpoint is the
+    /// bare form and the node reports it ACTIVE, accepts the fetch, and
+    /// answers nothing — ever. Only presence knows the suffix, so this asks
+    /// presence and falls back to what it was given.
+    fn addressable(&self, peer: &str) -> String {
+        let want = canonical(peer);
+        if let Some(V::List(peers)) = at(
+            &self
+                .ask("session_snapshot", V::Map(BTreeMap::new()))
+                .unwrap_or(V::None),
+            "peers",
+        ) {
+            for p in &peers {
+                let node = field(p, "node");
+                if canonical(&node) == want && node.contains('-') {
+                    return node;
+                }
+            }
+        }
+        peer.to_string()
     }
 
     /// What to call whoever sent this, in a sentence a person reads: the name
@@ -1547,7 +1615,14 @@ impl Node {
                 "no home directory here, so there is no node socket to find.".to_string(),
             ));
         };
-        let answer = wire::round_trip(socket, &payload, self.start.as_deref())?;
+        let (tag, body) = wire::round_trip(socket, &payload, self.start.as_deref())?;
+        if tag != 0 {
+            return Err(Trouble::Refused(format!(
+                "the node answered `{}` with a raw batch, not JSON",
+                cmd
+            )));
+        }
+        let answer = String::from_utf8_lossy(&body).to_string();
         let Some(value) = from_json(&answer) else {
             return Err(Trouble::Refused(format!(
                 "the node's answer to `{}` was not JSON",
@@ -1560,6 +1635,32 @@ impl Node {
         Err(Trouble::Refused(match at(&value, "error") {
             Some(V::Text(e)) => e,
             _ => format!("the node refused `{}` without saying why", cmd),
+        }))
+    }
+}
+
+impl Node {
+    /// Ask for a raw batch: the `*_poll` shape, which answers with framed
+    /// bytes rather than JSON so a media batch is not re-encoded on its way
+    /// through. An error still arrives as JSON, and is raised as one.
+    pub fn ask_bytes(&self, cmd: &str, args: V) -> Result<Vec<u8>, Trouble> {
+        let mut body = BTreeMap::new();
+        body.insert("cmd".to_string(), V::Text(cmd.to_string()));
+        body.insert("args".to_string(), args);
+        let payload = to_json(&V::Map(body));
+        let Some(socket) = &self.socket else {
+            return Err(Trouble::Absent(
+                "no home directory here, so there is no node socket to find.".to_string(),
+            ));
+        };
+        let (tag, raw) = wire::round_trip(socket, &payload, self.start.as_deref())?;
+        if tag == 1 {
+            return Ok(raw);
+        }
+        let text = String::from_utf8_lossy(&raw).to_string();
+        Err(Trouble::Refused(match from_json(&text).as_ref().and_then(|v| at(v, "error")) {
+            Some(V::Text(e)) => e,
+            _ => format!("the node answered `{}` with neither a batch nor a reason", cmd),
         }))
     }
 }
@@ -1703,7 +1804,7 @@ mod wire {
         socket: &Path,
         payload: &str,
         run: Option<&[String]>,
-    ) -> Result<String, Trouble> {
+    ) -> Result<(u8, Vec<u8>), Trouble> {
         let binary = match run {
             Some(r) => r.join(" "),
             None => socket.display().to_string(),
@@ -1738,14 +1839,11 @@ mod wire {
         stream
             .read_exact(&mut body)
             .map_err(|e| Trouble::Refused(format!("{}'s answer was truncated: {}", binary, e)))?;
-        if body[0] != 0 {
-            return Err(Trouble::Refused(format!(
-                "{} answered with a non-JSON frame",
-                binary
-            )));
-        }
-        String::from_utf8(body[1..].to_vec())
-            .map_err(|_| Trouble::Refused(format!("{}'s answer was not UTF-8", binary)))
+        // Tag 0 is JSON; tag 1 is a raw batch — what every `*_poll` answers,
+        // kept binary rather than re-encoded, which is the node's own reason
+        // for having two tags at all. Refusing tag 1 here made every poll
+        // look like a protocol break.
+        Ok((body[0], body[1..].to_vec()))
     }
 
     /// Subscribe to the node's event stream and call `on` for each event
