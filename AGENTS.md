@@ -549,8 +549,7 @@ part Store {
   shared value. Whether a user is in scope is a fact about the call, not the
   declaration, so it is not decidable at build time.
 
-Every state property is reactive, and because views render on the server with
-no client code (§9.4) that reach is universal: any view that read a value
+Every state property is reactive: any view that read a value
 re-renders when it changes — a shared value across every client, a `peruser`
 value only its own user's.
 
@@ -640,11 +639,9 @@ Handlers run in subscription order, and a fault in one is logged without
 stopping the others or failing the publisher — the rule `spawn` follows
 (§9.9): a subscriber is someone else's code.
 
-A socket can die with neither end told and TCP never says so. The runtime
-therefore heartbeats every open socket and sheds a peer that stops answering; a
+The runtime heartbeats every open socket and sheds a peer that stops answering; a
 page missing the beats it is owed marks `<html>` with `data-ash-offline` and
-reconnects when the server returns. Style that attribute: a stale page that
-looks live is the one failure this language will not leave silent.
+reconnects when the server returns. Style that attribute.
 
 ### 9.6 Auth
 
@@ -745,6 +742,7 @@ is `E001`:
 |---|---|---|
 | `native` | `dlopen`, C ABI `char* f(const char* args_json)`; needs a POSIX loader | `library`, `symbols` |
 | `worker` | a co-process speaking JSON Lines on stdin/stdout | `run` |
+| `command` | an ordinary program, run per call: argv in, stdout out | `run`, `args` |
 | `http` | POST to a URL (plaintext; TLS terminates at a proxy) | `url` |
 
 ```json
@@ -753,20 +751,22 @@ is `E001`:
              "symbols": { "lookup": "geo_lookup_v2" } } }
 ```
 
-`symbols` binds an Ashlar name to a differently-spelled export. Every transport carries one envelope: a request is
+`symbols` binds an Ashlar name to a differently-spelled export, and `args`
+does the same for a command: the argv items selecting one name, defaulting to
+the name itself, so `git` + `status` needs no entry. A command's arguments
+follow as text, its stdout is the answer — JSON if it parses, else text — and a
+non-zero exit is a fault carrying its stderr. The other three transports carry one envelope: a request is
 `{"call": name, "args": [...]}`, an answer is a bare value, `{"ok": value}`, or
 `{"error": text}` — the last a fault carrying that message. A `native` library
-may export `ashlar_free(char*)` to take its buffer back. A worker is therefore
-a loop in any language: read a line, decode `call` and `args`, print one JSON
-answer, flush.
+may export `ashlar_free(char*)` to take its buffer back.
 
 Reachability is not a build-time fact, so `ashlar foreign check` proves it on
 demand against the bindings in force, before a request finds out. Foreign calls may block; the
 runtime schedules around them.
 
-One space name derives to a co-process rather than a library, and that
-co-process is this toolchain: `mesh` — who else is on the private network this
-machine joined, what they say, and the sites they serve. `ashlar mesh worker` speaks the
+One space derives to a co-process instead of a library, and it is this
+toolchain: `mesh` — who is on the private network this machine joined, what
+they say, and the sites they serve. `ashlar mesh worker` speaks the
 control socket the mesh already exposes to its own clients. `ashlar run --mesh` publishes
 the port it is serving through it, reaching that network and nobody else;
 `ashlar mesh` says what it answers, and `ashlar mesh install` brings one to a
@@ -844,8 +844,7 @@ JSON object keyed by full property name — `{"site.app.endpoint": "..."}`. One
 with a default is optional; one without is required, and starting without it
 fails before the first request, naming every missing setting and its shape at
 once. A supplied value that does not fit its shape fails the same way. Read a
-setting like any other property; it is immutable, so cannot be assigned. This
-is how a location reaches a program without being written in source (B5). A key
+setting like any other property; it is immutable, so cannot be assigned. A key
 naming no declared setting is
 `E001`, a value of the wrong shape `E006`.
 

@@ -35,6 +35,23 @@ agreeing with the node on both. The Windows half of the socket rides the same
 gate: a named pipe is opened here with `std` alone, and no test creates one,
 because `std` can connect to a named pipe but cannot serve it.
 
+**The `command` transport has a test but no corpus site.** It is driven in
+`t_g` against a real program over real HTTP, which proves the transport. What
+it does not yet prove is the claim it was added for: that reaching a resource
+on the machine is cheap enough that an example prefers it. `examples/ledger`
+still pays a 165-line C-ABI shim and a Rust toolchain for a `select`, and the
+showcase still skips it when `rustc` is missing. Serves **G4, A2**. Proven by:
+`ledger` reaching SQLite without a shim — or, where `sqlite3`'s CLI cannot take
+values, a script small enough that the diff itself is the argument.
+
+**Nothing brings a missing capability.** `check` says a program is not on
+`PATH` and `ashlar mesh install` brings the mesh, but every other space is left
+at "install it yourself". The general form is the same shape: a binding may say
+how to obtain what it names, and one command runs it for whatever is missing —
+without becoming a registry, which G5 forbids on purpose. Serves **G4, G5**.
+Proven by: a project whose capability is absent, made reachable by one command
+that resolves no versions and consults no index.
+
 **Capabilities with no corpus site.** An adversarial read listed ten. Four
 now have one — the directory form of `files`, `log.debug`, `log.warn`, and
 duration units beyond `ms`, all in `examples/ticker`. Still undefended:

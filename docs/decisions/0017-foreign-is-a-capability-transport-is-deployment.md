@@ -189,6 +189,34 @@ dependency. A capability that works on one operating system is not a
 capability, and "the runtime is zero-dependency" was doing the arguing for a
 conclusion that was never true.
 
+### 5c. The floor was too high (2026-07-29)
+
+Three transports, and the cheapest way to reach SQLite was a **165-line C-ABI
+shim** plus a Rust toolchain on the machine that runs the site. That is what
+`examples/ledger` costs, and the showcase script has a branch that skips the
+example when `rustc` is missing. A capability priced like that is one an author
+does not reach for — which makes the boundary a claim rather than a door,
+whatever the ADR says about it.
+
+So a fourth transport: **`command`**. An ordinary program, run once per call,
+argv in and stdout out. No ABI, no envelope, no co-process protocol, nothing to
+write on the far side. `run` names the program, `args` maps an Ashlar name to
+the argv items that select it — the same relationship `symbols` has to an
+export — defaulting to the name itself, so a tool shaped like `git status`
+binds with nothing written at all. Output is JSON if it parses and text
+otherwise; a non-zero exit is a fault carrying stderr, because that is where
+programs put the reason.
+
+What it does not fix is worth stating: `sqlite3`'s CLI has no parameter
+binding, so a WRITE still needs something that can take values — a script of
+its own, which `command` also reaches, at fifteen lines in any language instead
+of a hundred and sixty-five in C ABI. The floor moved; it did not vanish.
+
+`check` proves a command by LOOKING: a path is a file, a bare name is on
+`PATH`. There is no side-effect-free invocation to probe with, because the
+arguments belong to the program — `sqlite3 --version` is safe and
+`rm --version` is a guess about somebody else's CLI.
+
 **A worker may speak first.** The envelope was strictly request/response, so
 `watches`/`updates` could only fire on a call — and a collection that changes
 because something OUTSIDE the program changed has no call to fire on. The mesh
