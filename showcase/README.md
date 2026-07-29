@@ -16,9 +16,10 @@ directory is now just the two launchers.
 ./showcase/serve.ps1         # Windows, or pwsh anywhere
 ```
 
-One command, no arguments. Needs Rust 1.65+; `ledger` additionally needs
-SQLite's development package (`libsqlite3-dev` / `sqlite-devel`) because it links
-the real library. Everything else needs only Rust. It starts all seventeen — each
+One command, no arguments. Needs Rust 1.65+, and Python 3 for the two examples
+that reach a co-process. Nothing else: `ledger` prefers a compiled shim and
+falls back to Python where one cannot be built, so no example needs a
+development package or a second toolchain. It starts all seventeen — each
 on its own port — then tells you to open <http://127.0.0.1:8080>. Ctrl-C stops
 every example at once.
 
@@ -33,17 +34,28 @@ open, or on the other side of a WSL boundary — it serves an empty roster that
 says so and carries the correction, because a machine with no mesh is an
 ordinary machine and not a broken site.
 
-On Windows, sixteen of the seventeen work unchanged. `ledger` reaches SQLite over
-the `native` transport, which needs a POSIX dynamic loader, so its page serves
-but its store faults with that correction; `abacus` is the cross-platform
-foreign example, a Python worker co-process.
+On Windows all seventeen work, which was not true until `ledger` gained its
+second binding: the `native` transport needs a POSIX dynamic loader Windows has
+not got, so there the launcher binds ledger's Python worker instead. Both
+foreign examples are then co-processes, which is the transport that runs
+anywhere.
 
-`ledger` is the one example with a build step: it reaches a real SQLite database
-over the `native` transport, so its shim must compile first. If that fails the
-launcher prints **rustc's actual error** and, when the error names libsqlite3,
-the package to install — then says plainly that the other sixteen are
-unaffected. When it succeeds, the launcher runs `ashlar foreign check` to prove
-the capability is reachable rather than assuming the build implies it.
+`ledger` is the one example with a build step, and it is now optional. It
+reaches a real SQLite database, and it ships two bindings for that one
+capability: a C-ABI shim the launcher compiles where it can, and a Python
+worker using the standard library's SQLite where it cannot. Windows has no
+POSIX dynamic loader, so `native` can never work there; some machines have no
+`rustc`; some have `libsqlite3` but not its development package. In every one
+of those cases the launcher binds the worker instead, says so, and the example
+runs unchanged — same SQL, same shapes, same live board. Where the shim does
+build, the launcher runs `ashlar foreign check` to prove the capability is
+reachable rather than assuming the build implies it.
+
+`abacus` is Python too, and the interpreter answers to different names on
+different machines. The launchers look for `python3`, then `python`, then (on
+Windows) `py`, and rebind the space to whichever they find — the example's own
+`foreign.json` stays the honest default and is never edited. With no Python at
+all, both say so plainly and the other fifteen are unaffected.
 
 Each launcher runs `cargo build --release` before starting anything. That is a
 no-op in a fraction of a second when nothing has changed, and it is deliberate:

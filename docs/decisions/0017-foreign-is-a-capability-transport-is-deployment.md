@@ -234,6 +234,44 @@ worker that never pushes is unaffected, which is why this is an addition to the
 envelope and not a version of it. The cost is one thread per worker and one
 queue; the alternative was every reactive co-process inventing its own schedule.
 
+### 5e. One capability, more than one binding (2026-07-29)
+
+5c said the floor moved and did not vanish. What it missed is that the floor
+was never the only problem: **`native` cannot work at all on a machine with no
+POSIX loader**, and on that machine `examples/ledger` was not expensive, it was
+broken. The corpus shipped a program that could not run on Windows and a
+diagnostic that told the reader to build a shim no loader could ever open —
+with an empty list of places it had looked, because there were none.
+
+Two things follow, and neither is new policy; both are this ADR finally being
+carried out.
+
+**A capability may ship more than one implementation, and choosing between them
+is deployment's.** `ledger` now carries both: the C-ABI shim, which is the
+corpus site `native` exists to defend, and `foreign/ledger.store.py` — the same
+three operations, the same SQL, the same shapes, over `worker`, using the
+SQLite that Python's standard library already has. No compiler, no development
+package, no loader. `data.ash` does not change, the views do not change, and
+the driving suite runs the example BOTH ways: same assertions, same reactive
+patch, one binding file apart. The launchers pick — Windows, no `rustc`, or a
+shim that would not link all land on the worker — and say which one is in force
+and why.
+
+That is what "transport is deployment" was always supposed to buy. Reading it
+as "one capability, one implementation, chosen once" is what left an example
+broken on a whole platform.
+
+**A transport that cannot work here must say so, not look nowhere.** The
+diagnostic is now built by one function over the list of paths tried, so the
+empty list — which is exactly the no-loader case — is a different sentence:
+what this platform lacks, and the three transports that do carry the same
+envelope. Where a shim's own source is sitting beside the library that is
+missing, it is named, because "build the shim" is a shrug until it says which
+one. And a worker that starts and dies now reports the program and its exit
+status: "it closed its output without answering" named neither, and the cause
+it hides most often is a binding naming an interpreter this machine does not
+have under that name.
+
 ### 5d. What the room turned out to cost (2026-07-29)
 
 Four things were wrong on the way to a file crossing between two machines, and

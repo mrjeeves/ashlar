@@ -234,23 +234,40 @@ ordered by the `use` between them.
 
 ## ledger
 
-The datastore is a real **SQLite database file**, reached across the
-`foreign` boundary (§9.10) — the one example that leaves the language for
-its data. `data.ash` names the operations (`record`, `recent`, `total`)
-and shape-checks every returned row against the `Entry` data shape; the
-SQL lives entirely in `foreign/ledger.store.rs`, a std-only Rust `cdylib`
-that links the system `libsqlite3` over the C ABI. SQL is the persistence
-peer of CSS: **named in Ashlar, defined outside it** — no query string and
-no connection string ever appears in source (B5; the shim reads
-`ASHLAR_LEDGER_DB`, a deployment fact). The board reads the ledger with
-`recent` and `total` — both declared `watches Entry` — while `record` is
-`updates Entry`, so the SQLite store is **reactive** (§9.3): an entry added in
-one window (over the socket, or through the `/add` API) patches every open
-board live, running total and all, with no reload. The total is a SQL `SUM`
-in the shim, so the same `foreign` boundary that runs a fetch also carries a
-live database. Because the shim *links* SQLite rather than bundling it, it needs
-the development package — the runtime library most systems already ship is not
-enough for `-l sqlite3`:
+The datastore is a real **SQLite database file**, reached across the `foreign`
+boundary (§9.10) — the one example that leaves the language for its data.
+`data.ash` names the operations (`record`, `recent`, `total`) and shape-checks
+every returned row against the `Entry` data shape; the SQL lives outside
+Ashlar. SQL is the persistence peer of CSS: **named in Ashlar, defined outside
+it** — no query string and no connection string ever appears in source (B5).
+The board reads the ledger with `recent` and `total` — both declared
+`watches Entry` — while `record` is `updates Entry`, so the SQLite store is
+**reactive** (§9.3): an entry added in one window (over the socket, or through
+the `/add` API) patches every open board live, running total and all, with no
+reload. The total is a SQL `SUM` on the far side, so the same `foreign`
+boundary that runs a fetch also carries a live database.
+
+It ships that capability **twice**, and which one answers is deployment's
+(ADR-0017 §5e):
+
+- `foreign/ledger.store.rs` — a std-only Rust `cdylib` linking the system
+  `libsqlite3` over the C ABI. This is the corpus site the `native` transport
+  exists to defend, and the default on a machine that can build it.
+- `foreign/ledger.store.py` — the same three operations, the same SQL, over
+  `worker`, using the SQLite already in Python's standard library. No compiler,
+  no development package, no dynamic loader.
+
+Nothing in `data.ash` or the views knows which one answered, and the driving
+suite runs the example both ways with the same assertions — including the
+reactive patch, because reactivity belongs to the boundary and not to a
+transport. `./showcase/serve.sh` builds the shim where it can and binds the
+worker where it cannot (Windows has no POSIX loader; some machines have no
+`rustc`; some have `libsqlite3` but not its development package), printing
+which is in force and why.
+
+To build the shim by hand you need the development package, because it *links*
+SQLite rather than bundling it — the runtime library most systems already ship
+is not enough for `-l sqlite3`:
 
 ```
 sudo apt install libsqlite3-dev      # Debian/Ubuntu (incl. WSL)
@@ -259,23 +276,16 @@ sudo pacman -S sqlite                # Arch
 # macOS: ships with the Xcode command line tools
 ```
 
-Then build the shim before running:
-
 ```
 rustc --edition 2021 --crate-name ledger_store --crate-type cdylib \
   -l sqlite3 -o examples/ledger/foreign/ledger.store.so \
   examples/ledger/foreign/ledger.store.rs
 ```
 
-Missing it produces `cannot find -lsqlite3` from the linker; `ashlar foreign
-check examples/ledger` confirms the result either way.
-
-The driving test builds it automatically and skips loudly where a Rust
-toolchain or `libsqlite3` is absent — a SQLite integration cannot be tested
-without SQLite — and it drives the reactive path too: a board holding only a
-socket is patched live by another client's write. This delivers reactivity
-for a foreign store (ADR-0014); a `stored` database backend and a Postgres
-client remain the proposed next stages.
+`ashlar foreign check examples/ledger` confirms the result either way, and says
+which binding it proved. This delivers reactivity for a foreign store
+(ADR-0014); a `stored` database backend and a Postgres client remain the
+proposed next stages.
 
 ## abacus
 

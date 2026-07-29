@@ -655,14 +655,11 @@ impl Boundary {
                 Err(e) => return Err(e),
             }
         }
-        Err(format!(
-            "foreign space `{}` has no library. Looked for {}. Build the shim, or bind the space in `foreign.json`.",
+        let source = root.join("foreign").join(format!("{}.rs", space));
+        Err(native_failure(
             space,
-            tried
-                .iter()
-                .map(|p| format!("`{}`", p.display()))
-                .collect::<Vec<_>>()
-                .join(", ")
+            &tried,
+            if source.is_file() { Some(&source) } else { None },
         ))
     }
 
@@ -714,8 +711,14 @@ impl Boundary {
         args: Vec<V>,
     ) -> Result<V, String> {
         if !self.workers.contains_key(space) {
-            let w = spawn_worker(root, run, space, self.changed.clone())
-                .map_err(|e| format!("foreign worker for `{}` could not start: {}", space, e))?;
+            let w = spawn_worker(root, run, space, self.changed.clone()).map_err(|e| {
+                format!(
+                    "foreign worker for `{}` could not start `{}`: {}. Name the program this \
+                     machine actually has in `foreign.json` — how a capability is reached is a \
+                     deployment fact, not source (§9.10).",
+                    space, run[0], e
+                )
+            })?;
             self.workers.insert(space.to_string(), w);
         }
         let request = request_line(name, args);
@@ -727,12 +730,26 @@ impl Boundary {
             Ok(line) => decode(&line, space, name),
             Err(e) => {
                 // The worker died or broke protocol. Reap it so the NEXT call
-                // starts a fresh one — lifecycle, not failover (ADR-0017).
-                if let Some(mut w) = self.workers.remove(space) {
-                    let _ = w.child.kill();
-                    let _ = w.child.wait();
-                }
-                Err(format!("foreign worker for `{}` failed: {}", space, e))
+                // starts a fresh one — lifecycle, not failover (ADR-0017) —
+                // and report what happened TO it. "It closed its output
+                // without answering" is true and useless: the operator needs
+                // to know WHICH program ended and how. The common cause is a
+                // program that is not the one the binding meant — a Windows
+                // `python3` shim that prints to stderr and exits, say — and
+                // its exit status is the only thing that says so.
+                let ended = match self.workers.remove(space) {
+                    Some(mut w) => match settle(&mut w.child) {
+                        Some(status) => format!(" — `{}` {}", run.join(" "), status),
+                        None => format!(" — `{}` closed it while still running", run.join(" ")),
+                    },
+                    None => String::new(),
+                };
+                Err(format!(
+                    "foreign worker for `{}` failed: {}{}. Whatever it printed is in this \
+                     server's stderr; `ashlar foreign check` proves the binding before a \
+                     request finds out.",
+                    space, e, ended
+                ))
             }
         }
     }
@@ -782,6 +799,67 @@ pub fn pushed_collection(line: &str) -> Option<String> {
         },
         _ => None,
     }
+}
+
+/// Why a `native` binding could not be reached, said so it can be acted on.
+///
+/// An EMPTY `tried` means there is nowhere to look: `LIB_EXTS` is empty off
+/// unix, because `native` needs a POSIX dynamic loader and that platform has
+/// none. This used to fall through to the "no library" sentence with an empty
+/// list — "Looked for ." — and then advise building a shim, on the one
+/// platform where no shim could ever be loaded. A correction that cannot be
+/// carried out is not a correction.
+///
+/// `source` is the shim's own source where it is sitting next to the library
+/// that is missing: "build the shim" is a shrug until it says WHICH one.
+pub fn native_failure(space: &str, tried: &[PathBuf], source: Option<&Path>) -> String {
+    if tried.is_empty() {
+        return format!(
+            "foreign space `{}` is bound to the `native` transport, which needs a POSIX dynamic \
+             loader; this platform has none, so there is no library path that would work. Bind \
+             it to `worker`, `command`, or `http` in `foreign.json` — every transport carries \
+             the same envelope, so nothing in the program itself changes.",
+            space
+        );
+    }
+    let where_ = tried
+        .iter()
+        .map(|p| format!("`{}`", p.display()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    match source {
+        Some(src) => format!(
+            "foreign space `{}` has no library. Looked for {}. `{}` is there but not built: \
+             compile it to a `cdylib` at `{}` (it may need link flags of its own), or bind the \
+             space to a `worker` or `command` transport in `foreign.json`.",
+            space,
+            where_,
+            src.display(),
+            tried[0].display()
+        ),
+        None => format!(
+            "foreign space `{}` has no library. Looked for {}. Build the shim, or bind the \
+             space in `foreign.json`.",
+            space, where_
+        ),
+    }
+}
+
+/// What became of a worker whose output just ended. Bounded: a co-process that
+/// closed stdout and kept running must not hang the request that noticed, so
+/// this gives up after a tenth of a second and says so rather than waiting.
+/// Only ever called on the failure path.
+fn settle(child: &mut std::process::Child) -> Option<std::process::ExitStatus> {
+    for _ in 0..10 {
+        match child.try_wait() {
+            Ok(Some(status)) => return Some(status),
+            Ok(None) => std::thread::sleep(std::time::Duration::from_millis(10)),
+            Err(_) => return None,
+        }
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    None
 }
 
 fn spawn_worker(
@@ -1098,7 +1176,13 @@ fn call_command(
         .args(&argv[1..])
         .current_dir(root)
         .output()
-        .map_err(|e| format!("could not run `{}`: {}", argv[0], e))?;
+        .map_err(|e| {
+            format!(
+                "could not run `{}`: {}. Name the program this machine actually has in \
+                 `foreign.json` — how a capability is reached is a deployment fact (§9.10).",
+                argv[0], e
+            )
+        })?;
     if !out.status.success() {
         let said = String::from_utf8_lossy(&out.stderr).trim().to_string();
         return Err(if said.is_empty() {

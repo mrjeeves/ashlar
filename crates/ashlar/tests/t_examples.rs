@@ -1173,6 +1173,89 @@ fn t_examples_ledger_persists_to_sqlite() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The SAME example, the same three names, reached the other way.
+///
+/// `ledger` ships two bindings for one capability, and this is the point of
+/// ADR-0017 rather than a convenience: a machine with no POSIX loader (Windows
+/// has none), no Rust toolchain, or no libsqlite3 development package cannot
+/// reach `native` at all, and on those machines the corpus used to have a
+/// broken example and a diagnostic telling the reader to build a shim that
+/// could not be built. Nothing in `data.ash` changes here. Nothing in the
+/// views changes. Only which transport answers — which is deployment's.
+#[test]
+fn t_examples_ledger_reaches_the_same_sqlite_over_a_worker() {
+    // covers: G4
+    let dir = staged("ledger");
+    if std::process::Command::new("python3").arg("-V").output().is_err() {
+        eprintln!("SKIP: ledger-over-worker needs python3 (the worker's language)");
+        let _ = std::fs::remove_dir_all(&dir);
+        return;
+    }
+    // The database is named in the BINDING, so this test needs no environment
+    // variable and cannot collide with the shim test running beside it — the
+    // location is a deployment fact and the binding file is deployment (B5).
+    let db = dir.join("worker-ledger.db");
+    std::fs::write(
+        dir.join("foreign.json"),
+        format!(
+            "{{ \"ledger.store\": {{ \"via\": \"worker\", \"run\": [\"python3\", \"foreign/ledger.store.py\", \"{}\"] }} }}",
+            db.display()
+        ),
+    )
+    .unwrap();
+
+    let (port, stop, join) = start(dir.clone());
+    let (s1, _, _) = req(port, "POST", "/add", Some("{\"who\":\"ada\",\"note\":\"coffee\",\"amount\":4.5}"), None);
+    assert_eq!(s1, 302, "the add handler redirects back to the board");
+    let (s2, _, _) = req(port, "POST", "/add", Some("{\"who\":\"bob\",\"note\":\"bagels\",\"amount\":6}"), None);
+    assert_eq!(s2, 302);
+
+    let (_, _, page) = req(port, "GET", "/", None, None);
+    assert!(page.contains("ada: coffee ($4.5)"), "row read back from SQLite: {}", page);
+    assert!(page.contains("bob: bagels ($6)"), "row read back from SQLite: {}", page);
+    assert!(page.contains("total: $10.5"), "the SQL SUM crosses the boundary: {}", page);
+    assert!(
+        page.find("bob").unwrap() < page.find("ada").unwrap(),
+        "newest first (ORDER BY id DESC): {}",
+        page
+    );
+
+    // A genuine SQLite file, written by the standard library rather than a
+    // linked C ABI — the same database either binding would have made.
+    let bytes = std::fs::read(&db).expect("the SQLite file exists");
+    assert!(bytes.starts_with(b"SQLite format 3\0"), "a real SQLite database file");
+
+    // Reactivity does not belong to the transport: `record` `updates Entry`
+    // and the board reads it, so a board holding only a socket is patched by
+    // another client's write here exactly as it is over `native`.
+    let page_id = attr_of(&page, "data-ash-page").unwrap();
+    let mut ws = ws_open(port);
+    ws_send(&mut ws, &format!("{{\"page\":\"{}\"}}", page_id));
+    std::thread::sleep(std::time::Duration::from_millis(80));
+    let (s3, _, _) =
+        req(port, "POST", "/add", Some("{\"who\":\"cy\",\"note\":\"tea\",\"amount\":2}"), None);
+    assert_eq!(s3, 302);
+    let patch = ws_expect(&mut ws, "cy: tea ($2)", 10);
+    assert!(
+        patch.contains("total: $12.5"),
+        "the reactive patch re-reads the SQL SUM, not a cached value: {}",
+        patch
+    );
+    drop(ws);
+
+    // Restart: a fresh evaluator and a fresh worker hold none of this, so the
+    // rows surviving proves they were read back from the database.
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+    let (port2, stop2, join2) = start(dir.clone());
+    let (_, _, page2) = req(port2, "GET", "/", None, None);
+    assert!(page2.contains("ada: coffee ($4.5)"), "restart lost the SQLite data: {}", page2);
+    assert!(page2.contains("total: $12.5"), "{}", page2);
+    stop2.store(true, Ordering::Relaxed);
+    join2.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn t_examples_abacus_computes_through_a_python_worker() {
     // The worker transport (ADR-0017): a capability implemented in Python and

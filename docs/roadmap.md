@@ -36,13 +36,13 @@ gate: a named pipe is opened here with `std` alone, and no test creates one,
 because `std` can connect to a named pipe but cannot serve it.
 
 **The `command` transport has a test but no corpus site.** It is driven in
-`t_g` against a real program over real HTTP, which proves the transport. What
-it does not yet prove is the claim it was added for: that reaching a resource
-on the machine is cheap enough that an example prefers it. `examples/ledger`
-still pays a 165-line C-ABI shim and a Rust toolchain for a `select`, and the
-showcase still skips it when `rustc` is missing. Serves **G4, A2**. Proven by:
-`ledger` reaching SQLite without a shim — or, where `sqlite3`'s CLI cannot take
-values, a script small enough that the diff itself is the argument.
+`t_g` against a real program over real HTTP, which proves the transport, and no
+example prefers it. Half of what it was added for has since been paid another
+way: `examples/ledger` now ships a `worker` binding beside its C-ABI shim, so
+no example needs a toolchain to run (ADR-0017 §5e). What is still unproven is
+the cheapest case — a tool already on the machine, reached with no script at
+all. Serves **G4, A2**. Proven by: an example whose capability is an ordinary
+program and whose whole binding is one `run` line.
 
 **Nothing brings a missing capability.** `check` says a program is not on
 `PATH` and `ashlar mesh install` brings the mesh, but every other space is left
