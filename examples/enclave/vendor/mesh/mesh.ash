@@ -58,6 +58,62 @@ foreign peers: () -> [mesh.Peer] watches mesh.Peer
 foreign enter: (network: text, label: text) -> mesh.Here updates mesh.Peer
 foreign networks: () -> [mesh.Network] watches mesh.Peer
 
+// -- Transmitting -------------------------------------------------------------
+//
+// The roster says who is here. This says something TO them. The mesh is the
+// room: everyone holding its id is in it, so there is no host to admit anyone
+// and nothing to be offline. That is why the mesh id is the whole of the
+// secret — a program written with one is a program only its holders can join,
+// and rolling a new one is how a group changes its locks.
+
+// One line somebody said. `from` is the peer id, `who` its name, `at` the
+// millisecond it arrived.
+part Said {
+  from: text
+  who: text
+  text: text
+  at: number
+}
+
+// `say` reaches the people who are here NOW. Nothing stores it for someone
+// who is not — a program that wants history keeps what it heard in a `stored`
+// property, which is its decision and not the mesh's.
+foreign say: (text: text) -> bool updates mesh.Said
+foreign heard: () -> [mesh.Said] watches mesh.Said
+
+// The conversation, live. Classes are the contract with the app's stylesheet
+// (ADR-0010): `mesh-said`, `mesh-said-who`, `mesh-said-text`, `mesh-empty`.
+part talk {
+  view = () => el("div", { class: "mesh-talk" }, lines())
+  lines = () => {
+    let all = heard()
+    if len(all) == 0 {
+      return [el("p", { class: "mesh-empty" }, ["Nothing said yet."])]
+    }
+    return map(all, (s: mesh.Said) => el("div", { class: "mesh-said" }, [
+      el("span", { class: "mesh-said-who" }, [s.who]),
+      el("span", { class: "mesh-said-text" }, [s.text]),
+    ]))
+  }
+}
+
+// A line and a way to send it. The draft is per-instance state, so two open
+// pages type independently; what is SAID goes to everyone.
+part speak {
+  state draft: text = ""
+  view = () => el("form", { class: "mesh-speak", onsubmit: send }, [
+    el("input", { class: "mesh-line", name: "line", value: draft, oninput: typing }, []),
+    el("button", { type: "submit" }, ["say"]),
+  ])
+  typing = (e: std.Event) => {
+    draft = text(e.data.value ?? "")
+  }
+  send = () => {
+    say(draft)
+    draft = ""
+  }
+}
+
 // The app's own mesh. Both values are settings: the name and shape are
 // source, the value is deployment's (§9.12) — so one program can be run on
 // the shared area, on a customer's private one, or on a throwaway for a

@@ -111,6 +111,59 @@ body {
   color: var(--muted);
 }
 
+/* -- what the mesh's members say to each other --------------------------- */
+
+.mesh-talk {
+  display: grid;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.mesh-said {
+  display: flex;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.mesh-said-who {
+  color: var(--muted);
+  font-family: var(--mono, ui-monospace, monospace);
+  font-size: 12px;
+  flex: none;
+  max-width: 12ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mesh-speak {
+  display: flex;
+  gap: 8px;
+}
+
+.mesh-line {
+  flex: 1;
+  padding: 10px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: inherit;
+  font: inherit;
+}
+
+.mesh-speak button {
+  padding: 10px 16px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--panel-2);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
 /* -- the sites browser the `mesh.sites` space renders --------------------- */
 
 .mesh-sites-list {

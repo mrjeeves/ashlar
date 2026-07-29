@@ -119,7 +119,10 @@ boundary — could not start the site at all. It also pins the rule that a
 program joining a mesh never renames the machine it runs on. The first drives
 the worker PUSH (§9.10): the fake node streams an event down the connection it
 holds open, and the page patches with nothing in the program polling — the
-`{"changed": …}` line's own shape is pinned in `foreign.rs`.
+`{"changed": …}` line's own shape is pinned in `foreign.rs`. It drives
+transmitting the same way: a peer's line arrives as a push and patches, a line
+for another room on the same mesh is ignored, and typing into the box sends to
+the room the mesh's own name derives.
 `enclave` also carries the G5 half `vendor` cannot check: its
 `vendor/mesh/` is asserted byte-identical to `lib/mesh/`, because a vendored
 dependency that drifts from its source is the version skew a registry exists to

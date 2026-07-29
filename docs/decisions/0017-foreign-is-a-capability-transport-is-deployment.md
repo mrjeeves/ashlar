@@ -206,6 +206,17 @@ worker that never pushes is unaffected, which is why this is an addition to the
 envelope and not a version of it. The cost is one thread per worker and one
 queue; the alternative was every reactive co-process inventing its own schedule.
 
+**The mesh is the room.** The node's rooms have a host: it mints the id,
+states the roster, and admits knocks. That is right when a room is a subset of
+a mesh, and wrong for an Ashlar app, whose mesh id is already the invite —
+everyone holding it is in. So the room id is derived from the mesh's name,
+every member computes the same one, and there is no host to be offline and no
+admission step to get wrong. What that costs is a room nobody can be excluded
+from without changing the mesh, which is the same sentence as "the id is the
+secret" and is why rolling a new one is how a group changes its locks. The
+host-based form is still there for a program that wants it; this is the shape
+the language's own library ships.
+
 **Being a client constrains what this may write.** A control socket carries the
 whole machine, not this program's corner of it. The adapter reads freely and
 writes only what the program itself put there — a network it joined, a port it

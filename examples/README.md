@@ -251,6 +251,11 @@ replace, applied to a dependency's default. The roster is live without a poll
 in the browser: a schedule in the library notices the revision move, `updates`
 marks the collection, and every view that read it re-renders over the socket.
 
+`mesh.talk` and `mesh.speak` are the other half: the mesh IS the room, so
+everyone holding its id can say something to everyone else, with no host to
+admit them and no server to go through. A line arrives as a push and patches
+the page — nothing in the program polls.
+
 `ashlar run --mesh` publishes the port the origin is serving to that mesh, and
 `ashlar mesh` says what the machine can answer. The example binds nothing, so
 it talks to the node this machine runs — and on a machine with no node it still

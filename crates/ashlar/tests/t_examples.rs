@@ -1256,6 +1256,8 @@ mod fake_node {
         pub sites: Vec<(String, String, u16)>,
         pub exposed: BTreeMap<String, String>,
         pub networks: Vec<String>,
+        /// `room|text` for every line this node was asked to transmit.
+        pub sent: Vec<String>,
         /// Every command this node was asked to run. The rename regression is
         /// asserted from here: a site must join a mesh without ever touching
         /// the identity its owner named.
@@ -1275,10 +1277,33 @@ mod fake_node {
         /// Say the session moved, the way the node does when presence
         /// changes. Nothing polls: this is what the page follows.
         pub fn announce(&self, event: &str) {
+            self.emit(event, V::Map(BTreeMap::new()))
+        }
+
+        /// One peer's line arriving, exactly as the node hands it to its own
+        /// clients: `{from, message}` on `allmystuff://room`.
+        pub fn hears(&self, from: &str, room: &str, said: &str) {
+            self.emit(
+                "allmystuff://room",
+                map(&[
+                    ("from", text(from)),
+                    (
+                        "message",
+                        map(&[
+                            ("room", text(room)),
+                            ("kind", text("chat")),
+                            ("text", text(said)),
+                        ]),
+                    ),
+                ]),
+            )
+        }
+
+        fn emit(&self, event: &str, payload: V) {
             let body = to_json(&map(&[
                 ("kind", text("emit")),
                 ("event", text(event)),
-                ("payload", V::Map(BTreeMap::new())),
+                ("payload", payload),
             ]));
             let bytes = body.as_bytes();
             let len = (bytes.len() as u32) + 1;
@@ -1436,6 +1461,28 @@ mod fake_node {
                         }
                     }
                 }
+                V::None
+            }
+            // What a member sends to the room. The node routes it; every
+            // recipient's own node emits it back out as an event.
+            "room_send" => {
+                st.sent.push(format!(
+                    "{}|{}",
+                    ashlar::meshd::at(&args, "message")
+                        .map(|m| ashlar::meshd::at(&m, "room"))
+                        .and_then(|r| match r {
+                            Some(V::Text(t)) => Some(t),
+                            _ => None,
+                        })
+                        .unwrap_or_default(),
+                    ashlar::meshd::at(&args, "message")
+                        .map(|m| ashlar::meshd::at(&m, "text"))
+                        .and_then(|t| match t {
+                            Some(V::Text(t)) => Some(t),
+                            _ => None,
+                        })
+                        .unwrap_or_default(),
+                ));
                 V::None
             }
             "site_mappings" => V::List(vec![]),
@@ -1635,7 +1682,65 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
          nowhere in source (B5): {}",
         patch
     );
+    // Somebody says something. The mesh IS the room — everyone holding its id
+    // is in it — so the id every member computes is derived from the mesh's
+    // name, with no host to mint one or be offline.
+    let room = ashlar::meshd::room_of("enclave");
+    node.hears("n1", &room, "anyone about?");
+    let patch = ws_expect(&mut ws, "anyone about?", 8);
+    assert!(
+        patch.contains("mesh-said"),
+        "a line arriving patches the conversation, unasked: {}",
+        patch
+    );
+    // A line for another room on the same mesh is somebody else's traffic.
+    node.hears("n1", "ashlar:elsewhere", "not for this app");
+    std::thread::sleep(std::time::Duration::from_millis(200));
+
+    // And this side can answer. Type into the box, submit it, and what the
+    // node was asked to transmit is what the person typed — to the room the
+    // mesh's name derives, not to a room somebody had to be given.
+    let (_, _, page) = req(port, "GET", "/", None, None);
+    let (inst, typed) = event_target(&page, "oninput", 0).unwrap();
+    ws_send(
+        &mut ws,
+        &format!(
+            "{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"oninput\",\"value\":\"here\"}}}}",
+            inst, typed
+        ),
+    );
+    let after = ws_expect(&mut ws, "here", 8);
+    let (inst, submit) = event_target(&after, "onsubmit", 0).unwrap();
+    ws_send(
+        &mut ws,
+        &format!(
+            "{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onsubmit\"}}}}",
+            inst, submit
+        ),
+    );
+    let mine = ws_expect(&mut ws, "mesh-said", 8);
+    assert!(mine.contains("here"), "the sender sees its own line: {}", mine);
     drop(ws);
+    {
+        let st = node.state.lock().unwrap();
+        assert_eq!(
+            st.sent,
+            vec![format!("{}|here", room)],
+            "one line, to the room the mesh derives"
+        );
+    }
+
+    let (_, _, page) = req(port, "GET", "/", None, None);
+    assert!(
+        page.contains("anyone about?"),
+        "what was heard is on the page: {}",
+        page
+    );
+    assert!(
+        !page.contains("not for this app"),
+        "another room's traffic is not this program's to show: {}",
+        page
+    );
 
     // The same roster over HTTP: one handler, two transports (G2).
     let (_, _, peers) = req(port, "GET", "/api/peers", None, None);

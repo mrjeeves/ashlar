@@ -766,7 +766,7 @@ runtime schedules around them.
 
 One space name derives to a co-process rather than a library, and that
 co-process is this toolchain: `mesh` — who else is on the private network this
-machine joined, and the sites they serve. `ashlar mesh worker` speaks the
+machine joined, what they say, and the sites they serve. `ashlar mesh worker` speaks the
 control socket the mesh already exposes to its own clients. `ashlar run --mesh` publishes
 the port it is serving through it, reaching that network and nobody else;
 `ashlar mesh` says what it answers.

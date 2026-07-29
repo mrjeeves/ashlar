@@ -53,6 +53,51 @@ pub const DEFAULT_NETWORK: &str = "ashlar";
 /// names it, so every view that read a peer re-renders (§9.10).
 pub const PEER_SHAPE: &str = "mesh.Peer";
 
+/// The collection the messages live in, as `lib/mesh` declares it.
+pub const SAID_SHAPE: &str = "mesh.Said";
+
+/// One line somebody said, in the shape `mesh.Said` declares.
+///
+/// Plain data rather than a `V`: the log is written by the watch thread and
+/// read by a call, and a `V` carries an `Rc` so it cannot cross threads. The
+/// shape is built on the way out, once, where it is needed.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Said {
+    pub from: String,
+    pub who: String,
+    pub text: String,
+    pub at: f64,
+}
+
+impl Said {
+    fn value(&self) -> V {
+        map(&[
+            ("from", V::Text(self.from.clone())),
+            ("who", V::Text(self.who.clone())),
+            ("text", V::Text(self.text.clone())),
+            ("at", V::Number(self.at)),
+        ])
+    }
+}
+
+/// How many messages a running site keeps. A room is a conversation, not an
+/// archive: a program that wants history stores what it heard, which is a
+/// `stored` property and not this worker's business.
+pub const KEPT: usize = 200;
+
+/// The room a mesh's members share, derived from the mesh's own name.
+///
+/// AllMyStuff's rooms have a host: it mints the id, states the roster, and
+/// admits knocks. That is the right shape when a room is a subset of a mesh —
+/// and the wrong one here, because an Ashlar app's mesh id IS the invite
+/// already. Everyone holding it is in; nobody has to be admitted; there is no
+/// host to be offline. So the room is derived from the mesh, every member
+/// computes the same id from the name they already share, and the id nobody
+/// else can guess is the one the program was written with (§9.12).
+pub fn room_of(network: &str) -> String {
+    format!("ashlar:{}", network)
+}
+
 /// A stable summary of the node's raw peer list, so an event that merely
 /// re-states the session can be told from one that changed it.
 pub fn roster_print(peers: &V) -> String {
@@ -183,6 +228,12 @@ impl Session {
                 self.enter(&network, &label).map_err(String::from)
             }
             "networks" => Ok(V::List(soft(self.networks(), Vec::new())?)),
+            // -- transmitting ----------------------------------------------
+            "say" => {
+                let line = text_arg(args, 0)?;
+                self.say(&line).map_err(String::from)
+            }
+            "heard" => Ok(V::List(self.node.said())),
             // -- the sites (`mesh.sites`) ----------------------------------
             "expose" => {
                 let port = port_arg(args, 0)?;
@@ -200,7 +251,7 @@ impl Session {
             "nearby" => Ok(V::List(soft(self.nearby(), Vec::new())?)),
             other => Err(format!(
                 "no such call: `{}`. The mesh answers here, peers, networks, \
-                 enter; its sites answer expose, unexpose, \
+                 enter, say, heard; its sites answer expose, unexpose, \
                  published, nearby.",
                 other
             )),
@@ -318,6 +369,59 @@ impl Session {
             }
         }
         self.here()
+    }
+
+    // -- transmitting -------------------------------------------------------
+
+    /// Say one line to everyone on this mesh.
+    ///
+    /// The node routes to members; the members are the roster. A peer that is
+    /// not connected right now does not receive it and there is no store to
+    /// hold it for them — this is a conversation between the people who are
+    /// here, which is what "serverless" costs and what it buys.
+    ///
+    /// The sender keeps its own line rather than waiting to hear itself: the
+    /// node delivers to members, and a machine is not its own peer.
+    fn say(&mut self, line: &str) -> Result<V, Trouble> {
+        let line = line.trim();
+        if line.is_empty() {
+            return Ok(V::Bool(false));
+        }
+        let identity = self
+            .node
+            .ask("mesh_identity", V::Map(BTreeMap::new()))
+            .unwrap_or(V::None);
+        let me = field(&identity, "device_id");
+        let mine = match field(&identity, "label").trim() {
+            "" => short(&canonical(&me)),
+            named => named.to_string(),
+        };
+        let members: Vec<V> = self
+            .peers()?
+            .iter()
+            .map(|p| V::Text(field(p, "id")))
+            .filter(|id| !matches!(id, V::Text(t) if t.is_empty()))
+            .collect();
+        let mut message = BTreeMap::new();
+        message.insert("room".to_string(), V::Text(room_of(&self.network())));
+        message.insert("name".to_string(), V::Text(self.node.network()));
+        message.insert("kind".to_string(), V::Text("chat".to_string()));
+        message.insert("text".to_string(), V::Text(line.to_string()));
+        let mut args = BTreeMap::new();
+        args.insert("members".to_string(), V::List(members.clone()));
+        args.insert("message".to_string(), V::Map(message));
+        // Nobody else here yet is not a failure to speak: the line is still
+        // this machine's, and a room of one is a room.
+        if !members.is_empty() {
+            self.node.ask("room_send", V::Map(args))?;
+        }
+        self.node.keep(Said {
+            who: mine,
+            from: me,
+            text: line.to_string(),
+            at: now_ms(),
+        });
+        Ok(V::Bool(true))
     }
 
     // -- the sites ----------------------------------------------------------
@@ -500,6 +604,15 @@ fn place(id: &str, label: &str, network: &str, peers: usize, reachable: bool, no
 // Pure decisions — everything above the sockets
 // ---------------------------------------------------------------------------
 
+/// A key at reading length. Enough to tell two people apart in a room, and
+/// not so much that the room is a wall of base32.
+pub fn short(id: &str) -> String {
+    match id.char_indices().nth(8) {
+        Some((cut, _)) => format!("{}…", &id[..cut]),
+        None => id.to_string(),
+    }
+}
+
 /// A device id without its display suffix. The daemon's roster answers bare
 /// pubkeys and a presence advert carries the `pubkey-SUFFIX` display form, so
 /// the two only compare after this.
@@ -586,6 +699,16 @@ pub fn service_id(port: u16) -> String {
 
 pub fn port_of(id: &str) -> Option<u16> {
     id.strip_prefix("tcp:").and_then(|p| p.parse().ok())
+}
+
+/// Milliseconds since the epoch, for stamping a line as it arrives. A worker
+/// is a program like any other; `now()` inside Ashlar is the runtime's, and
+/// this is the same clock read on the other side of the boundary.
+pub fn now_ms() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_millis() as f64)
+        .unwrap_or(0.0)
 }
 
 /// The address this machine reaches a port at. Ashlar source may not write a
@@ -852,6 +975,9 @@ pub struct Node {
     /// The mesh in force. On the node rather than the session because the
     /// watch thread reads the same roster the views do.
     network: std::sync::Arc<std::sync::Mutex<String>>,
+    /// What this site has heard, newest last. Shared for the same reason:
+    /// messages arrive on the watch thread and are read by a view.
+    heard: std::sync::Arc<std::sync::Mutex<Vec<Said>>>,
 }
 
 impl Node {
@@ -860,6 +986,7 @@ impl Node {
             socket: node_socket(),
             start: Some(bring_up()),
             network: Node::area(),
+            heard: Node::log(),
         }
     }
 
@@ -868,7 +995,12 @@ impl Node {
             socket: Some(socket),
             start: None,
             network: Node::area(),
+            heard: Node::log(),
         }
+    }
+
+    fn log() -> std::sync::Arc<std::sync::Mutex<Vec<Said>>> {
+        std::sync::Arc::new(std::sync::Mutex::new(Vec::new()))
     }
 
     fn area() -> std::sync::Arc<std::sync::Mutex<String>> {
@@ -896,26 +1028,35 @@ impl Node {
             socket: self.socket.clone(),
             start: None, // a listener never starts a daemon
             network: self.network.clone(),
+            heard: self.heard.clone(),
         };
         let socket = self.socket.clone().expect("checked");
         std::thread::spawn(move || {
             let mut last: Option<String> = None;
             loop {
-                wire::follow(&socket, &mut |event| {
+                wire::follow(&socket, &mut |event, payload| match event {
                     // The node re-states its session on a timer, not only when
                     // something moved. Forwarding every one would re-render
                     // every connected page every few seconds forever — the
                     // poll this replaced, wearing the node's clothes. So the
                     // event is the cue to LOOK, and the roster decides whether
                     // anyone is told.
-                    if event != "allmystuff://session" {
-                        return;
+                    "allmystuff://session" => {
+                        let now = roster_print(&node.roster());
+                        if last.as_deref() != Some(now.as_str()) {
+                            last = Some(now);
+                            let _ = say(&out, &changed(PEER_SHAPE));
+                        }
                     }
-                    let now = roster_print(&node.roster());
-                    if last.as_deref() != Some(now.as_str()) {
-                        last = Some(now);
-                        let _ = say(&out, &changed(PEER_SHAPE));
+                    // Somebody said something. Every one of these is news by
+                    // construction — a message is not a state that can be
+                    // re-stated — so there is nothing to compare it against.
+                    "allmystuff://room" => {
+                        if node.remember(payload) {
+                            let _ = say(&out, &changed(SAID_SHAPE));
+                        }
                     }
+                    _ => {}
                 });
                 // The node went away or was never there. Wait before asking
                 // again: a tight loop against a missing socket is a busy wait
@@ -946,6 +1087,66 @@ impl Node {
         let mut args = BTreeMap::new();
         args.insert("network".to_string(), V::Text(self.network()));
         self.ask("mesh_peers", V::Map(args)).unwrap_or(V::None)
+    }
+
+    /// Keep an arriving message if it is for this program's room, and say
+    /// whether it was. Messages for another room on the same mesh — another
+    /// app, the node's own GUI — are not ours to show.
+    pub fn remember(&self, arrival: &V) -> bool {
+        let Some(message) = at(arrival, "message") else {
+            return false;
+        };
+        if field(&message, "room") != room_of(&self.network()) {
+            return false;
+        }
+        if field(&message, "kind") != "chat" {
+            return false;
+        }
+        let from = field(arrival, "from");
+        self.keep(Said {
+            who: self.who(&from),
+            from,
+            text: field(&message, "text"),
+            at: now_ms(),
+        });
+        true
+    }
+
+    /// What to call whoever sent this, in a sentence a person reads: the name
+    /// the roster knows them by, else a short form of their key. The whole key
+    /// is fifty-two characters and identifies them perfectly, which is exactly
+    /// what a name is not for.
+    fn who(&self, id: &str) -> String {
+        let want = canonical(id);
+        if let Some(V::List(peers)) = at(&self.roster(), "peers") {
+            for p in &peers {
+                if canonical(&field(p, "device_id")) == want {
+                    let label = field(p, "label");
+                    if !label.trim().is_empty() {
+                        return label.trim().to_string();
+                    }
+                }
+            }
+        }
+        short(&want)
+    }
+
+    /// Add to what this site has heard, oldest dropped first.
+    fn keep(&self, said: Said) {
+        if let Ok(mut log) = self.heard.lock() {
+            log.push(said);
+            let over = log.len().saturating_sub(KEPT);
+            if over > 0 {
+                log.drain(0..over);
+            }
+        }
+    }
+
+    fn said(&self) -> Vec<V> {
+        match self.heard.lock() {
+            Ok(log) => log.iter().map(Said::value).collect(),
+            Err(_) => Vec::new(),
+        }
     }
 
     /// One request to the node: a length-prefixed JSON frame out, one frame
@@ -1175,7 +1376,7 @@ mod wire {
     /// frame per event, tag 2, carrying `{"kind":"emit","event":…}`. Nothing
     /// is sent back: this is a listener, and a listener that also talks is a
     /// second client competing with the first for one identity.
-    pub fn follow(socket: &Path, on: &mut dyn FnMut(&str)) {
+    pub fn follow(socket: &Path, on: &mut dyn FnMut(&str, &super::V)) {
         // Never start a node to listen to it. Bringing one up is a decision a
         // call makes; a background listener that spawned a daemon would start
         // somebody's mesh because a page happened to be open.
@@ -1212,11 +1413,14 @@ mod wire {
             let Ok(text) = String::from_utf8(body[1..].to_vec()) else {
                 return;
             };
-            if let Some(super::V::Text(event)) = super::from_json(&text)
-                .as_ref()
-                .and_then(|v| super::at(v, "event"))
-            {
-                on(&event);
+            let Some(frame) = super::from_json(&text) else {
+                continue;
+            };
+            if let Some(super::V::Text(event)) = super::at(&frame, "event") {
+                on(
+                    &event,
+                    &super::at(&frame, "payload").unwrap_or(super::V::None),
+                );
             }
         }
     }
@@ -1398,6 +1602,73 @@ mod tests {
             .collect();
         assert_eq!(kept.len(), 1);
         assert_eq!(kept[0].2, "pad");
+    }
+
+    #[test]
+    fn a_room_is_derived_from_the_mesh_so_nobody_hosts_it() {
+        // Every member computes the same id from the name they already share,
+        // which is what removes the host: there is no roster to be stated, no
+        // knock to be admitted, and nothing to be offline. The mesh id is the
+        // invite, so a program written with a private one is private.
+        assert_eq!(room_of("enclave"), "ashlar:enclave");
+        assert_ne!(room_of("enclave"), room_of("elsewhere"));
+    }
+
+    #[test]
+    fn a_speaker_is_named_at_reading_length() {
+        // A key identifies somebody perfectly, which is exactly what a name is
+        // not for. Fifty-two characters per line is a wall, not a conversation.
+        assert_eq!(short("577fowcgdh57hhtvls566jngiejtqsi4b4xxks673fo6ponuompq"), "577fowcg…");
+        assert_eq!(short("ada"), "ada");
+        assert_eq!(short(""), "");
+    }
+
+    #[test]
+    fn only_this_room_is_this_program_s_to_show() {
+        // One mesh can carry several apps' rooms, and the node's own. A line
+        // for another room arrives here all the same, and showing it would be
+        // this program reading somebody else's conversation.
+        let node = Node::at(PathBuf::from("/nonexistent/node.sock"));
+        node.set_network("enclave");
+        let arrival = |room: &str, kind: &str| {
+            map(&[
+                ("from", V::Text("n1-ABCDE".into())),
+                (
+                    "message",
+                    map(&[
+                        ("room", V::Text(room.to_string())),
+                        ("kind", V::Text(kind.to_string())),
+                        ("text", V::Text("hi".into())),
+                    ]),
+                ),
+            ])
+        };
+        assert!(!node.remember(&arrival("ashlar:elsewhere", "chat")));
+        assert!(!node.remember(&arrival("ashlar:enclave", "join")));
+        assert!(!node.remember(&V::None));
+        assert!(node.remember(&arrival("ashlar:enclave", "chat")));
+        let said = node.said();
+        assert_eq!(said.len(), 1);
+        assert_eq!(at(&said[0], "text"), Some(V::Text("hi".into())));
+        // No node to ask for a name, so the key — which is short already —
+        // stands in, without its display suffix.
+        assert_eq!(at(&said[0], "who"), Some(V::Text("n1".into())));
+    }
+
+    #[test]
+    fn a_room_is_a_conversation_not_an_archive() {
+        let node = Node::at(PathBuf::from("/nonexistent/node.sock"));
+        for i in 0..(KEPT + 10) {
+            node.keep(Said {
+                from: "n1".into(),
+                who: "ada".into(),
+                text: format!("line {}", i),
+                at: 0.0,
+            });
+        }
+        let said = node.said();
+        assert_eq!(said.len(), KEPT, "the oldest fall off rather than growing forever");
+        assert_eq!(at(&said[0], "text"), Some(V::Text("line 10".into())));
     }
 
     #[test]
