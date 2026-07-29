@@ -58,6 +58,16 @@ and `ashlar run --mesh` is still driven, but the ELEMENT that renders a peer's
 sites is now rendered by nothing the suite runs. Serves **A2**. Proven by: an
 example that shows sites because it is about sites, or the element's removal.
 
+**A spread literal loses its shape inside an `if` branch.** `if c { { ...it,
+done: not it.done } } else { it }` is `E006`: the branches "yield `{text: ?}`
+and `todo.Item`", because a map literal is checked against the shape its
+position expects (§5) and an `if` branch expects nothing. The same literal
+checks fine as a `return`, which is how `examples/todo` writes it — so the
+correction exists, but the diagnostic states the mismatch without naming it,
+and an author who spread a value of a known shape has told the compiler
+everything it needs. Serves **D2, B3**. Proven by: a spread carrying its base's
+shape into a branch, or a fix on `E006` that names the `return` form.
+
 **A camera's frames have never crossed two machines.** `watch` opens an MJPEG
 route, follows the batches, and writes each JPEG where the site serves it; the
 whole path is driven in the corpus, and against two real nodes the gate is

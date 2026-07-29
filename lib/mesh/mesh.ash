@@ -87,20 +87,49 @@ foreign heard: () -> [mesh.Said] watches mesh.Said
 
 // The conversation: messages, arrivals, and the files people put in the room,
 // in the order they happened. Classes are the contract with the app's
-// stylesheet (ADR-0010): `talk`, `line`, `mine`, `run-on`, `said`, `who`,
-// `when`, `notice`, `drop`, `empty`.
+// stylesheet (ADR-0010): `talk`, `line`, `mine`, `run-on`, `fresh`, `said`,
+// `who`, `when`, `notice`, `drop`, `empty`, `sift`.
 part talk {
-  view = () => el("div", { class: "talk" }, lines())
+  // Both are one reader's business, so both are per-instance (§9.4): what
+  // this page is looking for, and the moment it arrived — which is how a
+  // line it has never seen can be marked without anybody tracking anybody.
+  state query: text = ""
+  state joined: number = 0
+  start stack = () => {
+    return { joined: now() }
+  }
+  view = () => el("div", { class: "talk" }, [sift()] + lines())
+  // Filtering is local: it reads what this page already holds, sends
+  // nothing, and asks the mesh for nothing.
+  sift = () => el("div", { class: "sift" }, [
+    el("input", {
+      class: "sift-in",
+      name: "sift",
+      value: query,
+      placeholder: "filter this room",
+      autocomplete: "off",
+      oninput: sifted,
+    }, []),
+    el("span", { class: "sift-count" }, [counted()]),
+  ])
+  sifted = (e: std.Event) => {
+    query = text(e.data.value ?? "")
+  }
+  counted = () => (if query == "" { "" } else { text(len(found())) + " of " + text(len(heard())) })
+  found = () => (if query == "" { heard() } else { filter(heard(), (s: mesh.Said) => contains(s.text, query) or contains(s.who, query)) })
   lines = () => {
-    let all = heard()
+    let all = found()
     if len(all) == 0 {
+      if query != "" {
+        return [el("p", { class: "empty" }, ["Nothing here says that."])]
+      }
       return [el("p", { class: "empty" }, ["Nobody has said anything. Whoever holds this program can hear you."])]
     }
     // Indexed, because whether a line repeats its author's name depends on
     // the line before it — a wall of the same name six times is a log.
     return map(range(len(all)), (i: number) => one(all[i]!, all[i - 1]))
   }
-  one = (s: mesh.Said, before: mesh.Said?) => (if s.kind == "chat" { said(s, follows(s, before)) } else if s.kind == "file" { dropped(s) } else { el("p", { class: "notice" }, [s.who + " " + s.kind]) })
+  one = (s: mesh.Said, before: mesh.Said?) => (if s.kind == "chat" { said(s, follows(s, before), first_new(s, before)) } else if s.kind == "file" { dropped(s) } else { el("p", { class: "notice" }, [s.who + " " + s.kind]) })
   // A run-on is the same person still talking: same author, same kind, and
   // close enough in time that it reads as one turn.
   follows = (s: mesh.Said, before: mesh.Said?) => {
@@ -110,8 +139,20 @@ part talk {
     let last = before!
     return last.kind == "chat" and last.who == s.who and s.at - last.at < 120000
   }
-  said = (s: mesh.Said, run_on: bool) => el("div", {
-    class: (if s.mine { "line mine" } else { "line" }) + (if run_on { " run-on" } else { "" }),
+  // The first line said after this page arrived, and not by this machine:
+  // the one place a "new" rule belongs. It is a class, not an element, so
+  // the mark costs no markup and the stylesheet draws it.
+  first_new = (s: mesh.Said, before: mesh.Said?) => {
+    if s.mine or s.at <= joined {
+      return false
+    }
+    if before == none {
+      return true
+    }
+    return before!.at <= joined
+  }
+  said = (s: mesh.Said, run_on: bool, fresh: bool) => el("div", {
+    class: (if s.mine { "line mine" } else { "line" }) + (if run_on { " run-on" } else { "" }) + (if fresh { " fresh" } else { "" }),
   }, [
     el("span", { class: "who" }, [if run_on { "" } else { s.who }]),
     el("div", { class: "said" }, [
@@ -144,15 +185,39 @@ part talk {
   round = (n: number) => n - n % 1
 }
 
-// The line you type in.
+// What this machine is currently putting up. `offer` states the WHOLE list
+// every time, so adding one file means restating the others — which is why
+// the list is held here rather than recomputed from the shelf: the shelf is
+// everyone's offers, and only these are this machine's to withdraw.
+part Sharing {
+  state paths: [text] = []
+  add = (path: text) => {
+    paths = [...paths, path]
+    let up = offer(paths)
+    return text(len(up)) + " up from here"
+  }
+  clear = () => {
+    paths = []
+    offer(paths)
+    return "took mine back down"
+  }
+}
+
+// The line you type in — and the two things you can type that are not a
+// line. A room needs a way to put a file in it, and a browser cannot hand a
+// server a path it can open, so the command is the honest interface: the
+// file stays where it is and its owner says which one.
 part speak {
   state draft: text = ""
-  view = () => el("form", { class: "speak", onsubmit: send }, [
+  state hint: text = ""
+  view = () => el("div", { class: "speak-wrap" }, tip() + [box()])
+  tip = () => (if hint == "" { [] } else { [el("p", { class: "speak-hint" }, [hint])] })
+  box = () => el("form", { class: "speak", onsubmit: send }, [
     el("input", {
       class: "line-in",
       name: "line",
       value: draft,
-      placeholder: "say something",
+      placeholder: "say something — or /help",
       autocomplete: "off",
       oninput: typed,
     }, []),
@@ -164,46 +229,55 @@ part speak {
     draft = text(e.data.value ?? "")
   }
   send = () => {
-    say(draft)
+    let line = draft
     draft = ""
+    if line == "" {
+      return
+    }
+    if line == "/help" {
+      hint = "/share <path> puts a file in the room · /clear takes yours back down"
+      return
+    }
+    if line == "/clear" {
+      hint = Sharing.clear()
+      return
+    }
+    if slice(line, 0, 7) == "/share " {
+      hint = Sharing.add(slice(line, 7, len(line)))
+      return
+    }
+    hint = ""
+    say(line)
   }
 }
 
 // The room, in one element. An app that wants a chat program writes
-// `el(mesh.room, {})` and nothing else — a header of who is here, the
-// conversation, and a line to type in. Every piece is still its own part for
-// an app that would rather place them itself.
+// `el(mesh.room, {})` and nothing else — who is here and what is on the
+// shelf down one side, the conversation and a line to type in down the
+// other. Every piece is still its own part for an app that would rather
+// place them itself.
 part room {
   view = () => el("div", { class: "room" }, [
-    el(banner, {}),
-    el(talk, {}),
-    el(speak, {}),
+    el("aside", { class: "room-side" }, [
+      el(people, {}),
+      el(shelf, {}),
+    ]),
+    el("section", { class: "room-main" }, [
+      el(banner, {}),
+      el(talk, {}),
+      el(speak, {}),
+    ]),
   ])
 }
 
-// Who is here, and where "here" is. A room's header is the one place the
-// mesh's own name belongs: it is the answer to "which room is this".
+// Where "here" is. A room's header is the one place the mesh's own name
+// belongs: it is the answer to "which room is this".
 part banner {
   view = () => el("header", { class: "room-top" }, [
-    el("div", { class: "room-who" }, faces_of()),
+    el("h1", { class: "room-name" }, [named()]),
     el("p", { class: "room-where" }, [where()]),
   ])
-  faces_of = () => yours() + map(peers(), (p: mesh.Peer) => face(p.label, p.here))
-  // Your own face, when this machine has one. A blank circle for a node that
-  // is not there is worse than no circle.
-  yours = () => {
-    let me = here()
-    if me.label == "" {
-      return []
-    }
-    return [face(me.label, true)]
-  }
-  // One letter is a face when there is no photograph, and the whole name is
-  // the title — a key is not a name, but it is at least a stable one.
-  face = (name: text, lit: bool) => el("span", {
-    class: if lit { "who-face who-here" } else { "who-face" },
-    title: name,
-  }, [slice(name, 0, 1)])
+  named = () => here().network
   where = () => {
     let mine = here()
     if not mine.reachable {
@@ -211,10 +285,46 @@ part banner {
     }
     let others = len(filter(peers(), (p: mesh.Peer) => p.here))
     if others == 0 {
-      return mine.network + " · nobody else here yet"
+      return "nobody else here yet"
     }
-    return mine.network + " · " + text(others) + (if others == 1 { " other here" } else { " others here" })
+    return text(others) + (if others == 1 { " other here" } else { " others here" })
   }
+}
+
+// Who is here. Presence is the roster's, not a heartbeat's: the node streams
+// it and every page that read it patches (§9.10). Classes: `room-people`,
+// `side-title`, `room-person`, `room-person-name`, `room-tag`, `who-face`,
+// `who-here`, `mesh-empty`.
+part people {
+  view = () => el("div", { class: "room-people" }, [
+    el("p", { class: "side-title" }, ["In the room"]),
+  ] + rows())
+  rows = () => {
+    let all = yours() + map(peers(), (p: mesh.Peer) => row(p.label, p.here, []))
+    if len(all) == 0 {
+      return [el("p", { class: "mesh-empty" }, [here().note])]
+    }
+    return all
+  }
+  // Your own row, when this machine has a name to put in it. A blank circle
+  // for a node that is not there is worse than no circle.
+  yours = () => {
+    let me = here()
+    if me.label == "" {
+      return []
+    }
+    return [row(me.label, true, ["you"])]
+  }
+  row = (name: text, lit: bool, tags: [text]) => el("div", { class: "room-person" }, [
+    face(name, lit),
+    el("span", { class: "room-person-name" }, [name]),
+  ] + map(tags, (t: text) => el("span", { class: "room-tag" }, [t])))
+  // One letter is a face when there is no photograph, and the whole name is
+  // the title — a key is not a name, but it is at least a stable one.
+  face = (name: text, lit: bool) => el("span", {
+    class: if lit { "who-face who-here" } else { "who-face" },
+    title: name,
+  }, [slice(name, 0, 1)])
 }
 
 // -- Passing things around ----------------------------------------------------
@@ -250,15 +360,21 @@ part held {
   files = "room"
 }
 
-// The shelf: what the room is offering, and a way to pull one here. A file
-// nobody has fetched yet is a button; once its bytes are local it is a link.
-// Classes: `mesh-shelf`, `mesh-offer`, `mesh-offer-who`, `mesh-empty`.
+// The shelf: everything the room is currently offering, in one place, and a
+// way to pull one here. A file nobody has fetched yet is a button; once its
+// bytes are local it is a link. The conversation shows a file where it was
+// dropped; this is the standing list, which is what makes taking one back
+// down visible. Classes: `room-files`, `side-title`, `mesh-shelf`,
+// `mesh-offer`, `mesh-offer-who`, `mesh-empty`.
 part shelf {
-  view = () => el("div", { class: "mesh-shelf" }, items())
+  view = () => el("div", { class: "room-files" }, [
+    el("p", { class: "side-title" }, ["On the shelf"]),
+    el("div", { class: "mesh-shelf" }, items()),
+  ])
   items = () => {
     let all = offered()
     if len(all) == 0 {
-      return [el("p", { class: "mesh-empty" }, ["Nothing on the shelf."])]
+      return [el("p", { class: "mesh-empty" }, ["Nothing yet. Type /share and a path to put a file in the room."])]
     }
     return map(all, (o: mesh.Offer) => el("div", { class: "mesh-offer" }, [
       el("span", { class: "mesh-offer-who" }, [o.who]),

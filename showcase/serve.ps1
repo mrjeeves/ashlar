@@ -36,7 +36,6 @@ $examples = @(
   @{ name = 'gallery';    port = 8080 }
   @{ name = 'counter';    port = 8081 }
   @{ name = 'todo';       port = 8082 }
-  @{ name = 'chat';       port = 8083 }
   @{ name = 'poll';       port = 8084 }
   @{ name = 'ticker';     port = 8085 }
   @{ name = 'pong';       port = 8086 }

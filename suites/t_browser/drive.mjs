@@ -84,12 +84,29 @@ const browser = await chromium.launch({
   await btn.click(); await sleep(400);
   const after = await btn.textContent();
   check('counter: a click patches the view in place, server-side',
-    before === 'clicks: 0' && after === 'clicks: 1', `${before} -> ${after}`);
+    before === 'this window: 0' && after === 'this window: 1', `${before} -> ${after}`);
 
   await page.reload({ waitUntil: 'load' }); await sleep(700);
   const reloaded = await page.locator('button').first().textContent();
   check('counter: a view instance state belongs to its page (G3)',
-    reloaded === 'clicks: 0', `after reload: ${reloaded}`);
+    reloaded === 'this window: 0', `after reload: ${reloaded}`);
+
+  // The second button is the same keyword on a singleton, so it is the
+  // program's one value. A real second tab is the only way to see that the
+  // two scopes differ — which is the whole reason the page carries both.
+  const other = await ctx.newPage();
+  await other.goto('http://127.0.0.1:8401/', { waitUntil: 'load' });
+  await sleep(700);
+  await page.locator('button.count').first().click();   // this tab's own
+  await page.locator('button.all').click();             // everybody's
+  await sleep(500);
+  const mine = await page.locator('button.count').first().textContent();
+  const theirs = await other.locator('button.all').textContent();
+  const theirsOwn = await other.locator('button.count').first().textContent();
+  check('counter: shared state crosses tabs, per-instance state does not',
+    theirs === 'everyone: 1' && mine === 'this window: 1' && theirsOwn === 'this window: 0',
+    `${mine} / ${theirs} / other's own ${theirsOwn}`);
+  await other.close();
 
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/counter.png` });
   check('counter: the browser console is clean', errors.length === 0, errors.join(' | '));

@@ -95,13 +95,6 @@ body {
   flex-direction: column;
   gap: 6px;
 }
-.list:empty::after {
-  content: "your locker is empty";
-  display: block;
-  padding: 10px 2px;
-  color: var(--muted);
-  font-size: 14px;
-}
 .item {
   padding: 10px 12px;
   background: var(--panel-2);
@@ -132,3 +125,31 @@ body {
   cursor: pointer;
 }
 .ghost:hover { color: var(--ink); border-color: var(--accent); }
+
+.lanes { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin: 18px 0; }
+.lane { min-width: 0; }
+.lanetitle {
+  margin: 0 0 7px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  color: var(--muted);
+}
+.lanetitle.mine { color: var(--accent); }
+
+.item { display: flex; align-items: baseline; gap: 8px; }
+.item .what { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.move {
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  line-height: 1;
+  cursor: pointer;
+  opacity: 0;
+}
+.item:hover .move { opacity: 1; }
+.move:hover { color: var(--accent); }
+.none { color: var(--muted); font-size: 12.5px; background: none; border: 0; padding: 6px 2px; }
+
+@media (max-width: 520px) { .lanes { grid-template-columns: 1fr; } }

@@ -31,14 +31,13 @@ else
   echo "      it may predate this checkout."
 fi
 
-# name:port — the map examples/gallery/settings.json mirrors for the seventeen
+# name:port — the map examples/gallery/settings.json mirrors for the sixteen
 # it frames. Keep them in sync; t_examples_showcase_launchers_agree_on_every_port
 # asserts they are.
 EXAMPLES=(
   "gallery:8080"
   "counter:8081"
   "todo:8082"
-  "chat:8083"
   "poll:8084"
   "ticker:8085"
   "pong:8086"
@@ -97,7 +96,7 @@ if build_ledger_shim; then
   fi
 else
   echo
-  echo "  The other seventeen examples are unaffected. ledger's page will serve"
+  echo "  The other sixteen examples are unaffected. ledger's page will serve"
   echo "  but its store will fault at the boundary, with that same correction."
   echo "  \`abacus\` is the foreign example that needs no compiler at all."
   echo

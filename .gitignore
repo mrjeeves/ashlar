@@ -9,3 +9,8 @@ examples/*/foreign/*.so
 
 # Per-example logs from showcase/serve.sh
 .showcase-logs/
+
+# The mesh worker writes the room down beside the project's other runtime
+# state, keyed by the network's name. It is state, not source — the same
+# rule .ashlar-state.json is under.
+.mesh-*.json

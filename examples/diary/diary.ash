@@ -17,16 +17,89 @@ part home {
   }
 }
 
+// One line somebody left. A data shape: fields only (§5).
+part Note {
+  who: text
+  line: text
+}
+
+// What the signed-in share. `present` is reference-counted off the view
+// lifecycle (§9.4): a page mounting arrives, its socket closing departs, so
+// the list is live with no heartbeat. `book` is what they wrote, and both are
+// ordinary shared state — the identity that wrote a line came from the
+// request (§9.6), and once written it belongs to everybody.
+part Lobby {
+  state present: {text: number} = {}
+  state book: [diary.Note] = []
+  arrive = (who: text) => {
+    present = put(present, who, (present[who] ?? 0) + 1)
+  }
+  depart = (who: text) => {
+    let n = (present[who] ?? 0) - 1
+    if n <= 0 {
+      present = drop(present, who)
+    } else {
+      present = put(present, who, n)
+    }
+  }
+  write = (who: text, line: text) => {
+    let tail = slice(book, 0, 7)
+    book = [{ who: who, line: line }, ...tail]
+  }
+}
+
 part reader {
   who: text
+  state draft: text = ""
+
+  start stack = () => {
+    Lobby.arrive(who)
+    return none
+  }
+  stop stack reverse = () => {
+    Lobby.depart(who)
+    return none
+  }
+
   view = () => el("div", { class: "stage" }, [
+    el("title", {}, ["diary"]),
     el("div", { class: "card" }, [
       el("p", { class: "kicker" }, ["sessions · §9.6"]),
       el("h1", {}, ["diary"]),
       el("p", { class: "entry" }, ["dear diary, from " + who]),
+      el("form", { class: "row", onsubmit: leave_line }, [
+        el("input", { class: "field", oninput: typed, value: draft, placeholder: "leave a line for whoever is next", autocomplete: "off" }, []),
+        el("button", { class: "primary" }, ["sign it"]),
+      ]),
+      el("p", { class: "lobbytitle" }, ["Signed in right now"]),
+      el("div", { class: "faces" }, faces()),
+      el("ul", { class: "book" }, lines()),
       el("a", { class: "ghost", href: "/leave" }, ["log out"]),
     ]),
   ])
+
+  // Every signed-in page read `present`, so every one of them re-renders
+  // when somebody else signs in or closes their tab.
+  faces = () => map(keys(Lobby.present), (e: text) => el("span", { class: if e == who { "face you" } else { "face" } }, [e]))
+  lines = () => {
+    if len(Lobby.book) == 0 {
+      return [el("li", { class: "bookempty" }, ["Nothing written yet."])]
+    }
+    return map(Lobby.book, (n: diary.Note) => el("li", { class: "bookrow" }, [
+      el("span", { class: "bookwho" }, [n.who]),
+      el("span", { class: "bookline" }, [n.line]),
+    ]))
+  }
+
+  typed = (e: std.Event) => {
+    draft = text(e.data.value ?? "")
+  }
+  leave_line = () => {
+    if draft != "" {
+      Lobby.write(who, draft)
+    }
+    draft = ""
+  }
 }
 
 // Both forms are native posts — no handler, no socket — so the browser

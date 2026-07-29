@@ -321,8 +321,36 @@ fn ws_read(s: &mut TcpStream) -> String {
 fn t_examples_hello_serves() {
     let dir = staged("hello");
     let (port, stop, join) = start(dir.clone());
-    let (status, _, body) = req(port, "GET", "/", None, None);
+    // Returning text answers the request with text, and that is still the
+    // smallest thing a route can do (§9.2).
+    let (status, _, body) = req(port, "GET", "/text", None, None);
     assert_eq!((status, body.as_str()), (200, "hello from ashlar"));
+
+    // The page counts whoever has it open, off the view lifecycle alone
+    // (§9.4). One page, and it says so.
+    let (status, _, html) = req(port, "GET", "/", None, None);
+    assert_eq!(status, 200);
+    assert!(html.contains("hello from ashlar"), "{}", html);
+    let page_a = attr_of(&html, "data-ash-page").unwrap();
+    let mut a = ws_open(port);
+    ws_send(&mut a, &format!("{{\"page\":\"{}\"}}", page_a));
+    std::thread::sleep(std::time::Duration::from_millis(80));
+
+    // A second window arrives, and the FIRST one is told — nobody asked it
+    // to look. That is reactivity on a shared `state` (§9.3), and the whole
+    // of the bookkeeping is `start` and `stop`.
+    let (_, _, html_b) = req(port, "GET", "/", None, None);
+    let page_b = attr_of(&html_b, "data-ash-page").unwrap();
+    let mut b = ws_open(port);
+    ws_send(&mut b, &format!("{{\"page\":\"{}\"}}", page_b));
+    let told = ws_expect(&mut a, "have this open", 8);
+    assert!(
+        told.contains("2 of you have this open"),
+        "the first window learns of the second: {}",
+        told
+    );
+    drop(b);
+    drop(a);
     stop.store(true, Ordering::Relaxed);
     join.join().unwrap();
     let _ = std::fs::remove_dir_all(&dir);
@@ -511,7 +539,8 @@ fn t_examples_counter_clicks() {
     let dir = staged("counter");
     let (port, stop, join) = start(dir.clone());
     let (_, _, html) = req(port, "GET", "/", None, None);
-    assert!(html.contains("clicks: 0"), "{}", html);
+    assert!(html.contains("this window: 0"), "{}", html);
+    assert!(html.contains("everyone: 0"), "{}", html);
     // The smallest example shows the smallest form of §9.8: one file, one
     // absolute path. A browser asks for it whether or not anyone declared it.
     let (istatus, _, ibody) = req_bytes(port, "/favicon.ico");
@@ -524,59 +553,37 @@ fn t_examples_counter_clicks() {
         &format!("{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onclick\"}}}}", inst, h),
     );
     let reply = ws_read(&mut ws);
-    assert!(reply.contains("clicks: 1"), "{}", reply);
-    stop.store(true, Ordering::Relaxed);
-    join.join().unwrap();
-    let _ = std::fs::remove_dir_all(&dir);
-}
+    assert!(reply.contains("this window: 1"), "{}", reply);
+    assert!(
+        !reply.contains("everyone"),
+        "only the view that read the changed value re-renders — the shared \
+         button read nothing that moved, so it is not even in the patch: {}",
+        reply
+    );
 
-#[test]
-fn t_examples_chat_posts_persist_and_react() {
-    let dir = staged("chat");
-    let (port, stop, join) = start(dir.clone());
-    let (status, _, body) =
-        req(port, "POST", "/api/post", Some("{\"author\":\"m\",\"body\":\"first stone\"}"), None);
-    assert_eq!((status, body.as_str()), (200, "ok"));
-    let (_, _, list) = req(port, "GET", "/api/messages", None, None);
-    assert!(list.contains("first stone"), "{}", list);
-    let (_, _, page) = req(port, "GET", "/", None, None);
-    assert!(page.contains("messages: 1"), "{}", page);
-    assert!(page.contains("m: first stone"), "the feed must render rows: {}", page);
-
-    // Drive the compose form as client A while client B watches: name,
-    // message, submit — B's feed re-renders from A's post (§9.3).
-    let (_, _, html_a) = req(port, "GET", "/", None, None);
-    let page_a = attr_of(&html_a, "data-ash-page").unwrap();
+    // The other button is the same keyword on a part nothing instantiates,
+    // so its `state` is one value for the program — and a second window is
+    // told about this one's click without asking (§9.3).
     let (_, _, html_b) = req(port, "GET", "/", None, None);
     let page_b = attr_of(&html_b, "data-ash-page").unwrap();
-    let mut a = ws_open(port);
     let mut b = ws_open(port);
-    ws_send(&mut a, &format!("{{\"page\":\"{}\"}}", page_a));
     ws_send(&mut b, &format!("{{\"page\":\"{}\"}}", page_b));
     std::thread::sleep(std::time::Duration::from_millis(80));
-
-    let (inst, named) = event_target(&html_a, "oninput", 0).unwrap();
-    ws_send(&mut a, &format!("{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"oninput\",\"value\":\"ada\"}}}}", inst, named));
-    let after_name = unescape(&ws_read(&mut a));
-    let (_, typed) = event_target(&after_name, "oninput", 1).unwrap();
-    ws_send(&mut a, &format!("{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"oninput\",\"value\":\"hello stone\"}}}}", inst, typed));
-    let after_draft = unescape(&ws_read(&mut a));
-    let (_, submit) = event_target(&after_draft, "onsubmit", 0).unwrap();
-    ws_send(&mut a, &format!("{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onsubmit\"}}}}", inst, submit));
-    let posted = ws_expect(&mut a, "ada: hello stone", 5);
-    assert!(posted.contains("ada: hello stone"), "{}", posted);
-    ws_expect(&mut b, "ada: hello stone", 8);
-    drop(a);
+    let (inst, h) = event_target(&html, "onclick", 1).unwrap();
+    ws_send(
+        &mut ws,
+        &format!("{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onclick\"}}}}", inst, h),
+    );
+    let shared = ws_expect(&mut b, "everyone: 1", 8);
+    assert!(
+        shared.contains("everyone: 1") && !shared.contains("this window"),
+        "the shared count crosses windows, and the per-instance one is not \
+         touched by anybody else's click: {}",
+        shared
+    );
     drop(b);
-
-    // `stored` survives a restart (§9.3).
     stop.store(true, Ordering::Relaxed);
     join.join().unwrap();
-    let (port2, stop2, join2) = start(dir.clone());
-    let (_, _, list2) = req(port2, "GET", "/api/messages", None, None);
-    assert!(list2.contains("first stone"), "restart lost stored state: {}", list2);
-    stop2.store(true, Ordering::Relaxed);
-    join2.join().unwrap();
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -876,7 +883,7 @@ fn t_examples_foundry_background_work_patches_view() {
 
     let (_, _, html) = req(port, "GET", "/", None, None);
     assert!(html.contains("waiting: 0"), "{}", html);
-    assert!(html.contains("finished: "), "{}", html);
+    assert!(html.contains(">finished<"), "both lanes are on the board: {}", html);
     let page_id = attr_of(&html, "data-ash-page").unwrap();
     let mut ws = ws_open(port);
     ws_send(&mut ws, &format!("{{\"page\":\"{}\"}}", page_id));
@@ -887,8 +894,13 @@ fn t_examples_foundry_background_work_patches_view() {
     assert_eq!(status, 200);
     assert!(accepted.contains("cut release"), "{}", accepted);
 
-    let pushed = ws_expect(&mut ws, "finished: cut release", 6);
-    assert!(pushed.contains("waiting: 0"), "{}", pushed);
+    let pushed = ws_expect(&mut ws, "cut release", 6);
+    assert!(pushed.contains("waiting: 0"), "the worker drained it: {}", pushed);
+    assert!(
+        pushed.contains("jobname\">cut release<"),
+        "and the finished brief is on the board nobody asked to refresh: {}",
+        pushed
+    );
     let (_, _, state) = req(port, "GET", "/api/status", None, None);
     assert!(state.contains("cut release"), "{}", state);
 
@@ -1911,7 +1923,9 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
     // node was asked to transmit is what the person typed — to the room the
     // mesh's name derives, not to a room somebody had to be given.
     let (_, _, page) = req(port, "GET", "/", None, None);
-    let (inst, typed) = event_target(&page, "oninput", 0).unwrap();
+    // The room's first `oninput` is the conversation's own filter, which
+    // sends nothing anywhere; the second is the line you talk on.
+    let (inst, typed) = event_target(&page, "oninput", 1).unwrap();
     ws_send(
         &mut ws,
         &format!(
@@ -2498,53 +2512,76 @@ fn t_examples_gallery_frames_a_chosen_example() {
     let (status, _, html) = req(port, "GET", "/", None, None);
     assert_eq!(status, 200);
 
-    // Every example the settings name is in the sidebar, under its heading.
+    // Every example the settings name is on the page, under its heading —
+    // and the lead is on the stage above them all.
     for name in [
-        "counter", "todo", "chat", "poll", "ticker", "pong", "foundry", "press", "guardrails",
-        "diary", "locker", "ledger", "abacus", "enclave", "commons", "slate", "hello",
+        "counter", "todo", "poll", "ticker", "pong", "foundry", "press", "guardrails", "diary",
+        "locker", "ledger", "abacus", "enclave", "commons", "slate", "hello",
     ] {
         assert!(
             html.contains(&format!(">{}<", name)),
-            "the sidebar is missing `{}`: {}",
+            "the page is missing `{}`: {}",
             name,
             html
         );
     }
     assert!(
         html.contains("Realtime") && html.contains("Flagship"),
-        "group headings come from the settings too: {}",
+        "section headings come from the settings too: {}",
         html
     );
-
-    // Nothing is open yet, so no address has been rendered anywhere. This is
-    // the load-bearing assertion: the URLs are values the program was handed,
-    // not text it carries.
     assert!(
-        !html.contains("127.0.0.1:80"),
-        "no example address may appear before a click: {}",
+        html.contains("class=\"stage-name\">enclave<"),
+        "the lead example is a setting, and it is on the stage: {}",
         html
     );
-    assert!(html.contains("Pick one on the left"), "the landing panel: {}", html);
 
-    // Click the first sidebar item over the socket. The handler is an inline
-    // function in the button's attrs (§9.4) closing over the mapped Site, so
-    // this also exercises E024's call-argument case.
+    // Every frame on the page is a real address, and every address on the
+    // page is one deployment supplied. This is the load-bearing pair: the
+    // gallery renders locations it was HANDED, and holds none of its own.
+    // (It used to assert that no address appeared before a click, which was
+    // the same claim about a page that framed one example at a time. This
+    // one frames them all, so the claim is made about where they came from.)
+    let settings = std::fs::read_to_string(dir.join("settings.json")).unwrap();
+    let mut framed = 0;
+    for port_n in 8081..=8097u16 {
+        let addr = format!("http://127.0.0.1:{}", port_n);
+        assert_eq!(
+            html.contains(&addr),
+            settings.contains(&addr),
+            "`{}` is on the page but not in the settings, or the other way about",
+            addr
+        );
+        if html.contains(&addr) {
+            framed += 1;
+        }
+    }
+    assert_eq!(framed, 16, "every example except the gallery itself is framed");
+
+    // Click the first tile over the socket. The handler is an inline function
+    // in the button's attrs (§9.4) closing over the mapped Site, so this also
+    // exercises E024's call-argument case.
     let (inst, h) = event_target(&html, "onclick", 0).unwrap();
     let mut ws = ws_open(port);
     ws_send(
         &mut ws,
         &format!("{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onclick\"}}}}", inst, h),
     );
-    let reply = unescape(&ws_expect(&mut ws, "iframe", 8));
+    let reply = unescape(&ws_expect(&mut ws, "stage-frame", 8));
     assert!(
-        reply.contains("src=\"http://127.0.0.1:8081\""),
-        "the frame must point at counter's deployed address: {}",
+        reply.contains("class=\"stage-frame\" src=\"http://127.0.0.1:8094\" title=\"hello\""),
+        "the stage must move to the clicked example's deployed address: {}",
         reply
     );
-    assert!(reply.contains("item active"), "the clicked item marks itself: {}", reply);
+    assert!(reply.contains("tile on"), "the promoted tile marks itself: {}", reply);
     assert!(
-        reply.contains("ashlar run examples/counter"),
-        "the bar names the command for the chosen example: {}",
+        reply.contains("ashlar run examples/hello"),
+        "the stage names the command for whatever is on it: {}",
+        reply
+    );
+    assert!(
+        reply.contains("back to enclave"),
+        "and how to put the lead back: {}",
         reply
     );
 

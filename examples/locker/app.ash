@@ -12,8 +12,20 @@ part app {
 // session; reaching it anonymously would fault (§9.3).
 part Store {
   peruser stored notes: [text] = []
+  // The same keyword without `peruser`: one list, everybody's. Declared
+  // right beside the private one so the difference is a word, not a design.
+  stored shelf: [text] = []
   keep = (note: text) => {
     notes = [...notes, note]
+  }
+  pin = (note: text) => {
+    shelf = [...shelf, note]
+  }
+  // Moving a note to the shelf is the one place the two meet — and it only
+  // ever goes this way, because nothing can read another person's locker.
+  publish_one = (note: text) => {
+    notes = filter(notes, (n: text) => n != note)
+    shelf = [...shelf, note]
   }
 }
 
@@ -36,16 +48,43 @@ part board {
     el("div", { class: "card" }, [
       el("p", { class: "kicker" }, ["per-user storage · ADR-0015"]),
       el("h1", {}, ["locker"]),
-      el("p", { class: "lede" }, ["Every signed-in person gets their own notes — per-user storage, isolated by construction and saved to disk."]),
+      el("p", { class: "lede" }, ["Two lists, one keyword apart. The left is yours — per-user storage, isolated by construction. The right is everybody's, and every window on this site sees it move."]),
       el("form", { class: "row", onsubmit: keep }, [
-        el("input", { class: "field", oninput: typed, value: draft, placeholder: "keep a note" }, []),
+        el("input", { class: "field", oninput: typed, value: draft, placeholder: "keep a note", autocomplete: "off" }, []),
         el("button", { class: "primary" }, ["keep"]),
       ]),
-      el("ul", { class: "list" }, rows()),
+      el("div", { class: "lanes" }, [
+        el("div", { class: "lane" }, [
+          el("p", { class: "lanetitle mine" }, ["yours alone"]),
+          el("ul", { class: "list" }, rows()),
+        ]),
+        el("div", { class: "lane" }, [
+          el("p", { class: "lanetitle" }, ["the shared shelf"]),
+          el("ul", { class: "list" }, shared()),
+        ]),
+      ]),
       el("a", { class: "ghost", href: "/leave" }, ["log out"]),
     ]),
   ])
-  rows = () => map(Store.notes, (note: text) => el("li", { class: "item" }, [note]))
+  // `Store.notes` resolves to THIS user's list; `Store.shelf` is the
+  // program's one list. Neither read says which — the declaration did.
+  rows = () => {
+    if len(Store.notes) == 0 {
+      return [el("li", { class: "none" }, ["nothing kept yet"])]
+    }
+    return map(Store.notes, (note: text) => el("li", { class: "item" }, [
+      el("span", { class: "what" }, [note]),
+      el("button", { class: "move", title: "put it on the shared shelf", onclick: (e: std.Event) => Store.publish_one(note) }, ["→"]),
+    ]))
+  }
+  shared = () => {
+    if len(Store.shelf) == 0 {
+      return [el("li", { class: "none" }, ["nothing shared yet"])]
+    }
+    return map(Store.shelf, (note: text) => el("li", { class: "item" }, [
+      el("span", { class: "what" }, [note]),
+    ]))
+  }
   typed = (e: std.Event) => {
     draft = text(e.data.value)
   }

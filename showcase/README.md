@@ -1,7 +1,7 @@
 # Showcase
 
 Launchers. They start every example at once, each on its own port, with
-`examples/gallery` on **8080** — an Ashlar program that frames the other seventeen.
+`examples/gallery` on **8080** — an Ashlar program that frames the other sixteen.
 
 The gallery used to live here as a hand-written `index.html` opened over a local
 file URL, because a page of links needs addresses and B5 forbade a location in
@@ -18,7 +18,7 @@ directory is now just the two launchers.
 
 One command, no arguments. Needs Rust 1.65+; `ledger` additionally needs
 SQLite's development package (`libsqlite3-dev` / `sqlite-devel`) because it links
-the real library. Everything else needs only Rust. It starts all eighteen — each
+the real library. Everything else needs only Rust. It starts all seventeen — each
 on its own port — then tells you to open <http://127.0.0.1:8080>. Ctrl-C stops
 every example at once.
 
@@ -33,7 +33,7 @@ open, or on the other side of a WSL boundary — it serves an empty roster that
 says so and carries the correction, because a machine with no mesh is an
 ordinary machine and not a broken site.
 
-On Windows, seventeen of the eighteen work unchanged. `ledger` reaches SQLite over
+On Windows, sixteen of the seventeen work unchanged. `ledger` reaches SQLite over
 the `native` transport, which needs a POSIX dynamic loader, so its page serves
 but its store faults with that correction; `abacus` is the cross-platform
 foreign example, a Python worker co-process.
@@ -41,7 +41,7 @@ foreign example, a Python worker co-process.
 `ledger` is the one example with a build step: it reaches a real SQLite database
 over the `native` transport, so its shim must compile first. If that fails the
 launcher prints **rustc's actual error** and, when the error names libsqlite3,
-the package to install — then says plainly that the other seventeen are
+the package to install — then says plainly that the other sixteen are
 unaffected. When it succeeds, the launcher runs `ashlar foreign check` to prove
 the capability is reachable rather than assuming the build implies it.
 
@@ -56,7 +56,12 @@ checkout.
 Then it builds `ledger`'s SQLite shim where it can, and runs each example with
 `ashlar run examples/<name> --port <n>` — the source keeps `port = 8080`, so
 nothing in any example changes (the port is a deployment fact, §9.1/B5). Ctrl-C
-stops them all. Click a name in the gallery's sidebar to swap frames.
+stops them all.
+
+The gallery leads with `enclave` on a full-width stage and puts every other
+example in a live grid under its section heading, so a whole section is read at
+a glance rather than one click at a time. Clicking a tile's name promotes it to
+the stage; which example leads is a setting, like the addresses.
 
 **If something does not start, the launcher says so.** Each example's output
 goes to `.showcase-logs/<name>.log`, and after starting them the launcher checks

@@ -10,7 +10,29 @@ part app {
 // composed decision renders as you type, over the socket (§9.4).
 part page {
   route = "/"
-  view = () => el("div", { class: "stage" }, [el(checker, {})])
+  view = () => el("div", { class: "stage" }, [
+    el("title", {}, ["guardrails"]),
+    el(checker, {}),
+  ])
+}
+
+// One decision the gate has already made. A data shape: fields only (§5).
+part Verdict {
+  body: text
+  allowed: bool
+  why: text
+}
+
+// What the gate has decided lately, for everybody. The pipe itself is pure —
+// it takes a Decision and returns one — so the record of its decisions is
+// ordinary shared `state` beside it, written wherever a decision is FINAL:
+// the page's submit, and the HTTP route. Every open page re-renders (§9.3).
+part Log {
+  state recent: [guardrails.core.Verdict] = []
+  keep = (d: guardrails.core.Decision) => {
+    let tail = slice(recent, 0, 5)
+    recent = [{ body: d.body, allowed: d.allowed, why: join(d.notes, " · ") }, ...tail]
+  }
 }
 
 part checker {
@@ -19,9 +41,31 @@ part checker {
     el("p", { class: "kicker" }, ["typed policy pipe · §4"]),
     el("h1", {}, ["guardrails"]),
     el("p", { class: "lede" }, ["Each space layers a check onto one review pipe. Type a message; the composed policy decides live."]),
-    el("input", { class: "field", oninput: typed, value: draft, placeholder: "a message to review" }, []),
+    el("form", { class: "row", onsubmit: send }, [
+      el("input", { class: "field", oninput: typed, value: draft, placeholder: "a message to review", autocomplete: "off" }, []),
+      el("button", { class: "primary" }, ["submit it"]),
+    ]),
     verdict(),
+    el("div", { class: "log" }, [
+      el("p", { class: "logtitle" }, ["Submitted, by anyone on this page"]),
+      el("ul", { class: "logrows" }, rows()),
+    ]),
   ])
+  // Typing decides for you alone; submitting decides for the record, and
+  // every other window watching this page sees it land.
+  send = () => {
+    Log.keep(Gate.review({ body: draft, allowed: true, notes: [] }))
+  }
+  rows = () => {
+    if len(Log.recent) == 0 {
+      return [el("li", { class: "logempty" }, ["Nothing submitted yet. Open a second window and submit there."])]
+    }
+    return map(Log.recent, (v: guardrails.core.Verdict) => el("li", { class: if v.allowed { "logrow ok" } else { "logrow no" } }, [
+      el("span", { class: "logmark" }, [if v.allowed { "✓" } else { "✕" }]),
+      el("span", { class: "logbody" }, [v.body]),
+      el("span", { class: "logwhy" }, [v.why]),
+    ]))
+  }
   verdict = () => {
     let d = Gate.review({ body: draft, allowed: true, notes: [] })
     return if d.allowed { el("div", { class: "verdict ok" }, [
@@ -53,10 +97,12 @@ part inspect {
   route = "/api/review"
   handle pipe = (req: std.Request) => {
     let d = fields(req.data) ?? fail(400, "send a JSON object: { body }")
-    return Gate.review({
+    let decided = Gate.review({
       body: text(d["body"] ?? ""),
       allowed: true,
       notes: [],
     })
+    Log.keep(decided)
+    return decided
   }
 }

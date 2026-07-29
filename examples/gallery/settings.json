@@ -1,11 +1,16 @@
 {
+  "gallery.Catalog.lead": {
+    "name": "enclave",
+    "blurb": "A chat program for the people holding this program's mesh id — no server in the middle, no account, no address anyone wrote down",
+    "url": "http://127.0.0.1:8096"
+  },
   "gallery.Catalog.groups": [
     {
       "label": "Views & forms",
       "sites": [
-        { "name": "counter", "blurb": "Server-side state, live over a socket", "url": "http://127.0.0.1:8081" },
-        { "name": "todo", "blurb": "A live form; items commit over the socket", "url": "http://127.0.0.1:8082" },
-        { "name": "chat", "blurb": "Composition across four files; a live feed", "url": "http://127.0.0.1:8083" }
+        { "name": "hello", "blurb": "The smallest server: two parts", "url": "http://127.0.0.1:8094" },
+        { "name": "counter", "blurb": "Yours and everyone's, side by side", "url": "http://127.0.0.1:8081" },
+        { "name": "todo", "blurb": "One shared list, live in every window", "url": "http://127.0.0.1:8082" }
       ]
     },
     {
@@ -25,13 +30,17 @@
       ]
     },
     {
-      "label": "Auth & data",
+      "label": "Accounts & storage",
       "sites": [
-        { "name": "diary", "blurb": "Sessions and an allow-guarded page", "url": "http://127.0.0.1:8090" },
-        { "name": "locker", "blurb": "Per-user storage, isolated by construction", "url": "http://127.0.0.1:8091" },
+        { "name": "diary", "blurb": "Sessions, and who else is signed in", "url": "http://127.0.0.1:8090" },
+        { "name": "locker", "blurb": "Yours alone, beside the shared shelf", "url": "http://127.0.0.1:8091" }
+      ]
+    },
+    {
+      "label": "Beyond the language",
+      "sites": [
         { "name": "ledger", "blurb": "A real SQLite datastore over foreign", "url": "http://127.0.0.1:8092" },
-        { "name": "abacus", "blurb": "A Python worker — no compiler, no C ABI", "url": "http://127.0.0.1:8095" },
-        { "name": "enclave", "blurb": "A private mesh: who else is running this", "url": "http://127.0.0.1:8096" }
+        { "name": "abacus", "blurb": "A Python worker — no compiler, no C ABI", "url": "http://127.0.0.1:8095" }
       ]
     },
     {
@@ -39,12 +48,6 @@
       "sites": [
         { "name": "commons", "blurb": "A full team chat — the whole language", "url": "http://127.0.0.1:8093" },
         { "name": "slate", "blurb": "A shared pad — two people typing at once", "url": "http://127.0.0.1:8097" }
-      ]
-    },
-    {
-      "label": "Minimal",
-      "sites": [
-        { "name": "hello", "blurb": "The smallest server: two parts", "url": "http://127.0.0.1:8094" }
       ]
     }
   ]

@@ -57,22 +57,74 @@ body {
   letter-spacing: -0.2px;
 }
 
-.choices { display: flex; gap: 8px; margin: 0 0 18px; }
+.choices { display: flex; flex-direction: column; gap: 6px; margin: 0 0 14px; }
+
+/* Each option is its own bar. The FILL's width is the number — data, not
+   appearance — so it arrives as inline geometry the way pong's ball does;
+   everything around it binds by class. */
 .vote {
-  flex: 1;
-  padding: 12px 8px;
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 13px;
   background: var(--panel-2);
   border: 1px solid var(--line);
   border-radius: 10px;
   color: var(--ink);
   font: inherit;
-  font-weight: 600;
-  text-transform: capitalize;
+  text-align: left;
+  overflow: hidden;
   cursor: pointer;
-  transition: border-color 0.15s ease, color 0.15s ease, transform 0.05s ease;
+  transition: border-color 0.15s ease, transform 0.05s ease;
 }
-.vote:hover { border-color: var(--accent); color: var(--accent); }
+.vote:hover { border-color: var(--accent); }
 .vote:active { transform: translateY(1px); }
 
-.tally { margin: 0 0 6px; font-variant-numeric: tabular-nums; }
+.fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  background: linear-gradient(90deg, rgba(91, 140, 255, 0.34), rgba(177, 140, 255, 0.24));
+  transition: width 0.25s ease;
+}
+.vote .name {
+  position: relative;
+  flex: 1;
+  font-weight: 600;
+  text-transform: capitalize;
+}
+.vote .n {
+  position: relative;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  font-size: 13px;
+}
+
+.add { display: flex; gap: 8px; margin: 0 0 16px; }
+.field {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  outline: none;
+}
+.field:focus { border-color: var(--accent); }
+.quiet {
+  padding: 8px 14px;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.quiet:hover { color: var(--ink); border-color: var(--accent); }
+
+.tally { margin: 0 0 6px; color: var(--muted); font-size: 13px; font-variant-numeric: tabular-nums; }
 .latest { margin: 0; color: var(--muted); font-size: 14px; }
