@@ -239,23 +239,28 @@ does. Needs `python3`; the driving test skips loudly without it.
 
 ## enclave
 
-A site nobody outside its mesh can see (ADR-0013's second edge). One vendored
-space carries it: `mesh` — who else is running this program, and what they are
-serving. It is `foreign`, so the language grows nothing, and it derives to
-`ashlar mesh worker`, which drives the control socket the mesh node already
-exposes to its own clients — so a project that wants a roster writes no
-binding, and the mesh ships nothing on Ashlar's behalf. `mesh.grid` is that roster as an
-element, `mesh.panel` states the settings in force, and this app layers one
-setting to take its OWN mesh rather than share the shared one — the ordinary
-replace, applied to a dependency's default. The roster is live without a poll
-in the browser: a schedule in the library notices the revision move, `updates`
-marks the collection, and every view that read it re-renders over the socket.
+A room for the people holding this program's mesh id, and nobody else. No
+server in the middle, no account, no address anyone wrote down: the id baked
+into the program IS the invite, so distributing the build is distributing the
+key, and a group changes its locks by rolling a new one.
 
-`mesh.talk` and `mesh.speak` are the other half: the mesh IS the room, so
-everyone holding its id can say something to everyone else, with no host to
-admit them and no server to go through. A line arrives as a push and patches
-the page — nothing in the program polls.
+One vendored space carries all of it: `mesh`. It is `foreign`, so the language
+grows nothing, and it derives to `ashlar mesh worker`, which drives the control
+socket the mesh node already exposes to its own clients — so a project that
+wants a room writes no binding, and the mesh ships nothing on Ashlar's behalf.
+`mesh.talk` and `mesh.speak` are the conversation, `mesh.grid` the roster,
+`mesh.panel` the settings in force. This app layers one setting to take its OWN
+mesh rather than share the shared one — the ordinary replace, applied to a
+dependency's default.
 
+Nothing here polls, in the browser or in the program. The node streams presence
+and messages to its own clients and the worker is one of them, so a peer
+arriving or a line being said pushes the collection, and every view that read
+it re-renders over the socket. The library carried a three-second schedule for
+this once; it was late by up to three seconds and, on a quiet mesh, entirely
+wasted.
+
+The site half is the smaller point, kept because it makes one:
 `ashlar run --mesh` publishes the port the origin is serving to that mesh, and
 `ashlar mesh` says what the machine can answer. The example binds nothing, so
 it talks to the node this machine runs — and on a machine with no node it still

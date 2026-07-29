@@ -386,18 +386,25 @@ reverse proxy rather than inside a hand-written cryptographic stack. A
 zero-dependency rule is not permission to counterfeit expertise.
 
 A private mesh is the same shape of admission. One space name — `mesh`: who
-else is on the network this machine joined, and the sites they serve — reaches
-the mesh node the machine already runs, over that same boundary, through an
-adapter this toolchain provides rather than one the mesh was made to ship for
-us. `ashlar run --mesh` publishes the port the origin is serving to that
-network and to nobody else: no forwarded port, no public address, no third
-party holding the session. The language grows nothing to do it. A program that
-wants to *show* the mesh vendors [`lib/mesh`](lib/mesh), whose `grid` is a
-live roster of everyone running the same program and whose `panel` states the
-settings in force; an app that would rather not share a roster with every
-other Ashlar site names its own mesh by layering one setting, which is what
-[`examples/enclave`](examples/enclave) does. Where any of it actually is stays
-a deployment fact.
+else is on the network this machine joined, what they say, and the sites they
+serve — reaches the mesh node the machine already runs, over that same
+boundary, through an adapter this toolchain provides rather than one the mesh
+was made to ship for us. The language grows nothing to do it.
+
+What that buys is a room. A program that vendors [`lib/mesh`](lib/mesh) gets
+`talk` and `speak` — everyone holding the program's mesh id can say something
+to everyone else, with no host to admit them and no server in the middle —
+plus `grid`, a live roster of who is there, and `panel`, the settings in force.
+The mesh id is the whole of the secret, so distributing the build distributes
+the key, and a group changes its locks by rolling a new one. An app that would
+rather not share a room with every other Ashlar site names its own mesh by
+layering one setting, which is what [`examples/enclave`](examples/enclave)
+does.
+
+The same mesh can carry the origin itself: `ashlar run --mesh` publishes the
+port the site is serving to that network and to nobody else — no forwarded
+port, no public address, no third party holding the session. Where any of it
+actually is stays a deployment fact.
 
 Constraint is valuable only while it serves the vision.
 

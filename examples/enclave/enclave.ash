@@ -32,16 +32,18 @@ part page {
     el("div", { class: "card" }, [
       el("p", { class: "kicker" }, ["private mesh · §9.10"]),
       el("h1", {}, ["enclave"]),
-      el("p", { class: "lede" }, ["Everyone running this program is on one mesh, and nobody else can see it. The grid below is the roster — live, server-rendered, no client code."]),
-      el("h2", {}, ["Who is here"]),
-      el(mesh.grid, {}),
-      el("h2", {}, ["Say something"]),
+      el("p", { class: "lede" }, ["A room for the people who hold this program's mesh id, and nobody else. No server in the middle, no account to make, no address anyone wrote down. Everything below is server-rendered and arrives when it happens."]),
       el(mesh.talk, {}),
       el(mesh.speak, {}),
-      el("h2", {}, ["What they are running"]),
-      el(mesh.browser, {}),
+      el("h2", {}, ["Who is here"]),
+      el(mesh.grid, {}),
       el("h2", {}, ["This node"]),
       el(mesh.panel, {}),
+      // The same mesh can carry the origin itself, which is the other half
+      // of §9.10 and a smaller point than the room: a site published to
+      // these people is reachable to them and to nobody else.
+      el("h2", {}, ["Sites on this mesh"]),
+      el(mesh.browser, {}),
     ]),
   ])
 }
