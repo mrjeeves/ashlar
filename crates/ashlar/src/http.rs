@@ -1891,6 +1891,16 @@ fn try_serve_files(ev: &mut Evaluator, root: &std::path::Path, path: &str) -> Op
                     Some("js") => "text/javascript",
                     Some("json") => "application/json",
                     Some("png") => "image/png",
+                    // A room serves what its people pass around, and a
+                    // camera frame is the case that found this list short.
+                    Some("jpg") | Some("jpeg") => "image/jpeg",
+                    Some("gif") => "image/gif",
+                    Some("webp") => "image/webp",
+                    Some("mp4") => "video/mp4",
+                    Some("webm") => "video/webm",
+                    Some("mp3") => "audio/mpeg",
+                    Some("wav") => "audio/wav",
+                    Some("pdf") => "application/pdf",
                     Some("svg") => "image/svg+xml",
                     Some("txt") => "text/plain",
                     Some("ico") => "image/x-icon",

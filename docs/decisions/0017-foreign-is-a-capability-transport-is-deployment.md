@@ -234,6 +234,37 @@ worker that never pushes is unaffected, which is why this is an addition to the
 envelope and not a version of it. The cost is one thread per worker and one
 queue; the alternative was every reactive co-process inventing its own schedule.
 
+### 5d. What the room turned out to cost (2026-07-29)
+
+Four things were wrong on the way to a file crossing between two machines, and
+every one of them failed quietly. They are recorded because each is a trap the
+next reader would fall into identically.
+
+**A route has a direction and its source is a handle.** `from = <peer>:shared`,
+`to = me` — the `:shared` suffix is what marks the lane fetch-only, and the
+node checks the fetcher is the route's `to`. Opened the other way it is a route
+that exists, reports active, and refuses every request on it.
+
+**A route endpoint must carry the DISPLAY form of a node id** (`pubkey-SUFFIX`).
+The roster and room messages carry bare pubkeys; presence carries the display
+form. With the bare form the node reports the route ACTIVE, accepts the fetch,
+and answers nothing, ever. Proved by running one fetch twice against two real
+nodes with one variable changed. Only presence knows the suffix, so `addressable`
+asks presence.
+
+**A `*_poll` answers with a raw batch under tag 1, not JSON under tag 0.** The
+adapter refused every one of them as a protocol break. It is the same frame the
+camera lane uses, so fixing it for files fixed it for video.
+
+**A fetch does not end in a poll queue.** Its chunks stream straight to disk;
+the outcome arrives as `allmystuff://file-saved` on the event stream. Waiting
+on the queue was a timeout by construction.
+
+And one that was ours alone: the first working version **blocked the server
+loop** for the length of a transfer. A foreign call that waits on a network
+freezes every page on the machine. A transfer is started and the arrival
+pushes — the shape everything else here already had.
+
 **A room's files are not a share.** Two things in that stack look alike and
 are not: a `Share` is a durable grant relationship with a *person* who brings a
 fleet, minted by an explicit act and revoked by another; a room's Shared Files

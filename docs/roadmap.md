@@ -52,6 +52,26 @@ without becoming a registry, which G5 forbids on purpose. Serves **G4, G5**.
 Proven by: a project whose capability is absent, made reachable by one command
 that resolves no versions and consults no index.
 
+**A camera's frames have never crossed two machines.** `watch` opens an MJPEG
+route, follows the batches, and writes each JPEG where the site serves it; the
+whole path is driven in the corpus, and against two real nodes the gate is
+proven — `allow` records the share the node demands, and without it a media
+offer is refused. What has NOT run is a real camera: this machine has none, so
+no frame produced by a capture device has ever reached an Ashlar page. Serves
+**G4**. Proven by: the two-machine gate, with a face on one screen.
+
+**A refused camera waits instead of saying so.** The node rejects a media offer
+ASYNCHRONOUSLY — `connect_route` succeeds and a `RouteControl::Reject` comes
+back afterwards — so a peer who has not shared their camera renders as "waiting
+for them", forever, rather than as the node's own sentence. The refusal is
+caught only when it arrives synchronously. Serves **D3, G4**. Proven by: a
+watch on an unsharing peer showing the reason within seconds.
+
+**Audio is not carried at all.** Only video is: the `AudioFrame` lane exists and
+nothing here reads it, and a browser cannot play raw frames from a `<img>`-shaped
+trick the way it can draw JPEG. Serves **G4**. Proven by: a room where somebody
+can be heard.
+
 **Capabilities with no corpus site.** An adversarial read listed ten. Four
 now have one — the directory form of `files`, `log.debug`, `log.warn`, and
 duration units beyond `ms`, all in `examples/ticker`. Still undefended:

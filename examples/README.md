@@ -268,6 +268,13 @@ push and sits on the shelf until somebody asks for it; fetched bytes land under
 the project's own assets, so serving them is the ordinary static-file part and
 the language grows nothing.
 
+`mesh.faces` and `mesh.camera` are the last lane. Holding the room's id does
+NOT get you somebody's camera — the node refuses a media route from anyone who
+is not owner, fleet, or shared with, and that refusal is right — so `allow` is
+a separate, deliberate act by the person at the machine. After it, frames cross
+as JPEG rather than H.264, and a peer's face is an ordinary `img` whose `src`
+carries the frame number. No decoder, no client code, no new language surface.
+
 The site half is the smaller point, kept because it makes one:
 `ashlar run --mesh` publishes the port the origin is serving to that mesh, and
 `ashlar mesh` says what the machine can answer. The example binds nothing, so

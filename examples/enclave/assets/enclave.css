@@ -256,3 +256,51 @@ body {
   cursor: pointer;
   text-decoration: none;
 }
+
+/* -- faces ---------------------------------------------------------------- */
+
+.mesh-faces {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.mesh-face {
+  display: grid;
+  gap: 6px;
+  padding: 8px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.mesh-face img {
+  width: 100%;
+  border-radius: 8px;
+  display: block;
+}
+
+.mesh-face-who { color: var(--muted); font-size: 12px; }
+
+.mesh-camera { display: grid; gap: 6px; }
+
+.mesh-camera-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.mesh-camera-row button {
+  padding: 4px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}

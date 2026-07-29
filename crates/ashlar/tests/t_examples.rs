@@ -286,6 +286,10 @@ fn ws_send(s: &mut TcpStream, text: &str) {
     s.write_all(&frame).unwrap();
 }
 
+/// One request whose answer is not text. `req` reads a `String`, which a
+/// JPEG is not — and an image served from a room is exactly the case worth
+/// asserting on the bytes.
+
 fn ws_read(s: &mut TcpStream) -> String {
     let mut head = [0u8; 2];
     s.read_exact(&mut head).unwrap();
@@ -1262,6 +1266,12 @@ mod fake_node {
         pub fetched: Vec<String>,
         /// Where the last registered download sink writes.
         pub landed: String,
+        /// Whether this machine has shared its camera with anyone.
+        pub granted: bool,
+        /// Every grant id this node was asked to record.
+        pub grants: Vec<String>,
+        /// How many camera batches this node has handed over.
+        pub polls: u32,
         /// `room|text` for every line this node was asked to transmit.
         pub sent: Vec<String>,
         /// Every command this node was asked to run. The rename regression is
@@ -1404,6 +1414,45 @@ mod fake_node {
                             w.lock().unwrap().push(stream);
                             continue;
                         }
+                        // A `*_poll` answers with a raw batch under tag 1,
+                        // never JSON — the node keeps media bytes out of its
+                        // JSON lane, and a double that answered otherwise
+                        // would hide exactly the bug that cost a day here.
+                        if matches!(
+                            ashlar::meshd::at(&from_json(&payload).unwrap_or(V::None), "cmd"),
+                            Some(V::Text(ref c)) if c == "video_poll"
+                        ) {
+                            // A camera that never stops would flood the
+                            // socket for the rest of the test; a real one
+                            // stops too, and an empty batch is how it says so.
+                            let sent = {
+                                let mut st = s.lock().unwrap();
+                                st.polls += 1;
+                                st.polls
+                            };
+                            if sent > 2 {
+                                let _ = stream
+                                    .write_all(&1u32.to_be_bytes())
+                                    .and_then(|_| stream.write_all(&[1u8]))
+                                    .and_then(|_| stream.flush());
+                                continue;
+                            }
+                            let jpeg: Vec<u8> = vec![0xFF, 0xD8, 0xFF, 0xE0, 0x00, 0x10, 0xFF, 0xD9];
+                            let frame = to_json(&map(&[
+                                ("t", text("video")),
+                                ("seq", V::Number(7.0)),
+                                ("jpeg", text(&b64(&jpeg))),
+                            ]));
+                            let mut batch = (frame.len() as u32).to_le_bytes().to_vec();
+                            batch.extend_from_slice(frame.as_bytes());
+                            let len = (batch.len() as u32) + 1;
+                            let _ = stream
+                                .write_all(&len.to_be_bytes())
+                                .and_then(|_| stream.write_all(&[1u8]))
+                                .and_then(|_| stream.write_all(&batch))
+                                .and_then(|_| stream.flush());
+                            continue;
+                        }
                         let answered = handle(&s, &payload);
                         // A fetch's chunks stream to disk and never reach a
                         // poll queue; the node says it landed with an event.
@@ -1470,6 +1519,24 @@ mod fake_node {
 
     fn text(s: &str) -> V {
         V::Text(s.to_string())
+    }
+
+    /// Base64, the encoding the node's JSON control channel uses for bytes.
+    fn b64(bytes: &[u8]) -> String {
+        const A: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        let mut out = String::new();
+        for group in bytes.chunks(3) {
+            let b = [group[0], *group.get(1).unwrap_or(&0), *group.get(2).unwrap_or(&0)];
+            let n = ((b[0] as u32) << 16) | ((b[1] as u32) << 8) | b[2] as u32;
+            for i in 0..4 {
+                if i <= group.len() {
+                    out.push(A[((n >> (18 - 6 * i)) & 63) as usize] as char);
+                } else {
+                    out.push('=');
+                }
+            }
+        }
+        out
     }
 
     fn handle(state: &Mutex<State>, payload: &str) -> V {
@@ -1574,25 +1641,55 @@ mod fake_node {
                         .collect(),
                 )
             }
-            "connect_route" => text("route-1"),
+            "connect_route" => {
+                // A media route from somebody who has not shared is refused,
+                // and the node's sentence is the one the page shows.
+                if matches!(ashlar::meshd::at(&args, "media"), Some(V::Text(ref m)) if m == "video")
+                    && !st.granted
+                {
+                    return map(&[
+                        ("ok", V::Bool(false)),
+                        (
+                            "error",
+                            text(
+                                "not authorized: capturing this device's screen, camera, \
+                                 or microphone needs owner/fleet or a share",
+                            ),
+                        ),
+                    ]);
+                }
+                text("route-1")
+            }
+            "share_grant" => {
+                st.granted = true;
+                st.grants.push(
+                    ashlar::meshd::at(&args, "grant")
+                        .map(|g| match ashlar::meshd::at(&g, "id") {
+                            Some(V::Text(id)) => id,
+                            _ => String::new(),
+                        })
+                        .unwrap_or_default(),
+                );
+                V::None
+            }
+            "video_watch" => V::Number(1.0),
             "disconnect_route" => V::None,
-            "file_watch" => V::Number(1.0),
             "file_download" => {
-                // The node writes a fetch into Downloads and answers with
-                // where it landed. The test's "Downloads" is a temp file.
+                // The node writes a fetch into Downloads and answers where it
+                // landed. This test's "Downloads" is a temp file.
                 let landing = std::env::temp_dir()
-                    .join(format!("ashlar_fetched_{}", std::process::id()));
-                std::fs::write(&landing, b"hi
-").unwrap();
+                    .join(format!("ashlar_fetched_{}.txt", std::process::id()));
+                std::fs::write(&landing, b"hi").unwrap();
                 st.landed = landing.to_string_lossy().into_owned();
                 text(&st.landed)
             }
             "file_send" => {
                 st.fetched.push(
                     ashlar::meshd::at(&args, "event")
-                        .map(|e| match ashlar::meshd::at(&e, "token") {
-                            Some(V::Text(t)) => t,
-                            _ => String::new(),
+                        .and_then(|e| ashlar::meshd::at(&e, "token"))
+                        .and_then(|t| match t {
+                            V::Text(t) => Some(t),
+                            _ => None,
                         })
                         .unwrap_or_default(),
                 );
@@ -1866,6 +1963,65 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
     }
     let (status, _, body) = req(port, "GET", "/room/notes.txt", None, None);
     assert_eq!((status, body.trim()), (200, "hi"), "and it serves");
+
+    // Cameras. Holding the room's id gets you into the room; it does not get
+    // you somebody's camera, and the node says so in its own words.
+    let (_, _, page) = req(port, "GET", "/", None, None);
+    assert!(page.contains("mesh-camera"), "the camera controls render: {}", page);
+    let (inst, show) = event_target(&page, "onclick", 1).unwrap();
+    ws_send(
+        &mut ws,
+        &format!(
+            "{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onclick\"}}}}",
+            inst, show
+        ),
+    );
+    let refused = ws_expect(&mut ws, "needs owner/fleet or a share", 8);
+    assert!(
+        refused.contains("mesh-face"),
+        "the refusal is on the page, not in a log: {}",
+        refused
+    );
+
+    // The person at the other machine allows it. That is a deliberate act and
+    // the only durable thing the mesh library writes.
+    let (inst, allow) = event_target(&refused, "onclick", 0).unwrap();
+    ws_send(
+        &mut ws,
+        &format!(
+            "{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onclick\"}}}}",
+            inst, allow
+        ),
+    );
+    std::thread::sleep(std::time::Duration::from_millis(200));
+    {
+        let st = node.state.lock().unwrap();
+        assert_eq!(
+            st.grants,
+            vec!["grant:n1:video:consume:*".to_string()],
+            "one grant, scoped to video and to receiving"
+        );
+    }
+    // Now the route opens and the frames arrive as pictures — an ordinary
+    // `img`, no decoder, no client code.
+    let (inst, show) = event_target(&refused, "onclick", 1).unwrap();
+    ws_send(
+        &mut ws,
+        &format!(
+            "{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onclick\"}}}}",
+            inst, show
+        ),
+    );
+    let face = ws_expect(&mut ws, "<img", 10);
+    assert!(
+        face.contains("/room/cam-n1.jpg?f=7"),
+        "the frame is served from this site, and its seq is what moves: {}",
+        face
+    );
+    let (status, headers, body) = req_bytes(port, "/room/cam-n1.jpg");
+    assert_eq!(status, 200, "and the JPEG serves");
+    assert!(headers.contains("image/jpeg"), "as an image: {}", headers);
+    assert_eq!(body[..2], [0xFF, 0xD8], "with the bytes the mesh carried");
 
     drop(ws);
     {

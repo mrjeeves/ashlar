@@ -59,6 +59,62 @@ pub const SAID_SHAPE: &str = "mesh.Said";
 /// The collection the room's offered files live in.
 pub const OFFER_SHAPE: &str = "mesh.Offer";
 
+/// The collection a watched camera's newest frame lives in.
+pub const SEEN_SHAPE: &str = "mesh.Seen";
+
+/// One peer's camera, as this machine last saw it.
+///
+/// A `<video>` element would need a container format and a decoder; a
+/// `<img>` needs a JPEG, and the mesh already carries JPEG — `video: []`
+/// negotiates MJPEG rather than H.264, so the frames arrive as pictures a
+/// browser can draw with no client code at all. Each one is written where the
+/// site can serve it, and `seq` moving is what makes the page fetch the next.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Seen {
+    pub peer: String,
+    pub who: String,
+    pub url: String,
+    pub seq: f64,
+    pub note: String,
+}
+
+impl Seen {
+    fn value(&self) -> V {
+        map(&[
+            ("peer", V::Text(self.peer.clone())),
+            ("who", V::Text(self.who.clone())),
+            ("url", V::Text(self.url.clone())),
+            ("seq", V::Number(self.seq)),
+            ("note", V::Text(self.note.clone())),
+        ])
+    }
+}
+
+/// Decode base64. The node hands JPEG bytes base64'd, because its own
+/// control channel is JSON; this is the other half of the `base64` the
+/// runtime already hand-rolls for the WebSocket handshake.
+pub fn unbase64(text: &str) -> Vec<u8> {
+    const ALPHABET: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut acc: u32 = 0;
+    let mut bits = 0u32;
+    let mut out = Vec::with_capacity(text.len() * 3 / 4);
+    for c in text.bytes() {
+        if c == b'=' {
+            break;
+        }
+        let Some(v) = ALPHABET.iter().position(|a| *a == c) else {
+            continue; // whitespace and line breaks are not data
+        };
+        acc = (acc << 6) | v as u32;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+        }
+    }
+    out
+}
+
 /// Where a fetched file lands so the site can serve it: under the project's
 /// own assets, which is where a `files` part reads from at request time. The
 /// worker runs with the project root as its working directory, so this is the
@@ -175,10 +231,7 @@ pub fn run(socket: Option<PathBuf>) -> i32 {
         Some(path) => Node::at(path),
         None => Node::derived(),
     };
-    // stdout is shared with the watch thread below, which pushes without
-    // being asked. One lock, so two writers never interleave a line.
-    let out = std::sync::Arc::new(std::sync::Mutex::new(std::io::stdout()));
-    node.watch(out.clone());
+    node.follow_events();
     let mut session = Session::new(node);
     for line in stdin.lock().lines() {
         let Ok(line) = line else { return 1 };
@@ -193,20 +246,25 @@ pub fn run(socket: Option<PathBuf>) -> i32 {
             },
             Err(e) => envelope("error", V::Text(e)),
         };
-        if say(&out, &answer).is_err() {
+        if say(&answer).is_err() {
             return 0; // the runtime hung up; nothing left to answer
         }
     }
     0
 }
 
-/// Write one line to the runtime, under the lock the watch thread shares.
-fn say(out: &std::sync::Mutex<std::io::Stdout>, line: &str) -> std::io::Result<()> {
-    let mut out = out
-        .lock()
-        .map_err(|_| std::io::Error::new(std::io::ErrorKind::Other, "stdout lock"))?;
-    writeln!(out, "{}", line)?;
-    out.flush()
+/// Write one line to the runtime.
+///
+/// Several threads speak here — the call loop answering, the watcher pushing,
+/// a camera pushing a frame — so the write takes stdout's own lock and emits
+/// the whole line under it. Two half-lines interleaved would be two lines the
+/// runtime cannot parse, from a boundary whose contract is one per line.
+fn say(line: &str) -> std::io::Result<()> {
+    let out = std::io::stdout();
+    let mut held = out.lock();
+    held.write_all(line.as_bytes())?;
+    held.write_all(b"\n")?;
+    held.flush()
 }
 
 fn envelope(key: &str, value: V) -> String {
@@ -284,6 +342,16 @@ impl Session {
                 self.offer(&paths).map_err(String::from)
             }
             "offered" => Ok(V::List(self.node.shelf())),
+            // -- seeing each other -----------------------------------------
+            "allow" => {
+                let peer = text_arg(args, 0)?;
+                self.allow(&peer).map_err(String::from)
+            }
+            "watch" => {
+                let peer = text_arg(args, 0)?;
+                self.watch(&peer).map_err(String::from)
+            }
+            "seen" => Ok(V::List(self.node.sightings())),
             "fetch" => {
                 let peer = text_arg(args, 0)?;
                 let token = text_arg(args, 1)?;
@@ -307,7 +375,8 @@ impl Session {
             "nearby" => Ok(V::List(soft(self.nearby(), Vec::new())?)),
             other => Err(format!(
                 "no such call: `{}`. The mesh answers here, peers, networks, \
-                 enter, say, heard, offer, offered, fetch; its sites answer \
+                 enter, say, heard, offer, offered, fetch, allow, watch, \
+                 seen; its sites answer \
                  expose, unexpose, \
                  published, nearby.",
                 other
@@ -538,7 +607,9 @@ impl Session {
         // endpoint handle, not a bare node: `<peer>:shared` is what marks the
         // lane fetch-only, and the node checks that the fetcher is the route's
         // `to`. Opening it the other way round yields a route that exists and
-        // refuses every request on it.
+        // refuses every request on it. The endpoint must also carry the
+        // DISPLAY form of the id, or the route goes active and answers
+        // nothing, forever.
         let mut open = BTreeMap::new();
         open.insert(
             "from".to_string(),
@@ -562,35 +633,20 @@ impl Session {
         sink.insert("route_id".to_string(), V::Text(route.clone()));
         sink.insert("req".to_string(), V::Number(req));
         sink.insert("name".to_string(), V::Text(name.to_string()));
-        let _landed = as_text(&self.node.ask("file_download", V::Map(sink))?);
-
-        let mut event = BTreeMap::new();
-        event.insert("kind".to_string(), V::Text("fetch".to_string()));
-        event.insert("req".to_string(), V::Number(req));
-        event.insert("token".to_string(), V::Text(token.to_string()));
-        let mut send = BTreeMap::new();
-        send.insert("route_id".to_string(), V::Text(route.clone()));
-        send.insert("event".to_string(), V::Map(event));
-        // A route is offered, then accepted: it exists before it is usable,
-        // and the node says so rather than queueing. Ask again until it takes.
-        let mut asked = Err(Trouble::Refused("never asked".to_string()));
-        for _ in 0..100 {
-            asked = self.node.ask("file_send", V::Map(send.clone()));
-            match &asked {
-                Err(Trouble::Refused(why)) if why.contains("active") => {
-                    std::thread::sleep(std::time::Duration::from_millis(100));
-                }
-                _ => break,
-            }
+        self.node.ask("file_download", V::Map(sink))?;
+        if let Ok(mut waiting) = self.node.pending.lock() {
+            waiting.insert(
+                format!("{}|{}", route, to_text(&V::Number(req))),
+                (peer.to_string(), token.to_string(), name.to_string()),
+            );
         }
-        asked?;
-
-        let url = self.node.await_landing(&route, req, name)?;
-        let mut close = BTreeMap::new();
-        close.insert("route_id".to_string(), V::Text(route));
-        let _ = self.node.ask("disconnect_route", V::Map(close));
-        self.node.fetched(peer, token, &url);
-        Ok(V::Text(url))
+        // Asking is where this call ENDS. A transfer takes as long as it
+        // takes, and a foreign call that waited for one would hold the server
+        // loop — every page on this machine frozen until somebody else's file
+        // arrived. The bytes land, the arrival pushes, the shelf re-renders:
+        // the same shape as everything else here.
+        self.node.request(&route, req, token);
+        Ok(V::List(self.node.shelf()))
     }
 
     /// The roster's ids, which are the room's members.
@@ -601,6 +657,88 @@ impl Session {
             .map(|p| V::Text(field(p, "id")))
             .filter(|id| !matches!(id, V::Text(t) if t.is_empty()))
             .collect())
+    }
+
+    // -- seeing each other --------------------------------------------------
+
+    /// Let one peer receive this machine's camera.
+    ///
+    /// The node refuses a media offer from anyone who is not owner, fleet, or
+    /// SHARED with — "capturing this device's screen, camera, or microphone
+    /// needs owner/fleet or a share" — and that refusal is right. Holding a
+    /// room's id gets you into the room; it does not get you somebody's
+    /// camera. So this is a separate, deliberate act by the person at the
+    /// machine, and it is the only thing here that writes something durable.
+    fn allow(&mut self, peer: &str) -> Result<V, Trouble> {
+        let person = canonical(peer);
+        let mut grant = BTreeMap::new();
+        grant.insert(
+            "id".to_string(),
+            V::Text(format!("grant:{}:video:consume:*", person)),
+        );
+        grant.insert("media".to_string(), V::Text("video".to_string()));
+        grant.insert("role".to_string(), V::Text("consume".to_string()));
+        grant.insert("label".to_string(), V::Text("Receive my camera".to_string()));
+        let mut who = BTreeMap::new();
+        who.insert("id".to_string(), V::Text(person));
+        who.insert("name".to_string(), V::Text(self.node.who(peer)));
+        let mut args = BTreeMap::new();
+        args.insert("person".to_string(), V::Map(who));
+        args.insert("node".to_string(), V::Text(peer.to_string()));
+        args.insert("grant".to_string(), V::Map(grant));
+        self.node.ask("share_grant", V::Map(args))?;
+        Ok(V::Bool(true))
+    }
+
+    /// Start showing a peer's camera on this machine.
+    ///
+    /// `video: []` asks for MJPEG rather than H.264 — the frames then arrive
+    /// as JPEG, which a page draws with no decoder and no client code. What
+    /// follows is a thread copying pictures to where the site serves them.
+    fn watch(&mut self, peer: &str) -> Result<V, Trouble> {
+        let me = self
+            .node
+            .ask("mesh_identity", V::Map(BTreeMap::new()))
+            .map(|v| field(&v, "device_id"))
+            .unwrap_or_default();
+        let mut open = BTreeMap::new();
+        open.insert("from".to_string(), V::Text(self.node.addressable(peer)));
+        open.insert("to".to_string(), V::Text(me));
+        open.insert("media".to_string(), V::Text("video".to_string()));
+        open.insert("video".to_string(), V::List(Vec::new()));
+        let route = match self.node.ask("connect_route", V::Map(open)) {
+            Ok(V::Text(id)) => id,
+            Ok(other) => field(&other, "route_id"),
+            // A refusal is the node's own sentence, and it belongs on the
+            // page rather than in a log: "they have not shared their camera"
+            // is a thing the person looking can act on.
+            Err(t) if !t.absent() => {
+                let sight = Seen {
+                    peer: peer.to_string(),
+                    who: self.node.who(peer),
+                    url: String::new(),
+                    seq: 0.0,
+                    note: t.why().to_string(),
+                };
+                self.node.saw(peer, sight);
+                return Ok(V::List(self.node.sightings()));
+            }
+            Err(t) => return Err(t),
+        };
+        let mut watch = BTreeMap::new();
+        watch.insert("route_id".to_string(), V::Text(route.clone()));
+        watch.insert("decode".to_string(), V::Bool(false));
+        self.node.ask("video_watch", V::Map(watch))?;
+        let sight = Seen {
+            peer: peer.to_string(),
+            who: self.node.who(peer),
+            url: String::new(),
+            seq: 0.0,
+            note: String::new(),
+        };
+        self.node.saw(peer, sight);
+        self.node.roll(&route, peer);
+        Ok(V::List(self.node.sightings()))
     }
 
     // -- the sites ----------------------------------------------------------
@@ -848,6 +986,43 @@ pub fn place_under_assets(landed: &str, name: &str) -> Result<String, String> {
     std::fs::copy(landed, dir.join(&safe))
         .map_err(|e| format!("could not place `{}`: {}", safe, e))?;
     Ok(format!("/room/{}", safe))
+}
+
+/// One numeric field, or zero. The frames are the node's, so a missing
+/// number is a frame this build does not fully understand, not a fault.
+fn number_of(v: &V, key: &str) -> f64 {
+    match at(v, key) {
+        Some(V::Number(n)) => n,
+        _ => 0.0,
+    }
+}
+
+/// A file name safe to build from a peer id.
+pub fn short_name(peer: &str) -> String {
+    canonical(peer)
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .take(16)
+        .collect()
+}
+
+/// Write one frame where the site serves it, atomically: a page that asks
+/// mid-write must never receive half a picture.
+pub fn write_frame_file(name: &str, bytes: &[u8]) -> std::io::Result<()> {
+    let dir = std::path::PathBuf::from(ROOM_FILES);
+    std::fs::create_dir_all(&dir)?;
+    let temp = dir.join(format!(".{}.part", name));
+    std::fs::write(&temp, bytes)?;
+    std::fs::rename(&temp, dir.join(name))
+}
+
+/// The one request a `:shared` route carries: fetch this token.
+fn send_fetch(req: f64, token: &str) -> BTreeMap<String, V> {
+    let mut event = BTreeMap::new();
+    event.insert("kind".to_string(), V::Text("fetch".to_string()));
+    event.insert("req".to_string(), V::Number(req));
+    event.insert("token".to_string(), V::Text(token.to_string()));
+    event
 }
 
 /// A key at reading length. Enough to tell two people apart in a room, and
@@ -1268,10 +1443,13 @@ pub struct Node {
     /// What the room is offering, keyed by `peer|token` so a member's
     /// re-statement replaces its own entries and nobody else's.
     offers: std::sync::Arc<std::sync::Mutex<BTreeMap<String, Offer>>>,
-    /// Finished transfers, keyed `route|req`. A fetch's chunks stream
-    /// straight to disk and never reach a poll queue, so the node says it
-    /// landed the only way it can: an event, on the stream already open.
-    saved: std::sync::Arc<std::sync::Mutex<BTreeMap<String, Result<String, String>>>>,
+    /// The newest frame from each watched camera, keyed by canonical peer.
+    seen: std::sync::Arc<std::sync::Mutex<BTreeMap<String, Seen>>>,
+    /// Transfers in flight, keyed `route|req` → the offer they are for. A
+    /// fetch's chunks stream straight to disk and never reach a poll queue,
+    /// so the node says it landed the only way it can: an event. Nothing
+    /// waits for one — the arrival pushes, like everything else here.
+    pending: std::sync::Arc<std::sync::Mutex<BTreeMap<String, (String, String, String)>>>,
 }
 
 impl Node {
@@ -1282,7 +1460,8 @@ impl Node {
             network: Node::area(),
             heard: Node::log(),
             offers: Node::empty_shelf(),
-            saved: Node::landings(),
+            seen: Node::eyes(),
+            pending: Node::landings(),
         }
     }
 
@@ -1293,11 +1472,17 @@ impl Node {
             network: Node::area(),
             heard: Node::log(),
             offers: Node::empty_shelf(),
-            saved: Node::landings(),
+            seen: Node::eyes(),
+            pending: Node::landings(),
         }
     }
 
-    fn landings() -> std::sync::Arc<std::sync::Mutex<BTreeMap<String, Result<String, String>>>> {
+    fn eyes() -> std::sync::Arc<std::sync::Mutex<BTreeMap<String, Seen>>> {
+        std::sync::Arc::new(std::sync::Mutex::new(BTreeMap::new()))
+    }
+
+    fn landings(
+    ) -> std::sync::Arc<std::sync::Mutex<BTreeMap<String, (String, String, String)>>> {
         std::sync::Arc::new(std::sync::Mutex::new(BTreeMap::new()))
     }
 
@@ -1326,7 +1511,7 @@ impl Node {
     /// failure here: the reads already answer (`Trouble::Absent`), so this
     /// simply retries, quietly, in case a node appears later — which on a
     /// laptop that opens the app after the site is up, it does.
-    pub fn watch(&self, out: std::sync::Arc<std::sync::Mutex<std::io::Stdout>>) {
+    pub fn follow_events(&self) {
         if self.socket.is_none() {
             return;
         }
@@ -1336,7 +1521,8 @@ impl Node {
             network: self.network.clone(),
             heard: self.heard.clone(),
             offers: self.offers.clone(),
-            saved: self.saved.clone(),
+            seen: self.seen.clone(),
+            pending: self.pending.clone(),
         };
         let socket = self.socket.clone().expect("checked");
         std::thread::spawn(move || {
@@ -1353,7 +1539,7 @@ impl Node {
                         let now = roster_print(&node.roster());
                         if last.as_deref() != Some(now.as_str()) {
                             last = Some(now);
-                            let _ = say(&out, &changed(PEER_SHAPE));
+                            node.push(PEER_SHAPE);
                         }
                     }
                     // Somebody said something. Every one of these is news by
@@ -1361,25 +1547,27 @@ impl Node {
                     // re-stated — so there is nothing to compare it against.
                     "allmystuff://room" => {
                         if let Some(shape) = node.remember(payload) {
-                            let _ = say(&out, &changed(shape));
+                            node.push(shape);
                         }
                     }
                     // A fetch finished (or failed). The chunks went to disk
                     // without passing through any queue, so this event is the
                     // only place the outcome exists.
                     "allmystuff://file-saved" => {
-                        let key = format!(
-                            "{}|{}",
-                            field(payload, "route"),
-                            field(payload, "req")
-                        );
-                        let outcome = match at(payload, "error") {
-                            Some(V::Text(why)) if !why.is_empty() => Err(why),
-                            _ => Ok(field(payload, "path")),
+                        let key =
+                            format!("{}|{}", field(payload, "route"), field(payload, "req"));
+                        let waiting =
+                            node.pending.lock().ok().and_then(|mut p| p.remove(&key));
+                        // Somebody else's download — the node has one lane and
+                        // its own front end may be using it.
+                        let Some((peer, token, name)) = waiting else {
+                            return;
                         };
-                        if let Ok(mut done) = node.saved.lock() {
-                            done.insert(key, outcome);
+                        match place_under_assets(&field(payload, "path"), &name) {
+                            Ok(url) => node.fetched(&peer, &token, &url),
+                            Err(why) => node.fetched(&peer, &token, &format!("!{}", why)),
                         }
+                        node.push(OFFER_SHAPE);
                     }
                     _ => {}
                 });
@@ -1464,28 +1652,129 @@ impl Node {
         }
     }
 
-    /// Wait for the node to say where a fetch landed, then put the bytes
-    /// where the site can serve them.
-    ///
-    /// Chunks stream straight to disk — `feed_download` consumes them and
-    /// never queues them — so there is nothing to poll for. The outcome
-    /// arrives as an event on the stream this worker already follows.
-    fn await_landing(&self, route: &str, req: f64, name: &str) -> Result<String, Trouble> {
-        let key = format!("{}|{}", route, to_text(&V::Number(req)));
-        for _ in 0..600 {
-            let outcome = self.saved.lock().ok().and_then(|mut d| d.remove(&key));
-            match outcome {
-                Some(Ok(landed)) => {
-                    return place_under_assets(&landed, name).map_err(Trouble::Refused)
+    /// Send one file request on a route, retrying while the route is still
+    /// being accepted — on its own thread, so nothing here waits.
+    fn request(&self, route: &str, req: f64, token: &str) {
+        // Plain data crosses into the thread; a `V` carries an `Rc` and does
+        // not, so the envelope is built on the far side.
+        let node = self.same();
+        let (route, token) = (route.to_string(), token.to_string());
+        std::thread::spawn(move || {
+            for _ in 0..100 {
+                let mut send = BTreeMap::new();
+                send.insert("route_id".to_string(), V::Text(route.clone()));
+                send.insert("event".to_string(), V::Map(send_fetch(req, &token)));
+                match node.ask("file_send", V::Map(send)) {
+                    // A route is offered, then accepted: it exists before it
+                    // is usable, and the node says so rather than queueing.
+                    Err(Trouble::Refused(why)) if why.contains("active") => {
+                        std::thread::sleep(std::time::Duration::from_millis(100));
+                    }
+                    _ => return,
                 }
-                Some(Err(why)) => return Err(Trouble::Refused(why)),
-                None => std::thread::sleep(std::time::Duration::from_millis(50)),
             }
+        });
+    }
+
+    /// This node again, for a thread that outlives the call that made it.
+    fn same(&self) -> Node {
+        Node {
+            socket: self.socket.clone(),
+            start: None,
+            network: self.network.clone(),
+            heard: self.heard.clone(),
+            offers: self.offers.clone(),
+            seen: self.seen.clone(),
+            pending: self.pending.clone(),
         }
-        Err(Trouble::Refused(format!(
-            "`{}` never finished arriving.",
-            name
-        )))
+    }
+
+    /// Tell the runtime a collection moved (§9.10).
+    pub fn push(&self, shape: &str) {
+        let _ = say(&changed(shape));
+    }
+
+    /// Record the newest state of one peer's camera.
+    fn saw(&self, peer: &str, sight: Seen) {
+        if let Ok(mut eyes) = self.seen.lock() {
+            eyes.insert(canonical(peer), sight);
+        }
+    }
+
+    fn sightings(&self) -> Vec<V> {
+        match self.seen.lock() {
+            Ok(eyes) => eyes.values().map(Seen::value).collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    /// Follow one video route for as long as it runs, writing each frame
+    /// where the site serves it and pushing the collection so the page
+    /// fetches the next one.
+    ///
+    /// A frame may arrive in pieces; a picture is only a picture whole, so
+    /// the chunks are assembled before anything is written. The file is
+    /// written beside its final name and renamed into place, so a page that
+    /// asks mid-write never gets half a JPEG.
+    fn roll(&self, route: &str, peer: &str) {
+        let node = self.same();
+        let (route, peer) = (route.to_string(), peer.to_string());
+        std::thread::spawn(move || {
+            let name = format!("cam-{}.jpg", short_name(&peer));
+            let mut args = BTreeMap::new();
+            args.insert("route_id".to_string(), V::Text(route.clone()));
+            let mut pieces: BTreeMap<u16, Vec<u8>> = BTreeMap::new();
+            let mut quiet = 0;
+            loop {
+                let batch = match node.ask_bytes("video_poll", V::Map(args.clone())) {
+                    Ok(b) => b,
+                    Err(_) => return,
+                };
+                if batch.is_empty() {
+                    quiet += 1;
+                    // Nothing for a minute means the far end stopped. Leave
+                    // the last frame where it is: a still that says when it
+                    // stopped beats a hole where a person was.
+                    if quiet > 140 {
+                        return;
+                    }
+                } else {
+                    quiet = 0;
+                }
+                for frame in frames_from_bytes(&batch) {
+                    let Some(V::Text(b64)) = at(&frame, "jpeg") else {
+                        continue;
+                    };
+                    let chunks = number_of(&frame, "chunks").max(1.0) as u16;
+                    let chunk = number_of(&frame, "chunk") as u16;
+                    pieces.insert(chunk, unbase64(&b64));
+                    if pieces.len() < chunks as usize {
+                        continue;
+                    }
+                    let whole: Vec<u8> = pieces.values().flatten().copied().collect();
+                    pieces.clear();
+                    let seq = number_of(&frame, "seq");
+                    if write_frame_file(&name, &whole).is_ok() {
+                        node.saw(&peer, Seen {
+                            who: node.who(&peer),
+                            peer: peer.clone(),
+                            url: format!("/room/{}", name),
+                            seq,
+                            note: String::new(),
+                        });
+                        node.push(SEEN_SHAPE);
+                    }
+                }
+                // Frames flowing: keep up. Silence: back off, so a camera
+                // that stopped costs one poll every half second rather than
+                // twenty, and the socket a page is on stays for the page.
+                std::thread::sleep(std::time::Duration::from_millis(if quiet > 20 {
+                    500
+                } else {
+                    50
+                }));
+            }
+        });
     }
 
     /// Mark one offer openable, once its bytes are here.

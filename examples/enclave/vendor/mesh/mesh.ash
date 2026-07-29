@@ -164,6 +164,57 @@ part shelf {
   }
 }
 
+// -- Seeing each other --------------------------------------------------------
+//
+// Holding the room's id gets you into the room. It does NOT get you somebody's
+// camera: the mesh node refuses a media route from anyone who is not owner,
+// fleet, or shared with, and that refusal is right. So `allow` is a separate,
+// deliberate act by the person at the machine — the one call here that leaves
+// something durable behind — and `watch` is what the other side then does.
+//
+// The frames cross as JPEG, not H.264, so a page shows a peer with an ordinary
+// `img` and no client code at all. `seq` moving is what makes the browser ask
+// for the next one.
+
+// One peer's camera as this machine last saw it. `note` carries the node's own
+// sentence when there is nothing to see — usually that they have not shared.
+part Seen {
+  peer: text
+  who: text
+  url: text
+  seq: number
+  note: text
+}
+
+foreign allow: (peer: text) -> bool
+foreign watch: (peer: text) -> [mesh.Seen] updates mesh.Seen
+foreign seen: () -> [mesh.Seen] watches mesh.Seen
+
+// Faces. Classes: `mesh-faces`, `mesh-face`, `mesh-face-who`, `mesh-empty`.
+part faces {
+  view = () => el("div", { class: "mesh-faces" }, tiles())
+  tiles = () => {
+    let all = seen()
+    if len(all) == 0 {
+      return [el("p", { class: "mesh-empty" }, ["Nobody is on camera."])]
+    }
+    return map(all, (s: mesh.Seen) => el("div", { class: "mesh-face" }, [
+      if s.url == "" { el("p", { class: "mesh-empty" }, [if s.note == "" { "waiting for " + s.who } else { s.note }]) } else { el("img", { src: s.url + "?f=" + text(s.seq), alt: s.who }, []) },
+      el("span", { class: "mesh-face-who" }, [s.who]),
+    ]))
+  }
+}
+
+// The two buttons that turn it on: let this room see me, and show me them.
+part camera {
+  view = () => el("div", { class: "mesh-camera" }, rows())
+  rows = () => map(peers(), (p: mesh.Peer) => el("div", { class: "mesh-camera-row" }, [
+    el("span", { class: "mesh-name" }, [p.label]),
+    el("button", { onclick: (e: std.Event) => allow(p.id) }, ["let them see me"]),
+    el("button", { onclick: (e: std.Event) => watch(p.id) }, ["show me them"]),
+  ]))
+}
+
 // The app's own mesh. Both values are settings: the name and shape are
 // source, the value is deployment's (§9.12) — so one program can be run on
 // the shared area, on a customer's private one, or on a throwaway for a

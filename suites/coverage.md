@@ -122,7 +122,12 @@ holds open, and the page patches with nothing in the program polling — the
 `{"changed": …}` line's own shape is pinned in `foreign.rs`. It drives
 transmitting the same way: a peer's line arrives as a push and patches, a line
 for another room on the same mesh is ignored, and typing into the box sends to
-the room the mesh's own name derives.
+the room the mesh's own name derives. It drives the room's other two lanes to
+the same depth: a file offered arrives on the shelf, is fetched only when asked,
+and then serves from the site as an ordinary `image/jpeg` or text; and a camera
+is refused until the person at the other machine allows it, after which the JPEG
+frames the mesh carries render as an `img` whose `seq` moves. What the suite
+cannot reach is a real capture device, which is in `docs/roadmap.md`.
 `enclave` also carries the G5 half `vendor` cannot check: its
 `vendor/mesh/` is asserted byte-identical to `lib/mesh/`, because a vendored
 dependency that drifts from its source is the version skew a registry exists to
