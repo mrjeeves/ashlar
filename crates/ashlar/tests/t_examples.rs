@@ -205,12 +205,42 @@ fn attr_of(html: &str, attr: &str) -> Option<String> {
 /// nearest ancestor. A sibling instance that closed before the element
 /// must not win, so this walks real tag nesting (the renderer closes
 /// every element explicitly).
+/// The handler pair for the element carrying `class`, addressed by NAME.
+///
+/// `event_target`'s index is fine when a page has one form; it is a trap when
+/// a page grows a second, because adding a control silently re-points every
+/// later index at a different element — which is exactly what happened when
+/// the shelf gained an add-a-file field and the test that meant "the box you
+/// talk in" started typing into the conversation's filter. Anything a test
+/// means specifically should say so.
+fn event_on_class(html: &str, class: &str, kind: &str) -> Option<(String, String)> {
+    let marker = format!("class=\"{}\"", class);
+    let on = format!("data-ash-on=\"{}\"", kind);
+    let mut from = 0;
+    while let Some(p) = html[from..].find(&marker) {
+        let start = from + p;
+        let gt = html[start..].find('>')? + start;
+        // Both must be on the SAME opening tag, or this is a different
+        // element that merely shares a class name with the one meant.
+        if let Some(k) = html[start..=gt].find(&on) {
+            return handler_at(html, start + k + on.len());
+        }
+        from = gt + 1;
+    }
+    None
+}
+
 fn event_target(html: &str, kind: &str, nth: usize) -> Option<(String, String)> {
     let marker = format!("data-ash-on=\"{}\"", kind);
     let mut at = 0;
     for _ in 0..=nth {
         at = html[at..].find(&marker)? + at + marker.len();
     }
+    handler_at(html, at)
+}
+
+/// The (instance, handler) pair for the `data-ash-on` marker ending at `at`.
+fn handler_at(html: &str, at: usize) -> Option<(String, String)> {
     let h = attr_of(&html[at..], "data-ash-h")?;
     let open_at = html[..at].rfind('<')?;
     // The handler element's own opening tag may carry the instance
@@ -2006,9 +2036,10 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
     // node was asked to transmit is what the person typed — to the room the
     // mesh's name derives, not to a room somebody had to be given.
     let (_, _, page) = req(port, "GET", "/", None, None);
-    // The room's first `oninput` is the conversation's own filter, which
-    // sends nothing anywhere; the second is the line you talk on.
-    let (inst, typed) = event_target(&page, "oninput", 1).unwrap();
+    // By NAME, not by position: the page also carries the conversation's
+    // filter and the shelf's add-a-file control, and an index would quietly
+    // start typing into one of those the next time a control is added.
+    let (inst, typed) = event_on_class(&page, "line-in", "oninput").unwrap();
     ws_send(
         &mut ws,
         &format!(
@@ -2017,7 +2048,7 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
         ),
     );
     let after = ws_expect(&mut ws, "here", 8);
-    let (inst, submit) = event_target(&after, "onsubmit", 0).unwrap();
+    let (inst, submit) = event_on_class(&after, "speak", "onsubmit").unwrap();
     ws_send(
         &mut ws,
         &format!(
@@ -2083,13 +2114,69 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
     let (status, _, body) = req(port, "GET", "/room/notes.txt", None, None);
     assert_eq!((status, body.trim()), (200, "hi"), "and it serves");
 
+    // Putting a file in the room is a CONTROL, not a command typed into the
+    // conversation. It was `/share <path>` for one round, which is a command
+    // line wearing a chat's clothes: nothing on the page said it existed, and
+    // the only way to learn it was `/help`. A browser still cannot hand a
+    // server a path it can open — a file input yields a made-up one — so the
+    // person at the machine names the file; naming it is a field and a button.
+    let (_, _, page_now) = req(port, "GET", "/", None, None);
+    assert!(
+        !page_now.contains("/help") && !page_now.contains("/share") && !page_now.contains("/clear"),
+        "no commands to memorise anywhere on the page: {}",
+        page_now
+    );
+    assert!(
+        page_now.contains("add a file by path"),
+        "the shelf carries the control instead: {}",
+        page_now
+    );
+    let (add_inst, add_typed) = event_on_class(&page_now, "room-add-in", "oninput").unwrap();
+    ws_send(
+        &mut ws,
+        &format!(
+            "{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"oninput\",\"value\":\"/tmp/plans.md\"}}}}",
+            add_inst, add_typed
+        ),
+    );
+    let typed_in = unescape(&ws_expect(&mut ws, "/tmp/plans.md", 8));
+    let (add_inst, add_go) = event_on_class(&typed_in, "room-add", "onsubmit").unwrap();
+    ws_send(
+        &mut ws,
+        &format!(
+            "{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onsubmit\"}}}}",
+            add_inst, add_go
+        ),
+    );
+    let up = unescape(&ws_expect(&mut ws, "room-mine", 8));
+    assert!(
+        up.contains("/tmp/plans.md"),
+        "what this machine put up is listed where it can be taken back down: {}",
+        up
+    );
+    {
+        let st = node.state.lock().unwrap();
+        assert!(
+            st.minted.iter().any(|m| m == "plans.md"),
+            "and the node was asked to mint a token for it: {:?}",
+            st.minted
+        );
+    }
+
     drop(ws);
     {
         let st = node.state.lock().unwrap();
+        // One line said, and one share announced — both to the room the mesh's
+        // own name derives, with no host to mint one or be offline. (The
+        // second entry arrived when putting a file up became a control on the
+        // page: the room has to be told, and there is nobody to aggregate it.)
         assert_eq!(
             st.sent,
-            vec![format!("chat|{}|here", room)],
-            "one line, to the room the mesh's own name derives"
+            vec![
+                format!("chat|{}|here", room),
+                format!("share_list|{}|", room)
+            ],
+            "what was transmitted, in order"
         );
     }
 
@@ -2097,6 +2184,23 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
     assert!(
         page.contains("anyone about?"),
         "what was heard is on the page: {}",
+        page
+    );
+    // NEWEST FIRST, inside the pane that scrolls. Both halves matter and
+    // neither is arbitrary: the stylesheet turns `.talk-scroll` upside down
+    // (`column-reverse`), which is what pins a chat to its newest line with
+    // no client code — so the document order has to be the reverse of the
+    // reading order or the room reads backwards. And the lines live in that
+    // pane rather than in `.talk` itself, because a pane that scrolls must
+    // be allowed to be shorter than its contents; when they were siblings
+    // the conversation grew the page instead and pushed the composer off
+    // the bottom of it.
+    let pane = page.find("talk-scroll").expect("the conversation scrolls in its own pane");
+    let newer = page.find("<span>here</span>").expect("the line this machine said");
+    let older = page.find("<span>anyone about?</span>").unwrap();
+    assert!(
+        pane < newer && newer < older,
+        "the newest line comes first in the pane, because the pane is reversed: {}",
         page
     );
     assert!(

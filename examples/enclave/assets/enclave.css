@@ -47,6 +47,7 @@ body {
 .room-side {
   background: var(--side);
   border-right: 1px solid var(--line);
+  min-height: 0;
   overflow-y: auto;
   padding: 16px 12px 20px;
   display: flex;
@@ -150,12 +151,79 @@ body {
   overflow-wrap: anywhere;
 }
 
+/* This machine's own part of the shelf: what it put up, and the two controls
+   that change that. No command to remember. */
+.room-give { margin-top: 10px; display: flex; flex-direction: column; gap: 4px; }
+
+.room-mine {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 6px;
+  border-radius: 9px;
+  background: rgba(91, 140, 255, 0.10);
+  font-size: 13px;
+  min-width: 0;
+}
+.room-mine-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  direction: rtl;
+  text-align: left;
+}
+.room-mine-off {
+  flex: none;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+.room-mine-off:hover { color: #ff7b72; }
+
+.room-add { display: flex; gap: 6px; margin-top: 4px; }
+.room-add-in {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 10px;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: inherit;
+  font: inherit;
+  font-size: 12.5px;
+}
+.room-add-in:focus { outline: none; border-color: rgba(91, 140, 255, 0.5); }
+.room-add button {
+  flex: none;
+  padding: 6px 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.room-add button:hover { color: var(--ink); border-color: var(--accent); }
+
 /* -- the main column ------------------------------------------------------ */
 
+/* `min-height: 0` on both of these is the whole of it. A grid or flex item
+   defaults to `min-height: auto` — big enough for its content — so a pane
+   with `overflow-y: auto` still GROWS instead of scrolling, and pushes the
+   composer off the bottom of the page. A thing that scrolls has to be
+   allowed to be shorter than what is in it. */
 .room-main {
   display: grid;
   grid-template-rows: auto 1fr auto;
   min-width: 0;
+  min-height: 0;
 }
 
 .room-top {
@@ -184,18 +252,31 @@ body {
 /* -- the conversation ------------------------------------------------------ */
 
 .talk {
-  overflow-y: auto;
+  min-height: 0;
   padding: 0 22px 8px;
   display: flex;
   flex-direction: column;
+}
+
+/* Upside down, and fed newest-first, so the browser's own scroll anchoring
+   keeps the newest line in view: a message arriving over the socket does not
+   drag the reader away from what they were reading, and opening the page
+   starts at the bottom the way a chat should. No client code does this. */
+.talk-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column-reverse;
   gap: 2px;
 }
+/* A flex child shrinks by default, so without this a long conversation is
+   sixty squashed lines rather than a scroll. */
+.talk-scroll > * { flex: none; }
 
 /* Filtering is local — it reads what this page already holds. */
 .sift {
-  position: sticky;
-  top: 0;
-  z-index: 1;
+  flex: none;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -323,19 +404,11 @@ body {
 
 /* -- the line you type in -------------------------------------------------- */
 
-.speak-wrap { border-top: 1px solid var(--line); }
-
-.speak-hint {
-  margin: 0;
-  padding: 9px 22px 0;
-  color: var(--muted);
-  font-size: 12.5px;
-}
-
 .speak {
   display: flex;
   gap: 10px;
   padding: 14px 22px 18px;
+  border-top: 1px solid var(--line);
 }
 
 .line-in {
