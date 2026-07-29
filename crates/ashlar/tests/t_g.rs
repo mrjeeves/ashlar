@@ -1513,6 +1513,118 @@ char* lies(const char* args) {
 }
 
 #[test]
+fn t_g_a_transport_that_cannot_work_here_says_so_instead_of_looking_nowhere() {
+    // covers: G4, D2, ADR-0017
+    // The regression: off unix there are no library extensions to probe, so
+    // the "no library" arm ran with an EMPTY list and printed
+    //   foreign space `ledger.store` has no library. Looked for .
+    //   Build the shim, or bind the space in `foreign.json`.
+    // — an empty list of places looked, and then an instruction that cannot be
+    // carried out on the one platform that produces it, because `native` needs
+    // a POSIX loader Windows does not have. A correction you cannot apply is
+    // not a correction (D2). Driven through the pure function so BOTH arms are
+    // covered from any platform: the empty list is exactly the non-unix case.
+    let said = ashlar::foreign::native_failure("ledger.store", &[], None);
+    assert!(
+        !said.contains("Looked for ."),
+        "never name an empty list of places looked: {}",
+        said
+    );
+    assert!(
+        !said.contains("Build the shim"),
+        "and never advise a build that cannot help here: {}",
+        said
+    );
+    assert!(
+        said.contains("POSIX dynamic loader") && said.contains("`worker`"),
+        "say what is true of the platform, and what to do instead: {}",
+        said
+    );
+
+    // With somewhere to look, it names the places — and when the shim's own
+    // source is sitting next to the library that is missing, it names THAT,
+    // because "build the shim" is a shrug until it says which one.
+    let tried = vec![PathBuf::from("/p/foreign/x.so"), PathBuf::from("/p/foreign/x.dylib")];
+    let src = PathBuf::from("/p/foreign/x.rs");
+    let named = ashlar::foreign::native_failure("x", &tried, Some(&src));
+    assert!(named.contains("/p/foreign/x.so") && named.contains("/p/foreign/x.dylib"), "{}", named);
+    assert!(named.contains("/p/foreign/x.rs") && named.contains("cdylib"), "{}", named);
+    let bare = ashlar::foreign::native_failure("x", &tried, None);
+    assert!(bare.contains("Build the shim"), "with no source to name, the general fix: {}", bare);
+}
+
+/// A worker that starts and then dies must say WHICH program died and how.
+#[test]
+fn t_g_a_dead_worker_names_the_program_and_its_exit() {
+    // covers: G4, D2, ADR-0017
+    // "it closed its output without answering" is true and useless: it names
+    // neither the program nor what became of it. The common cause is a binding
+    // naming a program that is not the one it meant — a Windows `python3` shim
+    // that prints to stderr and exits is the one that produced this — and the
+    // exit status is the only thing that says so.
+    if std::process::Command::new("python3").arg("-V").output().is_err() {
+        eprintln!("t_g_a_dead_worker: no python3; skipping");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("ashlar-deadworker-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("foreign")).unwrap();
+    std::fs::write(
+        dir.join("app.ash"),
+        "space dead\n\nforeign ask: (text) -> text\n\npart Server {\n  port = 0\n}\n\npart go {\n  route = \"/go\"\n  handle pipe = (req: std.Request) => ask(\"x\")\n}\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("foreign/dies.py"),
+        "import sys\nsys.stderr.write('not the interpreter you meant\\n')\nsys.exit(3)\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("foreign.json"),
+        "{ \"dead\": { \"via\": \"worker\", \"run\": [\"python3\", \"foreign/dies.py\"] } }",
+    )
+    .unwrap();
+
+    let (port, stop, join) = start(dir.clone());
+    let (_, body) = http_get(port, "/go");
+    assert!(
+        body.contains("`python3 foreign/dies.py`"),
+        "name the program that died: {}",
+        body
+    );
+    assert!(
+        body.contains("exit status: 3"),
+        "and what became of it: {}",
+        body
+    );
+    assert!(
+        body.contains("foreign check"),
+        "and how to find this out before a request does: {}",
+        body
+    );
+
+    // A binding naming a program that is not there at all is the other half,
+    // and it must name the program rather than only the errno.
+    std::fs::write(
+        dir.join("foreign.json"),
+        "{ \"dead\": { \"via\": \"worker\", \"run\": [\"python-that-is-not-here\", \"foreign/dies.py\"] } }",
+    )
+    .unwrap();
+    stop.store(true, Ordering::Relaxed);
+    join.join().unwrap();
+    let (port2, stop2, join2) = start(dir.clone());
+    let (_, gone) = http_get(port2, "/go");
+    assert!(
+        gone.contains("`python-that-is-not-here`") && gone.contains("foreign.json"),
+        "name the program and where the binding lives: {}",
+        gone
+    );
+    stop2.store(true, Ordering::Relaxed);
+    join2.join().unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
 fn t_g_foreign_command_transport_reaches_a_program_with_no_adapter() {
     // covers: G4, ADR-0017
     // The floor this transport exists to lower: reaching what is ALREADY on

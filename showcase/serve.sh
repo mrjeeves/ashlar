@@ -87,6 +87,29 @@ build_ledger_shim() {
   return 1
 }
 
+# One Python, whatever it is called here. Two examples reach a co-process and
+# the interpreter's name differs by machine — which is exactly the kind of fact
+# a binding file exists to carry, rather than source (§9.10, ADR-0017).
+PY=""
+for candidate in python3 python; do
+  if command -v "$candidate" >/dev/null 2>&1; then PY="$candidate"; break; fi
+done
+
+LOGS=".showcase-logs"
+mkdir -p "$LOGS"
+
+# `abacus` ships a binding that names `python3`. Where the interpreter answers
+# to something else, rebind it here — the example is not edited, and its own
+# foreign.json stays the honest default.
+ABACUS_FOREIGN=""
+if [ -n "$PY" ] && [ "$PY" != "python3" ]; then
+  printf '{ "abacus": { "via": "worker", "run": ["%s", "foreign/abacus.py"] } }\n' "$PY" \
+    > "$LOGS/abacus.foreign.json"
+  ABACUS_FOREIGN="$PWD/$LOGS/abacus.foreign.json"
+  echo "note: python3 is not on PATH; abacus will use \`$PY\`."
+fi
+
+LEDGER_FOREIGN=""
 if build_ledger_shim; then
   # Prove it, rather than assuming the build implies reachability — this is
   # exactly what `foreign check` is for.
@@ -94,22 +117,31 @@ if build_ledger_shim; then
     echo "  built, but the capability is still not reachable:"
     "$BIN" foreign check examples/ledger 2>&1 | sed 's/^/    /'
   fi
+elif [ -n "$PY" ]; then
+  # The capability is named once; how it is reached is deployment's call, and
+  # ledger ships a second answer for exactly this case. Same SQL, same shapes,
+  # no compiler and no development package — Python's standard library has
+  # SQLite in it.
+  printf '{ "ledger.store": { "via": "worker", "run": ["%s", "foreign/ledger.store.py"] } }\n' "$PY" \
+    > "$LOGS/ledger.foreign.json"
+  LEDGER_FOREIGN="$PWD/$LOGS/ledger.foreign.json"
+  echo
+  echo "  ledger will use its Python binding instead — same SQL, same shapes,"
+  echo "  no compiler and no development package. The example is unchanged:"
+  echo "  only which transport answers, which is a deployment fact (§9.10)."
+  echo
 else
   echo
-  echo "  The other sixteen examples are unaffected. ledger's page will serve"
-  echo "  but its store will fault at the boundary, with that same correction."
-  echo "  \`abacus\` is the foreign example that needs no compiler at all."
+  echo "  …and there is no Python here to fall back to either, so ledger's page"
+  echo "  will serve but its store will fault at the boundary with that same"
+  echo "  correction. The other sixteen examples are unaffected."
   echo
 fi
 
-# Two examples reach something this repository does not ship. Say so here:
-# `abacus` faults at its boundary without it, which reads as a broken page
-# rather than a missing part, and `enclave` serves a roster that is empty for
-# a reason worth stating before it is read as "nobody is out there".
-if ! command -v python3 >/dev/null 2>&1; then
+if [ -z "$PY" ]; then
   echo
-  echo "  python3 is not on PATH, so \`abacus\` will serve and then fault at its"
-  echo "  boundary — its worker is Python."
+  echo "  No Python on PATH, so \`abacus\` will serve and then fault at its"
+  echo "  boundary — its worker is Python. Install Python 3 and re-run."
   echo
 fi
 if [ ! -S "${MYOWNMESH_HOME:-$HOME/.myownmesh}/allmystuff-node.sock" ] \
@@ -123,7 +155,6 @@ fi
 
 PIDS=()
 NAMES=()
-LOGS=".showcase-logs"
 cleanup() {
   echo
   echo "stopping…"
@@ -138,13 +169,23 @@ trap cleanup INT TERM
 # missing setting, a port already taken, a stored value that no longer fits
 # its shape. The line below printed anyway, so the launcher said a server
 # was at an address where nothing was listening.
-mkdir -p "$LOGS"
 
 echo
 for entry in "${EXAMPLES[@]}"; do
   name="${entry%%:*}"
   port="${entry##*:}"
-  "$BIN" run "examples/$name" --port "$port" > "$LOGS/$name.log" 2>&1 &
+  # Two examples may be reached through a binding this launcher chose. Every
+  # other one runs with the binding its own project ships.
+  bind=""
+  case "$name" in
+    abacus) bind="$ABACUS_FOREIGN" ;;
+    ledger) bind="$LEDGER_FOREIGN" ;;
+  esac
+  if [ -n "$bind" ]; then
+    ASHLAR_FOREIGN="$bind" "$BIN" run "examples/$name" --port "$port" > "$LOGS/$name.log" 2>&1 &
+  else
+    "$BIN" run "examples/$name" --port "$port" > "$LOGS/$name.log" 2>&1 &
+  fi
   PIDS+=($!)
   NAMES+=("$name")
   printf '  %-12s http://127.0.0.1:%s\n' "$name" "$port"

@@ -52,16 +52,54 @@ $examples = @(
   @{ name = 'slate';      port = 8097 }
 )
 
+# One Python, whatever it is called here. Two examples reach a co-process and
+# the interpreter's name differs by machine - which is exactly the kind of fact
+# a binding file exists to carry, rather than source (ADR-0017).
+$py = $null
+foreach ($candidate in @('python3', 'python', 'py')) {
+  if (Get-Command $candidate -ErrorAction SilentlyContinue) { $py = $candidate; break }
+}
+
+$logs = '.showcase-logs'
+New-Item -ItemType Directory -Force -Path $logs | Out-Null
+
+# `abacus` ships a binding that names `python3`, which on Windows is usually
+# either absent or a Store stub that prints to stderr and exits. Rebind it
+# here; the example itself is not edited.
+$abacusBind = $null
+if ($py -and $py -ne 'python3') {
+  $f = Join-Path $logs 'abacus.foreign.json'
+  "{ ""abacus"": { ""via"": ""worker"", ""run"": [""$py"", ""foreign/abacus.py""] } }" |
+    Set-Content -Path $f -Encoding ascii
+  $abacusBind = (Resolve-Path $f).Path
+  Write-Host "note: python3 is not on PATH; abacus will use ``$py``."
+}
+
 # `ledger` reaches SQLite over the `native` transport, which needs a POSIX
-# dynamic loader. On Windows that transport is unavailable by design — the
-# cross-platform answer is a worker, which is exactly what `abacus` shows — so
-# ledger's page still serves but its store will fault. Everywhere else, build
-# the shim first (mirrors the driving test).
+# dynamic loader. Windows has none, so on Windows the answer is not "that
+# example is broken here" - it is the OTHER binding ledger ships: the same
+# three operations over a worker, using Python's standard-library SQLite.
+# Everywhere else, build the shim first (mirrors the driving test).
+$ledgerBind = $null
+function Use-LedgerWorker($why) {
+  if (-not $py) {
+    Write-Host "  $why, and there is no Python here to fall back to either, so"
+    Write-Host '  ledger''s page will serve but its store will fault at the boundary.'
+    return $null
+  }
+  $f = Join-Path $logs 'ledger.foreign.json'
+  "{ ""ledger.store"": { ""via"": ""worker"", ""run"": [""$py"", ""foreign/ledger.store.py""] } }" |
+    Set-Content -Path $f -Encoding ascii
+  Write-Host "  $why, so ledger uses its Python binding - same SQL, same shapes,"
+  Write-Host '  no compiler and no development package. The example is unchanged:'
+  Write-Host '  only which transport answers, which is a deployment fact.'
+  return (Resolve-Path $f).Path
+}
+
 if ($onWindows) {
-  Write-Host 'note: ledger needs the POSIX-only `native` transport; its store will not load here.'
-  Write-Host '      (`abacus` is the cross-platform foreign example - a worker co-process.)'
+  $ledgerBind = Use-LedgerWorker 'the `native` transport needs a POSIX loader, which Windows has not'
 } elseif (-not (Get-Command rustc -ErrorAction SilentlyContinue)) {
-  Write-Host '  ledger needs a Rust toolchain to build its SQLite shim; skipping it.'
+  $ledgerBind = Use-LedgerWorker 'there is no Rust toolchain here to build the shim'
 } else {
   Write-Host "building ledger's SQLite shim..."
   # Capture the error rather than discarding it: hiding this is what turns a
@@ -81,8 +119,7 @@ if ($onWindows) {
       Write-Host '    macOS           ships with the Xcode command line tools'
     }
     Write-Host ''
-    Write-Host '  The other sixteen examples are unaffected. ledger''s page will serve'
-    Write-Host '  but its store will fault at the boundary, with that same correction.'
+    $ledgerBind = Use-LedgerWorker 'the shim did not build'
   } else {
     # Prove reachability rather than assuming the build implies it.
     & $bin foreign check examples/ledger *> $null
@@ -97,10 +134,10 @@ if ($onWindows) {
 # at its boundary without it, which reads as a broken page rather than a
 # missing part; `enclave` serves a roster that is empty for a reason worth
 # stating before it is read as "nobody is out there".
-if (-not (Get-Command python3 -ErrorAction SilentlyContinue)) {
+if (-not $py) {
   Write-Host ''
-  Write-Host '  python3 is not on PATH, so `abacus` will serve and then fault at its'
-  Write-Host '  boundary — its worker is Python.'
+  Write-Host '  No Python on PATH, so `abacus` will serve and then fault at its'
+  Write-Host '  boundary - its worker is Python. Install Python 3 and re-run.'
   Write-Host ''
 }
 if (-not (Test-Path '\\.\pipe\allmystuff-node')) {
@@ -118,14 +155,18 @@ try {
   # away the only evidence of a program that refused to start — a port
   # already taken, a missing setting, a stored value that no longer fits
   # its shape — while the line below claimed it was up.
-  $logs = '.showcase-logs'
-  New-Item -ItemType Directory -Force -Path $logs | Out-Null
   foreach ($ex in $examples) {
+    # Two examples may be reached through a binding this launcher chose.
+    # Every other one runs with the binding its own project ships.
+    $bind = switch ($ex.name) { 'abacus' { $abacusBind } 'ledger' { $ledgerBind } default { $null } }
+    $had = $env:ASHLAR_FOREIGN
+    if ($bind) { $env:ASHLAR_FOREIGN = $bind } else { Remove-Item Env:\ASHLAR_FOREIGN -ErrorAction SilentlyContinue }
     $p = Start-Process -FilePath $bin `
       -ArgumentList @('run', "examples/$($ex.name)", '--port', "$($ex.port)") `
       -PassThru -WindowStyle Hidden `
       -RedirectStandardOutput (Join-Path $logs "$($ex.name).log") `
       -RedirectStandardError (Join-Path $logs "$($ex.name).err")
+    if ($had) { $env:ASHLAR_FOREIGN = $had } else { Remove-Item Env:\ASHLAR_FOREIGN -ErrorAction SilentlyContinue }
     $procs += $p
     Write-Host ("  {0,-12} http://127.0.0.1:{1}" -f $ex.name, $ex.port)
   }
