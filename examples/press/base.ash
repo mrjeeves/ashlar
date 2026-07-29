@@ -33,12 +33,36 @@ part page {
 part studio {
   state draft: text = "hello"
   view = () => el("div", { class: "card" }, [
+    el("title", {}, ["press"]),
     el("p", { class: "kicker" }, ["layered pipe · §4"]),
     el("h1", {}, ["press"]),
-    el("p", { class: "lede" }, ["Your text runs through the composed render pipe — base first, then the markdown layer — and the output updates as you type."]),
+    el("p", { class: "lede" }, ["One part, four merge kinds, two spaces. Everything below is the COMPOSED part — nothing on this page reads a layer."]),
     el("input", { class: "field", oninput: typed, value: draft, placeholder: "type something" }, []),
-    el("p", { class: "outlabel" }, ["rendered output"]),
-    el("pre", { class: "out" }, [Pipeline.render(draft)]),
+    el("div", { class: "flow" }, [
+      el("div", { class: "step" }, [
+        el("p", { class: "steplabel" }, ["in"]),
+        el("pre", { class: "out" }, [draft]),
+      ]),
+      el("span", { class: "arrow" }, ["→"]),
+      el("div", { class: "step" }, [
+        el("p", { class: "steplabel" }, ["through render pipe"]),
+        el("pre", { class: "out" }, [Pipeline.render(draft)]),
+      ]),
+    ]),
+    el("div", { class: "kinds" }, [
+      kind("append", "tags", join(Pipeline.tags, " + ")),
+      kind("deep", "limits", shown()),
+      kind("pipe", "render", text(len(Pipeline.tags)) + " layers, base first"),
+      kind("stack", "boot / halt", "up in use order, down in reverse"),
+    ]),
+  ])
+  // The merged map, read back out. `deep` put `depth` beside `size` without
+  // either space knowing about the other.
+  shown = () => join(map(keys(Pipeline.limits), (k: text) => k + " " + text(Pipeline.limits[k] ?? 0)), ", ")
+  kind = (name: text, prop: text, value: text) => el("div", { class: "kind" }, [
+    el("span", { class: "kname" }, [name]),
+    el("span", { class: "kprop" }, [prop]),
+    el("span", { class: "kvalue" }, [value]),
   ])
   typed = (e: std.Event) => {
     draft = text(e.data.value)

@@ -323,5 +323,5 @@ One category is a compile-time fact. Nominal individuation is T-B. Legislated co
 matrix. Computable grounding is T-E. Essence-determines-existence is T-F. Intelligibility as
 maintained achievement is T-A3, re-run as the community of readers drifts. The strains
 themselves are testable in principle — the seventh is *already* exercised every time the suite
-drives `examples/chat`.
+drives `examples/commons`.
 

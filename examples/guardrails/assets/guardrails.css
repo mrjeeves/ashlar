@@ -99,3 +99,42 @@ body {
 .mark { font-size: 16px; }
 .notes { margin: 0; padding-left: 26px; color: var(--muted); }
 .notes li { margin: 2px 0; }
+
+.row { display: flex; gap: 10px; }
+.row .field { flex: 1; min-width: 0; }
+.primary {
+  padding: 10px 16px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: 10px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.primary:hover { filter: brightness(1.08); }
+
+.log { margin-top: 20px; border-top: 1px solid var(--line); padding-top: 14px; }
+.logtitle {
+  margin: 0 0 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  color: var(--muted);
+}
+.logrows { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 4px; }
+.logrow {
+  display: grid;
+  grid-template-columns: 1rem 1fr auto;
+  gap: 9px;
+  align-items: baseline;
+  font-size: 13px;
+  padding: 5px 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+.logrow.ok .logmark { color: #46d17f; }
+.logrow.no .logmark { color: #ff7b72; }
+.logbody { overflow-wrap: anywhere; }
+.logwhy { color: var(--muted); font-size: 12px; text-align: right; }
+.logempty { color: var(--muted); font-size: 12.5px; list-style: none; }

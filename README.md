@@ -221,8 +221,8 @@ be a guess wearing a correction's clothes, and that number is printed on every
 run so it cannot fall quietly.
 
 ```sh
-ashlar check examples/chat
-ashlar check examples/chat --human
+ashlar check examples/commons
+ashlar check examples/commons --human
 ashlar fix
 ```
 
@@ -328,7 +328,7 @@ Run one project directly:
 
 ```sh
 cargo build --release
-target/release/ashlar run examples/chat
+target/release/ashlar run examples/enclave
 ```
 
 ## One program, from server to browser
@@ -391,12 +391,14 @@ serve — reaches the mesh node the machine already runs, over that same
 boundary, through an adapter this toolchain provides rather than one the mesh
 was made to ship for us. The language grows nothing to do it.
 
-What that buys is a room. A program that vendors [`lib/mesh`](lib/mesh) gets
-`talk` and `speak` — everyone holding the program's mesh id can say something
-to everyone else, with no host to admit them and no server in the middle —
-plus `grid`, a live roster of who is there, and `panel`, the settings in force.
-The mesh id is the whole of the secret, so distributing the build distributes
-the key, and a group changes its locks by rolling a new one. An app that would
+What that buys is a room. A program that vendors [`lib/mesh`](lib/mesh) writes
+`el(mesh.room, {})` and has one: who is present, the conversation, the files
+people put in it, and the line you type — everyone holding the program's mesh
+id can say something to everyone else, with no host to admit them and no server
+in the middle. The pieces are separate parts (`talk`, `speak`, `people`,
+`shelf`, `grid`, `panel`) for an app that would rather place them itself. The
+mesh id is the whole of the secret, so distributing the build distributes the
+key, and a group changes its locks by rolling a new one. An app that would
 rather not share a room with every other Ashlar site names its own mesh by
 layering one setting, which is what [`examples/enclave`](examples/enclave)
 does.

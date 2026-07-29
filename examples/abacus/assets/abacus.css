@@ -89,3 +89,43 @@ body {
   border-radius: 10px;
   font-variant-numeric: tabular-nums;
 }
+
+.panetitle {
+  margin: 18px 0 7px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.7px;
+  color: var(--muted);
+}
+.row-in { display: flex; gap: 8px; }
+.row-in .field { flex: 1; min-width: 0; }
+.quiet {
+  padding: 8px 14px;
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  color: var(--muted);
+  font: inherit;
+  font-size: 14px;
+  cursor: pointer;
+}
+.quiet:hover { color: var(--ink); border-color: var(--accent); }
+
+.samples {
+  margin: 12px 0 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12.5px;
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+.none { margin: 12px 0 0; color: var(--muted); font-size: 12.5px; }
+.wipe {
+  margin-top: 10px;
+  border: 0;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12.5px;
+  cursor: pointer;
+}
+.wipe:hover { color: var(--ink); }

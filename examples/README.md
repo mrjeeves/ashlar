@@ -11,89 +11,138 @@ Every example wears the same restrained dark skin — one house palette,
 declared per project as `assets/<name>.css` and bound by `class` name
 (§9.4, ADR-0016). To flip through them all at once, run `./showcase/serve.sh`
 (it starts each example on its own port) and open <http://127.0.0.1:8080> —
-`gallery`, below, which frames the other seventeen.
+`gallery`, below, which frames the other sixteen, all of them live at once.
+
+Most of them are worth opening **twice**. Almost every one now has something
+in it that two windows share, because a language whose whole runtime story is
+"the server holds the state and the page follows it" is not demonstrated by a
+page that only ever talks to itself.
+
+## enclave
+
+**The chat.** A room for the people who hold this program's mesh id, and
+nobody else. No server in the middle, no account, no address anyone wrote
+down: the id baked into the build IS the invite, so distributing the program
+distributes the key, and a group changes its locks by rolling a new one.
+
+The whole app is one element. `enclave.ash` is a `port`, a `start` that joins
+the mesh, one setting layered to take its own room rather than the shared
+area, and:
+
+```ash
+el(mesh.room, {})
+```
+
+Everything inside that is the vendored `mesh` space, and this file says none
+of it: who is in the room down one side with their presence live off the
+roster, what is on the shelf under them, and the conversation down the other.
+Your own words sit on the other side of the thread and read as yours; a run of
+lines from one person says their name once; arrivals are notices the room works
+out for itself from the roster, so they cost no traffic and no two members can
+disagree about who was there; a file appears where it was put, with its size
+and a button that fetches it; the first line said since you opened the page is
+marked; and a filter narrows the conversation without sending anything
+anywhere. Type `/help` for the two things you can say that are not a line —
+`/share <path>` puts a file in the room, `/clear` takes yours back down. What
+was said survives the site restarting.
+
+None of that is the language. The `mesh` space is `foreign` (§9.10) and derives
+to `ashlar mesh worker`, which drives the control socket the mesh node already
+exposes to its own clients — so a project that wants a room writes no binding,
+and the mesh ships nothing on Ashlar's behalf. Nothing polls, in the browser or
+in the program: the node streams presence and messages to its own clients, the
+worker is one of them, and a push re-renders every view that read what moved.
+
+On a machine with no mesh node the site still serves, and the room's header
+says why instead of showing an empty room that looks merely quiet. Its driving
+test stands up the node's own control socket and lets the shipped worker drive
+it, so what is faked is the network and nothing else; a second test runs it
+against a socket that is not there at all. What two machines would prove is
+open in `docs/roadmap.md`, not implied here.
 
 ## gallery
 
-The showcase itself, and the reason `setting` exists. It renders a sidebar
-of every other example with a live frame — seventeen addresses — and its
-source contains not one of them. `Catalog` declares
-`setting groups: [Group]`, deployment fills it in from `settings.json`,
-and starting without it refuses by name rather than serving dead frames
-(§9.12, ADR-0020). Its sidebar handlers are inline functions in an
-element's attrs, closing over the mapped `Site`.
+The showcase itself, and the reason `setting` exists. It renders every other
+example as a LIVE frame — sixteen addresses, all running — and its source
+contains not one of them. `Catalog` declares `setting lead: Site` and
+`setting groups: [Group]`; deployment fills both in from `settings.json`, and
+starting without them refuses by name rather than serving dead frames (§9.12,
+ADR-0020). `enclave` leads on the stage because the settings say so; clicking
+any tile's name promotes it there instead, which is per-instance state patched
+over the socket — the page never reloads and the frames under it keep whatever
+they were showing. The tile handlers are inline functions in an element's
+attrs, closing over the mapped `Site`.
 
 ## hello
 
-The smallest server: one part declares the `port`, one part owns a
-route. Two parts, no ceremony.
+The smallest server, and the smallest thing worth two windows. `port` on one
+part, a route answering plain text on another — and a page that says how many
+people have it open, which costs one shared `state` and the view lifecycle
+(`start` on mount, `stop` when the socket goes). No heartbeat, no polling, and
+the first window is told about the second without asking.
 
 ## counter
 
-The live view protocol (§9.4) in one file: a `view` part with
-per-instance `state`, instantiated with `el`, its `onclick` handler
-running server-side over the built-in socket. The browser runs no
-program code — open two windows and click.
+The two scopes a `state` property can have, side by side — the one thing about
+§9.3 worth learning first, and invisible in a single window. The left counter
+is `state` on a part instantiated with `el`, so it is per-instance: yours. The
+right one is the same keyword on a singleton, so it is the program's: press it
+and the number moves in every other window at once. One word apart, and the
+driving test proves the difference by asserting what is NOT in the patch.
 
 ## todo
 
-Forms over the socket: `oninput` mirrors the field into per-instance
-state (`e.data.value`), `onsubmit` commits it, and the patched HTML
-comes back down the same socket. The whole app is one view part.
-
-## chat
-
-The composition story in four files:
-
-- `data.ash` — a data shape (`Message`), a `stored` map that survives
-  restarts, and a `pipe` property (`prepare`).
-- `api.ash` — routes, a `start stack`, JSON request handling, and the
-  §9.6 auth builtins (`signup`/`login`).
-- `audit.ash` — a separate space LAYERS the store and the app: its
-  `prepare` pipe layer runs after the base's (use order is composition
-  order), and its `start` stack joins the boot sequence. No base file
-  was edited.
-- `ui.ash` — the full interface: a compose form (name + message over
-  `oninput`/`onsubmit`), a feed sorted by send time, and a live counter.
-  Any post — this client's form, another client's, or the HTTP API —
-  re-renders every connected feed (§9.3 reactivity). The suite drives
-  it with two concurrent socket clients.
+One shared list, `stored` on disk, live in every window on it. `oninput`
+mirrors the field into per-instance state and `onsubmit` commits it; ticking an
+item, dropping one, and clearing the done ones all run server-side and patch
+everybody. It also counts who is looking, off the same view lifecycle `hello`
+uses. Values are immutable, so a tick is a new list with a new item in its
+place — the spread is the whole of it.
 
 ## diary
 
-Sessions end to end (§9.6): signup/login/logout routes, the `allow`
-guard turning anonymous requests into 403s before `handle` runs, and
-`req.user!` proven safe inside the guard. The test drives the full
-lifecycle including the server-side session ending on logout. The `/` page
-is a login gate for visitors and a private reader for members — the request
-identity crossing into the view.
+Sessions end to end (§9.6): signup/login/logout routes, the `allow` guard
+turning anonymous requests into 403s before `handle` runs, and `req.user!`
+proven safe inside the guard. The `/` page is a login gate for visitors and a
+private reader for members — the request identity crossing into the view. Once
+inside, that identity is the interesting part: the page shows who ELSE is
+signed in right now (reference-counted off the view lifecycle, so closing a tab
+removes you) and carries a book anyone signed in can leave a line in, signed
+with the email the session proved. The test drives the full lifecycle including
+the server-side session ending on logout.
 
 ## press
 
-All the merge kinds in one part, layered from a second space without
-editing the first (§4): `append` joins the tag lists, `deep` merges the
-limit maps one level, `pipe` chains the render base-first, and paired
-`stack` / `stack reverse` properties boot in use order and tear down
-derived-first. The `/` page is a live window onto that composed pipe: type
-text and the output — base first, then the markdown layer — updates as you go.
+All the merge kinds in one part, layered from a second space without editing
+the first (§4): `append` joins the tag lists, `deep` merges the limit maps one
+level, `pipe` chains the render base-first, and paired `stack` / `stack
+reverse` properties boot in use order and tear down derived-first. The `/` page
+is a live window onto the COMPOSED part: your text on the left, what the whole
+pipe made of it on the right, and under them the merged values read straight
+back out — the tags both spaces contributed, and the limits map `deep` filled
+from two spaces that never mentioned each other.
 
 ## poll
 
-Channels (§9.5), placed honestly: votes are `stored` state, so
-reactivity alone keeps every tally live — the channel carries what
-state doesn't, the ephemeral "last vote" ticker. Each board instance
-subscribes in its `start stack` (the subscription dies with the
-instance) and keeps a per-instance `latest`: a fresh page joins at
-"none yet" no matter how many votes came before it. The test proves
-the push arrives through the channel alone — an HTTP vote patches a
-connected view whose `latest` no code in that request assigns.
+Channels (§9.5), placed honestly: votes are `stored` state, so reactivity alone
+keeps every tally live — the channel carries what state doesn't, the ephemeral
+"last vote" ticker. Each board instance subscribes in its `start stack` (the
+subscription dies with the instance) and keeps a per-instance `latest`: a fresh
+page joins at "none yet" no matter how many votes came before it. The ballot is
+stored too, so anybody can put another stone on it and every open page grows
+the row. Each option is a bar whose fill width is the number itself — data, not
+appearance, the same call pong makes for its ball. The test proves the push
+arrives through the channel alone: an HTTP vote patches a connected view whose
+`latest` no code in that request assigns.
 
 ## ticker
 
-Server-driven reactivity (§9.7 + §9.3): a scheduled part's `run` bumps
-a `state` counter on an `every` interval, and every connected view
-that read it re-renders — no user event anywhere in the loop. The page
-shows the beat count as a live, ticking number.
+Server-driven reactivity (§9.7 + §9.3): a scheduled part's `run` bumps a
+`state` counter on an `every` interval, and every connected view that read it
+re-renders — no user event anywhere in the loop. Beside it, the same shared
+property written by a person instead: mark a beat and the mark appears on
+everybody's page. One kind of state, two writers, and the views cannot tell
+which one moved it.
 
 ## pong
 
@@ -107,24 +156,28 @@ around it is class-bound. Open it in two windows and play.
 
 ## foundry
 
-Background work joined directly to a live interface (§9.7 + §9.4). A
-POST queues a brief and returns while it is still waiting; `spawn` runs
-the worker between requests, and the worker's state change patches every
-connected board. The API, worker, and UI coordinate through one named
-part, with no client application code or job-runner dependency. The board
-carries a compose form, so you can queue a brief from the page and watch
-it finish, live.
+Background work joined directly to a live interface (§9.7 + §9.4). A POST
+queues a brief and returns while it is still waiting; `spawn` runs the worker
+between requests, and the worker's state change patches every connected board.
+The API, worker, and UI coordinate through one named part, with no client
+application code and no job-runner dependency. Because a queue that drains
+instantly is a queue you cannot see, anyone can hold the line — briefs then
+pile up in the waiting lane on every open board, and can be called off there —
+until somebody releases it and the whole queue drains, live, in front of both
+of you.
 
 ## guardrails
 
-A typed policy pipeline assembled by the use graph. The core space owns
-the route and `Decision` shape; two other spaces independently layer
-length and content checks onto `Gate.review`. Their order is declared by
-`use`, every layer must preserve the pipe's shape, and neither policy
-edits the core or the other policy — the composition model applied to
-work that separate agents can safely own. The `/` page runs the whole
-composed policy live: type a message and the verdict — allowed, or blocked
-with each layer's reason — decides as you type.
+A typed policy pipeline assembled by the use graph. The core space owns the
+route and `Decision` shape; two other spaces independently layer length and
+content checks onto `Gate.review`. Their order is declared by `use`, every
+layer must preserve the pipe's shape, and neither policy edits the core or the
+other policy — the composition model applied to work that separate agents can
+safely own. The `/` page runs the whole composed policy live: type a message
+and the verdict — allowed, or blocked with each layer's reason — decides as you
+type. Submitting it puts the decision in a shared log every open page sees, so
+what the gate did for somebody else is visible; the HTTP route writes to the
+same log, which is how an API call lands on a page nobody touched.
 
 ## commons
 
@@ -233,58 +286,25 @@ declared in Ashlar and implemented in ten lines of Python, reached over the
 build step: the whole contract is "read a JSON object per line, answer with
 one." The answer is still shape-checked against the `Summary` data shape at the
 boundary, so a drifting worker faults at the call site rather than leaking bad
-data. Typing re-runs the worker over the socket and patches the figures, and
-`ashlar foreign check` proves the worker speaks the protocol before any request
-does. Needs `python3`; the driving test skips loudly without it.
-
-## enclave
-
-A chat program for the people who hold this program's mesh id, and nobody
-else. No server in the middle, no account, no address anyone wrote down: the
-id baked into the build IS the invite, so distributing the program distributes
-the key, and a group changes its locks by rolling a new one.
-
-The whole app is one element. `enclave.ash` is a `port`, a `start` that joins
-the mesh, one setting layered to take its own room rather than the shared
-area, and:
-
-```ash
-el(mesh.room, {})
-```
-
-Everything inside that — who is here across the top, the conversation, the
-files people drop into it, the line you type in — is the vendored `mesh`
-space. Your own words sit on the other side of the thread and read as yours; a
-run of lines from one person says their name once; arrivals are notices the
-room works out for itself from the roster, so they cost no traffic and no two
-members can disagree about who was there; a file appears where it was put,
-with its size and a button that fetches it; and everything carries how long
-ago it happened. What was said survives the site restarting.
-
-None of that is the language. The `mesh` space is `foreign` (§9.10) and derives
-to `ashlar mesh worker`, which drives the control socket the mesh node already
-exposes to its own clients — so a project that wants a room writes no binding,
-and the mesh ships nothing on Ashlar's behalf. Nothing polls, in the browser or
-in the program: the node streams presence and messages to its own clients, the
-worker is one of them, and a push re-renders every view that read what moved.
-
-On a machine with no mesh node the site still serves, and the room's header
-says why instead of showing an empty room that looks merely quiet. Its driving
-test stands up the node's own control socket and lets the shipped worker drive
-it, so what is faked is the network and nothing else; a second test runs it
-against a socket that is not there at all. What two machines would prove is
-open in `docs/roadmap.md`, not implied here.
+data. The page has two of them: a scratch line that is yours alone, and a bench
+anybody can add a number to — the worker is a co-process for the PROGRAM, not
+for a page, so a number added in one window re-runs it and patches the figures
+in all of them. `ashlar foreign check` proves the worker speaks the protocol
+before any request does. Needs `python3`; the driving test skips loudly without
+it.
 
 ## locker
 
-Per-user storage in one keyword (ADR-0015, spelled by ADR-0019).
-`peruser stored notes` on a
-singleton gives every signed-in user their OWN list, saved to disk and
-isolated from everyone else's — no keying by user id anywhere, and no way
-to reach another user's data. `peruser` has no meaning without a user, so the
-routes guard with `allow`; an anonymous read would fault, never fall
-through to a shared value. The test signs up two people, has each keep a
-note, and proves each sees only their own — then restarts the server and
-logs back in to show the notes persisted, still isolated, keyed by the
-stable account id. The `/` page is a gated board: sign in and keep notes,
-each user seeing only their own — the per-user read rendering right in the view.
+Per-user storage in one keyword (ADR-0015, spelled by ADR-0019), shown against
+the thing it is not. `peruser stored notes` on a singleton gives every
+signed-in user their OWN list, saved to disk and isolated from everyone else's
+— no keying by user id anywhere, and no way to reach another user's data. Right
+beside it, one word shorter, `stored shelf` is one list for everybody. The page
+puts them in two columns: the left is yours, the right moves in every window on
+the site, and a note can be pushed from the left to the right but never the
+other way — because nothing can read another person's locker, not even to copy
+out of it. `peruser` has no meaning without a user, so the routes guard with
+`allow`; an anonymous read would fault, never fall through to a shared value.
+The test signs up two people, has each keep a note, and proves each sees only
+their own — then restarts the server and logs back in to show the notes
+persisted, still isolated, keyed by the stable account id.

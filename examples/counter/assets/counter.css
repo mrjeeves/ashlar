@@ -9,6 +9,7 @@
   --muted: #8b93a7;
   --accent: #5b8cff;
   --accent-ink: #ffffff;
+  --panel-2: #1e222b;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
 }
 
@@ -34,7 +35,7 @@ body {
 
 .card {
   width: 100%;
-  max-width: 26rem;
+  max-width: 30rem;
   background: var(--panel);
   border: 1px solid var(--line);
   border-radius: 16px;
@@ -75,3 +76,15 @@ body {
 }
 .count:hover { filter: brightness(1.08); }
 .count:active { transform: translateY(1px) scale(0.997); }
+
+.pair { display: flex; gap: 12px; }
+.pair .count { flex: 1; font-size: 16px; padding: 16px 12px; }
+
+.count.all {
+  color: var(--ink);
+  background: var(--panel-2, #1e222b);
+  border: 1px solid var(--accent);
+}
+.count.all:hover { filter: none; background: #232838; }
+
+.foot { margin: 18px 0 0; color: var(--muted); font-size: 13px; }
