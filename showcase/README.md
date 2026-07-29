@@ -52,10 +52,19 @@ build, the launcher runs `ashlar foreign check` to prove the capability is
 reachable rather than assuming the build implies it.
 
 `abacus` is Python too, and the interpreter answers to different names on
-different machines. The launchers look for `python3`, then `python`, then (on
-Windows) `py`, and rebind the space to whichever they find — the example's own
-`foreign.json` stays the honest default and is never edited. With no Python at
-all, both say so plainly and the other fifteen are unaffected.
+different machines. The launchers try `python3`, then `python`, then (on
+Windows) `py` — and they **run** each candidate rather than looking it up,
+because being on PATH is not evidence that a program works: Windows ships
+`python3` as an app-execution alias that resolves and then exits 9009. Whichever
+one actually runs gets the binding; the example's own `foreign.json` stays the
+honest default and is never edited. Both launchers then prove the binding they
+chose with `ashlar foreign check` before starting anything on it, and print what
+it said if it could not. With no working Python at all, both say so plainly and
+the other fifteen are unaffected.
+
+`ashlar run` asks the same question at startup on its own, so an example run
+directly warns at the terminal about a capability it cannot reach instead of
+letting you find out from a 500 page.
 
 Each launcher runs `cargo build --release` before starting anything. That is a
 no-op in a fraction of a second when nothing has changed, and it is deliberate:

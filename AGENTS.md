@@ -761,7 +761,7 @@ non-zero exit is a fault carrying its stderr. The other three transports carry o
 may export `ashlar_free(char*)` to take its buffer back.
 
 Reachability is not a build-time fact, so `ashlar foreign check` proves it on
-demand against the bindings in force, before a request finds out. Foreign calls may block; the
+demand against the bindings in force; `ashlar run` asks at startup and warns. Foreign calls may block; the
 runtime schedules around them.
 
 One space derives to a co-process instead of a library, and it is this

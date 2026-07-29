@@ -55,9 +55,22 @@ $examples = @(
 # One Python, whatever it is called here. Two examples reach a co-process and
 # the interpreter's name differs by machine - which is exactly the kind of fact
 # a binding file exists to carry, rather than source (ADR-0017).
+#
+# RUN each candidate rather than looking it up. Being on PATH is not evidence
+# that a program works: Windows ships `python3` as an app-execution alias that
+# exists, resolves, and then exits 9009 the moment anything runs it - which is
+# exactly how a launcher that used Get-Command handed two examples a binding
+# that could not answer. The probe imports what both workers actually need, so
+# a Python too old to have them is caught here too.
 $py = $null
 foreach ($candidate in @('python3', 'python', 'py')) {
-  if (Get-Command $candidate -ErrorAction SilentlyContinue) { $py = $candidate; break }
+  if (-not (Get-Command $candidate -ErrorAction SilentlyContinue)) { continue }
+  try {
+    & $candidate -c 'import json, sqlite3, sys' *> $null
+    if ($LASTEXITCODE -eq 0) { $py = $candidate; break }
+  } catch {
+    # A name that resolves and then refuses to run is not an interpreter.
+  }
 }
 
 $logs = '.showcase-logs'
@@ -72,7 +85,7 @@ if ($py -and $py -ne 'python3') {
   "{ ""abacus"": { ""via"": ""worker"", ""run"": [""$py"", ""foreign/abacus.py""] } }" |
     Set-Content -Path $f -Encoding ascii
   $abacusBind = (Resolve-Path $f).Path
-  Write-Host "note: python3 is not on PATH; abacus will use ``$py``."
+  Write-Host "note: ``python3`` does not run here; abacus will use ``$py``."
 }
 
 # `ledger` reaches SQLite over the `native` transport, which needs a POSIX
@@ -136,10 +149,30 @@ if ($onWindows) {
 # stating before it is read as "nobody is out there".
 if (-not $py) {
   Write-Host ''
-  Write-Host '  No Python on PATH, so `abacus` will serve and then fault at its'
+  Write-Host '  No working Python here, so `abacus` will serve and then fault at its'
   Write-Host '  boundary - its worker is Python. Install Python 3 and re-run.'
   Write-Host ''
 }
+
+# Prove each binding rather than assume it - `ashlar foreign check` makes the
+# worker speak the protocol, which is the whole reason it exists. A launcher
+# that reports a start it never checked is worse than one that reports nothing.
+function Confirm-Binding($name, $bind) {
+  $had = $env:ASHLAR_FOREIGN
+  if ($bind) { $env:ASHLAR_FOREIGN = $bind } else { Remove-Item Env:\ASHLAR_FOREIGN -ErrorAction SilentlyContinue }
+  $said = & $bin foreign check "examples/$name" 2>&1
+  $ok = $LASTEXITCODE -eq 0
+  if ($had) { $env:ASHLAR_FOREIGN = $had } else { Remove-Item Env:\ASHLAR_FOREIGN -ErrorAction SilentlyContinue }
+  if (-not $ok) {
+    Write-Host ''
+    Write-Host "  ``$name``'s capability is not reachable, so its page will serve and"
+    Write-Host '  then fault at the boundary:'
+    $said | ForEach-Object { Write-Host "    $_" }
+    Write-Host ''
+  }
+}
+Confirm-Binding 'abacus' $abacusBind
+Confirm-Binding 'ledger' $ledgerBind
 if (-not (Test-Path '\\.\pipe\allmystuff-node')) {
   Write-Host ''
   Write-Host '  No mesh node is listening here, so `enclave` will serve with an empty'

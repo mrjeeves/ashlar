@@ -2575,6 +2575,25 @@ fn t_examples_showcase_launchers_agree_on_every_port() {
         "the showcase must launch exactly the examples that exist"
     );
 
+    // Neither launcher may choose an interpreter by LOOKING for it. Windows
+    // ships `python3` as an app-execution alias — a real PATH entry that
+    // resolves and then exits 9009 when run — so `command -v` / `Get-Command`
+    // is not evidence that a program works, and a launcher that trusted it
+    // handed `abacus` and `ledger` bindings that could not answer. Both must
+    // RUN the candidate.
+    for (name, text) in [("serve.sh", read("showcase/serve.sh")), ("serve.ps1", read("showcase/serve.ps1"))] {
+        assert!(
+            text.contains("import json, sqlite3, sys"),
+            "{} must prove its Python by running it, not by finding it on PATH",
+            name
+        );
+        assert!(
+            text.contains("foreign check"),
+            "{} must prove the binding it chose before starting anything on it",
+            name
+        );
+    }
+
     // Ports are distinct, or two examples fight over one socket.
     let mut ports: Vec<u16> = sh.values().copied().collect();
     ports.sort();

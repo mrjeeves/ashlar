@@ -1554,6 +1554,59 @@ fn t_g_a_transport_that_cannot_work_here_says_so_instead_of_looking_nowhere() {
 }
 
 /// A worker that starts and then dies must say WHICH program died and how.
+/// Presence is not proof: a binding must be verified by RUNNING it.
+#[test]
+fn t_g_a_binding_is_proved_by_running_it_not_by_finding_it() {
+    // covers: G4, ADR-0017
+    // The regression this pins is a launcher's, but the property is the
+    // runtime's. Windows ships `python3` as an app-execution alias: a real
+    // entry on PATH that resolves, and then exits 9009 the moment anything
+    // runs it. A launcher that picked its interpreter with `command -v` /
+    // `Get-Command` therefore handed two examples a binding that could not
+    // answer, and the first anybody heard of it was a 500 page. `foreign
+    // check` is the answer to that question and it must never be satisfied
+    // by a name existing.
+    if std::process::Command::new("python3").arg("-V").output().is_err() {
+        eprintln!("t_g_a_binding_is_proved: no python3; skipping");
+        return;
+    }
+    let dir = std::env::temp_dir().join(format!("ashlar-stub-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("foreign")).unwrap();
+    // A program that IS there, and refuses to be an interpreter — the alias
+    // stub's behaviour exactly.
+    std::fs::write(dir.join("foreign/stub.py"), "import sys\nsys.exit(9009)\n").unwrap();
+
+    let reach = ashlar::foreign::check_space(&dir, "tools", &["shout".to_string()]);
+    assert!(
+        !reach.problems.is_empty(),
+        "a worker that exits without answering must fail the check, not pass \
+         it because the file was found: via {} ({})",
+        reach.via,
+        reach.detail
+    );
+
+    // And the same binding pointed at something that really does answer the
+    // protocol passes — so the check is discriminating, not merely strict.
+    std::fs::write(
+        dir.join("foreign/real.py"),
+        "import json, sys\nfor line in sys.stdin:\n    print(json.dumps({\"ok\": \"x\"}), flush=True)\n",
+    )
+    .unwrap();
+    std::fs::write(
+        dir.join("foreign.json"),
+        "{ \"tools\": { \"via\": \"worker\", \"run\": [\"python3\", \"foreign/real.py\"] } }",
+    )
+    .unwrap();
+    let good = ashlar::foreign::check_space(&dir, "tools", &["shout".to_string()]);
+    assert!(
+        good.problems.is_empty(),
+        "a worker that answers passes: {:?}",
+        good.problems
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn t_g_a_dead_worker_names_the_program_and_its_exit() {
     // covers: G4, D2, ADR-0017
