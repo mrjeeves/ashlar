@@ -193,6 +193,14 @@ pub struct Said {
     pub who: String,
     pub text: String,
     pub at: f64,
+    /// Whether this machine said it. A room where your own words look like
+    /// everyone else's is a log, not a conversation.
+    pub mine: bool,
+    /// `chat`, or `joined`/`left` — the room noticing who came and went.
+    /// Arrivals are not sent to anybody: every member computes them from the
+    /// roster it already watches, so they cost no traffic and cannot disagree
+    /// about who was there.
+    pub kind: String,
 }
 
 impl Said {
@@ -202,7 +210,31 @@ impl Said {
             ("who", V::Text(self.who.clone())),
             ("text", V::Text(self.text.clone())),
             ("at", V::Number(self.at)),
+            ("mine", V::Bool(self.mine)),
+            ("kind", V::Text(self.kind.clone())),
         ])
+    }
+
+    fn chat(who: &str, from: &str, text: &str, mine: bool) -> Said {
+        Said {
+            who: who.to_string(),
+            from: from.to_string(),
+            text: text.to_string(),
+            at: now_ms(),
+            mine,
+            kind: "chat".to_string(),
+        }
+    }
+
+    fn note(who: &str, from: &str, kind: &str) -> Said {
+        Said {
+            who: who.to_string(),
+            from: from.to_string(),
+            text: String::new(),
+            at: now_ms(),
+            mine: false,
+            kind: kind.to_string(),
+        }
     }
 }
 
@@ -522,7 +554,9 @@ impl Session {
             }
         }
         // Arriving changes which roster is ours, so learn it now rather than
-        // showing an empty room until the node's next event.
+        // showing an empty room until the node's next event — and read back
+        // what this room said before the site restarted.
+        self.node.recall();
         self.node.learn();
         self.here()
     }
@@ -571,12 +605,7 @@ impl Session {
         if !members.is_empty() {
             self.node.ask("room_send", V::Map(args))?;
         }
-        self.node.keep(Said {
-            who: mine,
-            from: me,
-            text: line.to_string(),
-            at: now_ms(),
-        });
+        self.node.keep(Said::chat(&mine, &me, line, true));
         Ok(V::Bool(true))
     }
 
@@ -1584,10 +1613,12 @@ impl Node {
                         // render answers from memory. The node re-states its
                         // session on a timer, so only a roster that actually
                         // moved is worth telling a page about.
+                        let before = node.known().peers;
                         node.learn();
                         let now = node.summary();
                         if last.as_deref() != Some(now.as_str()) {
                             last = Some(now);
+                            node.arrivals(&before);
                             node.push(PEER_SHAPE);
                         }
                     }
@@ -1980,12 +2011,12 @@ impl Node {
         let from = field(arrival, "from");
         match field(&message, "kind").as_str() {
             "chat" => {
-                self.keep(Said {
-                    who: self.who(&from),
-                    from,
-                    text: field(&message, "text"),
-                    at: now_ms(),
-                });
+                self.keep(Said::chat(
+                    &self.who(&from),
+                    &from,
+                    &field(&message, "text"),
+                    false,
+                ));
                 Some(SAID_SHAPE)
             }
             // A member restating what it offers the room. With no host to
@@ -2037,13 +2068,87 @@ impl Node {
         short(&want)
     }
 
-    /// Add to what this site has heard, oldest dropped first.
+    /// Notice who came and went, and say so in the room.
+    ///
+    /// Nothing is sent for this: every member computes it from the roster it
+    /// already watches, so arrivals cost no traffic and no two members can
+    /// disagree about who was there. Only people who are HERE count — a peer
+    /// the roster merely remembers has not arrived anywhere.
+    fn arrivals(&self, before: &[(String, String, bool)]) {
+        let here = |list: &[(String, String, bool)], id: &str| {
+            list.iter()
+                .any(|(peer, _, here)| *here && canonical(peer) == canonical(id))
+        };
+        let after = self.known().peers;
+        for (id, label, is_here) in &after {
+            if *is_here && !here(before, id) {
+                self.keep(Said::note(label, id, "joined"));
+            }
+        }
+        for (id, label, was_here) in before {
+            if *was_here && !here(&after, id) {
+                self.keep(Said::note(label, id, "left"));
+            }
+        }
+    }
+
+    /// Add to what this site has heard, oldest dropped first, and write it
+    /// down.
+    ///
+    /// A room that forgets everything when its site restarts is a room nobody
+    /// can leave and come back to. The worker owns a filesystem and the
+    /// runtime's `stored` does not reach across the boundary, so the log is
+    /// kept beside the project's other runtime state — a file, not an asset,
+    /// because nothing here is served.
     fn keep(&self, said: Said) {
-        if let Ok(mut log) = self.heard.lock() {
+        let write = {
+            let Ok(mut log) = self.heard.lock() else {
+                return;
+            };
             log.push(said);
             let over = log.len().saturating_sub(KEPT);
             if over > 0 {
                 log.drain(0..over);
+            }
+            log.clone()
+        };
+        let _ = std::fs::write(self.diary(), to_json(&V::List(write.iter().map(Said::value).collect())));
+    }
+
+    /// Where this room's conversation is written down. Per mesh, because two
+    /// rooms on one machine are two rooms.
+    fn diary(&self) -> String {
+        format!(".mesh-{}.json", short_name(&self.network()))
+    }
+
+    /// Read back what was said before this process existed.
+    fn recall(&self) {
+        let Ok(text) = std::fs::read_to_string(self.diary()) else {
+            return;
+        };
+        let Some(V::List(rows)) = from_json(&text) else {
+            return;
+        };
+        let lines: Vec<Said> = rows
+            .iter()
+            .map(|r| Said {
+                from: field(r, "from"),
+                who: field(r, "who"),
+                text: field(r, "text"),
+                at: match at(r, "at") {
+                    Some(V::Number(n)) => n,
+                    _ => 0.0,
+                },
+                mine: matches!(at(r, "mine"), Some(V::Bool(true))),
+                kind: match field(r, "kind").as_str() {
+                    "" => "chat".to_string(),
+                    k => k.to_string(),
+                },
+            })
+            .collect();
+        if let Ok(mut log) = self.heard.lock() {
+            if log.is_empty() {
+                *log = lines;
             }
         }
     }
@@ -2599,12 +2704,7 @@ mod tests {
     fn a_room_is_a_conversation_not_an_archive() {
         let node = Node::at(PathBuf::from("/nonexistent/node.sock"));
         for i in 0..(KEPT + 10) {
-            node.keep(Said {
-                from: "n1".into(),
-                who: "ada".into(),
-                text: format!("line {}", i),
-                at: 0.0,
-            });
+            node.keep(Said::chat("ada", "n1", &format!("line {}", i), false));
         }
         let said = node.said();
         assert_eq!(said.len(), KEPT, "the oldest fall off rather than growing forever");

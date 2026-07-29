@@ -73,6 +73,12 @@ for them", forever, rather than as the node's own sentence. The refusal is
 caught only when it arrives synchronously. Serves **D3, G4**. Proven by: a
 watch on an unsharing peer showing the reason within seconds.
 
+**The room has no typing indicator, and cannot have one here.** A room-event
+kind the protocol does not define arrives as `unknown` (ADR-0017 §5d), so
+"somebody is typing" has nowhere to ride that does not abuse a kind meant for
+something else. Serves **G4**. Proven by: a `typing` kind upstream, or a
+carrier that is not somebody else's vocabulary.
+
 **Audio is not carried at all.** Only video is: the `AudioFrame` lane exists and
 nothing here reads it, and a browser cannot play raw frames from a `<img>`-shaped
 trick the way it can draw JPEG. Serves **G4**. Proven by: a room where somebody

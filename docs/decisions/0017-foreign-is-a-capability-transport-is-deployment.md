@@ -265,6 +265,21 @@ loop** for the length of a transfer. A foreign call that waits on a network
 freezes every page on the machine. A transfer is started and the arrival
 pushes — the shape everything else here already had.
 
+**The room's vocabulary is theirs, not ours.** A `RoomEvent` kind the protocol
+does not define arrives at the far end as `"kind":"unknown"`: the receiving node
+decodes into its own enum — whose unknown arm exists so one strange message
+cannot drop a roster — and re-serializes what it understood. Proved by sending
+one invented kind and one `chat` between two real nodes and reading what came
+out the other side.
+
+So a typing indicator, which is the obvious next thing a room wants, cannot be
+carried here. It could be smuggled inside a `chat` with an empty body, and that
+is exactly the kind of cleverness that pollutes somebody else's protocol for
+everyone else using it — a real AllMyStuff window in the same room would render
+the empty line. The room does without until the kind exists upstream. This is
+the general shape of being a client: the vocabulary is borrowed, and borrowing
+does not include adding words.
+
 **A room's files are not a share.** Two things in that stack look alike and
 are not: a `Share` is a durable grant relationship with a *person* who brings a
 fleet, minted by an explicit act and revoked by another; a room's Shared Files

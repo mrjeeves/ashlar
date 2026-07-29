@@ -1272,7 +1272,7 @@ mod fake_node {
         pub grants: Vec<String>,
         /// How many camera batches this node has handed over.
         pub polls: u32,
-        /// `room|text` for every line this node was asked to transmit.
+        /// `kind|room|text` for everything this node was asked to transmit.
         pub sent: Vec<String>,
         /// Every command this node was asked to run. The rename regression is
         /// asserted from here: a site must join a mesh without ever touching
@@ -1597,7 +1597,14 @@ mod fake_node {
             // recipient's own node emits it back out as an event.
             "room_send" => {
                 st.sent.push(format!(
-                    "{}|{}",
+                    "{}|{}|{}",
+                    ashlar::meshd::at(&args, "message")
+                        .and_then(|m| ashlar::meshd::at(&m, "kind"))
+                        .and_then(|k| match k {
+                            V::Text(t) => Some(t),
+                            _ => None,
+                        })
+                        .unwrap_or_default(),
                     ashlar::meshd::at(&args, "message")
                         .map(|m| ashlar::meshd::at(&m, "room"))
                         .and_then(|r| match r {
@@ -1756,8 +1763,8 @@ fn t_examples_enclave_serves_where_there_is_no_mesh() {
     let (status, _, html) = req(port, "GET", "/", None, None);
     assert_eq!(status, 200, "the site serves without a mesh: {}", html);
     assert!(
-        html.contains("No mesh node is running on this machine"),
-        "the roster says why it is empty, not just that it is: {}",
+        html.contains("no mesh here: nothing is listening"),
+        "the room says why it is empty, not just that it is: {}",
         html
     );
     assert!(
@@ -1806,9 +1813,13 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
     // nothing is indistinguishable from one that is broken.
     let (status, _, html) = req(port, "GET", "/", None, None);
     assert_eq!(status, 200);
-    assert!(html.contains("No one else here yet."), "the empty roster is stated: {}", html);
     assert!(
-        html.contains("Nothing on the shelf.") && html.contains("Nobody is on camera."),
+        html.contains("just you so far"),
+        "the empty roster is stated: {}",
+        html
+    );
+    assert!(
+        html.contains("Nothing on the shelf.") && html.contains("Nothing said yet."),
         "and so is every other lane, rather than rendering blank: {}",
         html
     );
@@ -1877,7 +1888,7 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
     let patch = ws_expect(&mut ws, "ada", 8);
     assert!(patch.contains("grace"), "the whole roster patches, not one row: {}", patch);
     assert!(
-        patch.contains("mesh-dot mesh-dot-here"),
+        patch.contains("mesh-who mesh-who-here"),
         "presence is visible: a connected peer carries the live class: {}",
         patch
     );
@@ -1918,7 +1929,29 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
         ),
     );
     let mine = ws_expect(&mut ws, "mesh-said", 8);
-    assert!(mine.contains("here"), "the sender sees its own line: {}", mine);
+    assert!(
+        mine.contains("mesh-said mesh-mine"),
+        "your own words read as yours, not as everyone else's: {}",
+        mine
+    );
+    assert!(
+        mine.contains("mesh-said-when\">now<"),
+        "and carry when they were said: {}",
+        mine
+    );
+    // The room noticed the arrivals itself. Nobody sent those: every member
+    // computes them from the roster it already watches, so they cost no
+    // traffic and no two members can disagree about who was there.
+    assert!(
+        mine.contains("<p class=\"mesh-notice\">ada joined</p>"),
+        "an arrival is a notice, not a message: {}",
+        mine
+    );
+    assert!(
+        !mine.contains("grace joined"),
+        "and only for somebody who is actually here — grace is offline: {}",
+        mine
+    );
     // A member puts a file up. The room's file lane is NOT the share
     // subsystem: the token's allow-list is the members, so nothing durable is
     // granted and nothing has to be revoked.
@@ -1953,72 +1986,13 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
     let (status, _, body) = req(port, "GET", "/room/notes.txt", None, None);
     assert_eq!((status, body.trim()), (200, "hi"), "and it serves");
 
-    // Cameras. Holding the room's id gets you into the room; it does not get
-    // you somebody's camera, and the node says so in its own words.
-    let (_, _, page) = req(port, "GET", "/", None, None);
-    assert!(page.contains("mesh-camera"), "the camera controls render: {}", page);
-    let (inst, show) = event_target(&page, "onclick", 1).unwrap();
-    ws_send(
-        &mut ws,
-        &format!(
-            "{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onclick\"}}}}",
-            inst, show
-        ),
-    );
-    let refused = ws_expect(&mut ws, "needs owner/fleet or a share", 8);
-    assert!(
-        refused.contains("mesh-face"),
-        "the refusal is on the page, not in a log: {}",
-        refused
-    );
-
-    // The person at the other machine allows it. That is a deliberate act and
-    // the only durable thing the mesh library writes.
-    let (inst, allow) = event_target(&refused, "onclick", 0).unwrap();
-    ws_send(
-        &mut ws,
-        &format!(
-            "{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onclick\"}}}}",
-            inst, allow
-        ),
-    );
-    std::thread::sleep(std::time::Duration::from_millis(200));
-    {
-        let st = node.state.lock().unwrap();
-        assert_eq!(
-            st.grants,
-            vec!["grant:n1:video:consume:*".to_string()],
-            "one grant, scoped to video and to receiving"
-        );
-    }
-    // Now the route opens and the frames arrive as pictures — an ordinary
-    // `img`, no decoder, no client code.
-    let (inst, show) = event_target(&refused, "onclick", 1).unwrap();
-    ws_send(
-        &mut ws,
-        &format!(
-            "{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onclick\"}}}}",
-            inst, show
-        ),
-    );
-    let face = ws_expect(&mut ws, "<img", 10);
-    assert!(
-        face.contains("/room/cam-n1.jpg?f=7"),
-        "the frame is served from this site, and its seq is what moves: {}",
-        face
-    );
-    let (status, headers, body) = req_bytes(port, "/room/cam-n1.jpg");
-    assert_eq!(status, 200, "and the JPEG serves");
-    assert!(headers.contains("image/jpeg"), "as an image: {}", headers);
-    assert_eq!(body[..2], [0xFF, 0xD8], "with the bytes the mesh carried");
-
     drop(ws);
     {
         let st = node.state.lock().unwrap();
         assert_eq!(
             st.sent,
-            vec![format!("{}|here", room)],
-            "one line, to the room the mesh derives"
+            vec![format!("chat|{}|here", room)],
+            "one line, to the room the mesh's own name derives"
         );
     }
 

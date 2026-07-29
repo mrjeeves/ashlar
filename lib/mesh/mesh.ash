@@ -66,35 +66,49 @@ foreign networks: () -> [mesh.Network] watches mesh.Peer
 // secret — a program written with one is a program only its holders can join,
 // and rolling a new one is how a group changes its locks.
 
-// One line somebody said. `from` is the peer id, `who` its name, `at` the
-// millisecond it arrived.
+// One line somebody said, or one thing the room noticed. `kind` is `chat`,
+// `joined` or `left`; `mine` is whether this machine said it, because a room
+// where your own words look like everyone else's is a log, not a conversation.
 part Said {
   from: text
   who: text
   text: text
   at: number
+  mine: bool
+  kind: text
 }
 
-// `say` reaches the people who are here NOW. Nothing stores it for someone
-// who is not — a program that wants history keeps what it heard in a `stored`
-// property, which is its decision and not the mesh's.
+// `say` reaches the people who are here NOW: there is no server holding a
+// message for somebody who is out, which is what serverless costs. What was
+// said while you WERE here survives a restart — the worker writes the room
+// down beside the project's other runtime state.
 foreign say: (text: text) -> bool updates mesh.Said
 foreign heard: () -> [mesh.Said] watches mesh.Said
 
-// The conversation, live. Classes are the contract with the app's stylesheet
-// (ADR-0010): `mesh-said`, `mesh-said-who`, `mesh-said-text`, `mesh-empty`.
+// The conversation. Classes are the contract with the app's stylesheet
+// (ADR-0010): `mesh-talk`, `mesh-said`, `mesh-mine`, `mesh-said-who`,
+// `mesh-said-text`, `mesh-said-when`, `mesh-notice`, `mesh-empty`.
 part talk {
   view = () => el("div", { class: "mesh-talk" }, lines())
   lines = () => {
     let all = heard()
     if len(all) == 0 {
-      return [el("p", { class: "mesh-empty" }, ["Nothing said yet."])]
+      return [el("p", { class: "mesh-empty" }, ["Nothing said yet. Whoever holds this program can hear you."])]
     }
-    return map(all, (s: mesh.Said) => el("div", { class: "mesh-said" }, [
-      el("span", { class: "mesh-said-who" }, [s.who]),
-      el("span", { class: "mesh-said-text" }, [s.text]),
-    ]))
+    return map(all, (s: mesh.Said) => one(s))
   }
+  // An arrival is not a message and should not look like one.
+  one = (s: mesh.Said) => (if s.kind == "chat" { el("div", { class: if s.mine { "mesh-said mesh-mine" } else { "mesh-said" } }, [
+    el("span", { class: "mesh-said-who" }, [s.who]),
+    el("span", { class: "mesh-said-text" }, [s.text]),
+    el("span", { class: "mesh-said-when" }, [since(s.at)]),
+  ]) } else { el("p", { class: "mesh-notice" }, [s.who + " " + s.kind]) })
+  // How long ago, in the only unit that matters at a glance. `now()` is the
+  // runtime's clock and `at` was stamped on the other side of the boundary,
+  // so a clock that disagrees shows as "now" rather than as a negative age.
+  since = (at: number) => ago((now() - at) / 1000)
+  ago = (seconds: number) => (if seconds < 45 { "now" } else if seconds < 3600 { text(round(seconds / 60)) + "m" } else if seconds < 86400 { text(round(seconds / 3600)) + "h" } else { text(round(seconds / 86400)) + "d" })
+  round = (n: number) => n - n % 1
 }
 
 // A line and a way to send it. The draft is per-instance state, so two open
@@ -102,15 +116,48 @@ part talk {
 part speak {
   state draft: text = ""
   view = () => el("form", { class: "mesh-speak", onsubmit: send }, [
-    el("input", { class: "mesh-line", name: "line", value: draft, oninput: typing }, []),
+    el("input", {
+      class: "mesh-line",
+      name: "line",
+      value: draft,
+      placeholder: "say something",
+      autocomplete: "off",
+      oninput: typed,
+    }, []),
     el("button", { type: "submit" }, ["say"]),
   ])
-  typing = (e: std.Event) => {
+  typed = (e: std.Event) => {
     draft = text(e.data.value ?? "")
   }
   send = () => {
     say(draft)
     draft = ""
+  }
+}
+
+// The room, in one element. An app that wants the whole thing writes
+// `el(mesh.room, {})` and nothing else: who is here across the top, the
+// conversation under it, who is mid-sentence, and a line to type in. Every
+// piece is still its own part for an app that wants to place them itself.
+part room {
+  view = () => el("div", { class: "mesh-room" }, [
+    el("div", { class: "mesh-room-top" }, [el(here_now, {})]),
+    el(talk, {}),
+    el(speak, {}),
+  ])
+}
+
+// Who is here, as a line rather than a list — the room's own header. The
+// `grid` is the same roster with room to breathe.
+part here_now {
+  view = () => el("div", { class: "mesh-here" }, faces_of())
+  faces_of = () => {
+    let all = peers()
+    let mine = here()
+    if len(all) == 0 {
+      return [el("span", { class: "mesh-alone" }, [if mine.reachable { "just you so far" } else { mine.note }])]
+    }
+    return map(all, (p: mesh.Peer) => el("span", { class: if p.here { "mesh-who mesh-who-here" } else { "mesh-who" } }, [p.label]))
   }
 }
 

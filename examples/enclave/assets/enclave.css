@@ -314,3 +314,72 @@ body {
   gap: 12px;
   opacity: 0.85;
 }
+
+/* -- the room ------------------------------------------------------------- */
+
+.mesh-room { display: grid; gap: 10px; }
+
+.mesh-room-top {
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+
+.mesh-here { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.mesh-who {
+  padding: 2px 9px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.mesh-who-here {
+  color: var(--ink);
+  border-color: rgba(70, 209, 127, 0.45);
+}
+
+.mesh-alone { color: var(--muted); font-size: 13px; }
+
+.mesh-talk {
+  display: grid;
+  gap: 4px;
+  max-height: 22rem;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+.mesh-said {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 12px;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  max-width: 90%;
+}
+
+/* Your own words sit on the other side, and read as yours. */
+.mesh-mine {
+  margin-left: auto;
+  background: rgba(91, 140, 255, 0.14);
+  border-color: rgba(91, 140, 255, 0.35);
+}
+
+.mesh-said-text { flex: 1; overflow-wrap: anywhere; }
+
+.mesh-said-when {
+  color: var(--muted);
+  font-size: 11px;
+  flex: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.mesh-notice {
+  margin: 2px 0;
+  text-align: center;
+  color: var(--muted);
+  font-size: 12px;
+}
+

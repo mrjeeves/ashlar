@@ -268,6 +268,15 @@ push and sits on the shelf until somebody asks for it; fetched bytes land under
 the project's own assets, so serving them is the ordinary static-file part and
 the language grows nothing.
 
+`el(mesh.room, {})` is the whole thing in one element: who is here across the
+top, the conversation under it, and a line to type in. Your own words read as
+yours and sit on the other side; arrivals appear as notices the room worked out
+for itself from the roster, so they cost no traffic and no two members can
+disagree about who was there; and what was said survives the site restarting,
+because the worker writes the room down beside the project's other runtime
+state. Every piece is still its own part for an app that would rather place
+them itself.
+
 `mesh.faces` and `mesh.camera` are the last lane. Holding the room's id does
 NOT get you somebody's camera — the node refuses a media route from anyone who
 is not owner, fleet, or shared with, and that refusal is right — so `allow` is

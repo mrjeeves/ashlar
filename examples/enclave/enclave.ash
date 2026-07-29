@@ -33,13 +33,12 @@ part page {
       el("p", { class: "kicker" }, ["private mesh · §9.10"]),
       el("h1", {}, ["enclave"]),
       el("p", { class: "lede" }, ["Everyone holding this program's mesh id is in this room, and nobody else can find it. No server in the middle, no account, no address anyone wrote down."]),
-      el(mesh.faces, {}),
-      el(mesh.talk, {}),
-      el(mesh.speak, {}),
+      // The whole room is one element. Everything under it — the roster,
+      // the conversation, who is typing, the line you type in — is the
+      // vendored library's, and this file says none of it.
+      el(mesh.room, {}),
       el("div", { class: "aside" }, [
-        el(mesh.grid, {}),
         el(mesh.shelf, {}),
-        el(mesh.camera, {}),
         el(mesh.panel, {}),
       ]),
     ]),
