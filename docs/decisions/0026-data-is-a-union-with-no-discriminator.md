@@ -135,3 +135,40 @@ launders bad input into a plausible value. Rejecting still costs a `let`, a
 comparison, and a `fail`. That is a separate finding about which programs
 are cheap to write, and it stays open in the roadmap rather than being
 quietly counted as fixed here.
+
+## An upload is a path, not a byte member (2026-07-30)
+
+A form carrying a file was the one body shape the runtime dropped on the floor:
+`multipart/form-data` fell through to the JSON arm, failed to parse, and handed
+the program `none`. So a page could offer a file picker and never receive what
+was picked — and the enclave, told it could not have one, made people type a
+path into the chat instead. The excuse was true and beside the point: a browser
+cannot hand a server a path it can open, but a picker hands over the *file*.
+
+The decoding is now there, and the question it forced is this ADR's: `data` has
+text, number, bool, none, list and map, and an upload is bytes. Adding a seventh
+member would touch every `fields` call, every shape check, every JSON
+round-trip, and the union's whole claim to be *the shape of decoded payloads*.
+
+So the runtime does the one thing only it can — get the bytes onto disk, under
+the project's own runtime state — and the field is `{name, size, path}`. That
+is not a workaround. What a program *does* with an upload is hand it on: to a
+foreign store, to a `files` mount, to the mesh's `offer`. Every one of those
+takes a path, and none of them wants bytes in an Ashlar value. `data` stays six
+members wide.
+
+Two details are load-bearing rather than tidy:
+
+- **The saved name is the file's own.** Uniqueness lives in a directory per
+  upload, not in the basename, because whatever is handed on carries that name
+  onward — a peer in the room should see `plans.md`, not
+  `1785369999557064730-0-plans.md`. The first cut got this wrong and the mesh
+  showed the timestamp to the whole room.
+- **The client's filename is never a path.** Only the last segment survives,
+  and only characters that cannot climb out of a directory.
+
+Drag and drop needed no language surface at all: the shim treats a drop on a
+form that has a file input as choosing one, so the form already says where the
+file goes and the program says nothing. The picker works with the shim switched
+off, which is why the drop is the part that lives there. T-BROWSER drives both,
+because neither a file dialog nor a `DataTransfer` exists without a browser.

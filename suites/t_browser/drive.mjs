@@ -12,7 +12,7 @@
 //
 //   node <repo>/suites/t_browser/drive.mjs <ashlar-binary> --root <repo> [--shots DIR]
 import { spawn } from 'node:child_process';
-import { mkdirSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 
 // Resolved from the OPERATOR's directory, not this file's. Playwright is a
@@ -110,6 +110,92 @@ const browser = await chromium.launch({
 
   if (SHOTS) await page.screenshot({ path: `${SHOTS}/counter.png` });
   check('counter: the browser console is clean', errors.length === 0, errors.join(' | '));
+  await ctx.close(); srv.kill();
+}
+
+// ---- enclave: a file picker and a drop zone, both real -------------------
+//
+// This is the check the enclave was rewritten for. Sharing a file was
+// `/share <path>` typed into the conversation — a command line wearing a
+// chat's clothes — on the excuse that a browser cannot hand a server a path
+// it can open. True, and beside the point: a picker hands over the FILE. What
+// was actually missing was `multipart/form-data` in the runtime, which fell
+// through to the JSON arm and handed the program `none`.
+//
+// Neither half can be checked without a browser. The picker needs a real file
+// dialog; the drop needs a real DataTransfer. The mesh node is absent here and
+// that is fine — what is under test is that the bytes leave the page, which is
+// the shim's and the runtime's business, not the mesh's.
+{
+  const srv = await serve('enclave', 8405);
+  const ctx = await browser.newContext();
+  const page = await ctx.newPage();
+  const posts = [];
+  page.on('request', r => {
+    if (r.method() === 'POST') {
+      posts.push({ url: r.url(), type: r.headers()['content-type'] || '' });
+    }
+  });
+  await page.goto('http://127.0.0.1:8405/', { waitUntil: 'load' });
+  await sleep(900);
+
+  const picker = page.locator('.room-add input[type=file]');
+  check('enclave: the shelf carries a real file picker',
+    await picker.count() === 1, `${await picker.count()} file input(s)`);
+
+  const tmp = `${SHOTS || '/tmp'}/ashlar-picked.txt`;
+  writeFileSync(tmp, 'the bytes a person picked\n');
+  await picker.setInputFiles(tmp);
+  await page.locator('.room-add button[type=submit]').click();
+  await sleep(900);
+  const picked = posts.find(p => p.url.endsWith('/mesh/share'));
+  check('enclave: picking a file posts it as multipart, with no client code',
+    !!picked && picked.type.startsWith('multipart/form-data'),
+    picked ? picked.type.split(';')[0] : 'no POST');
+
+  // And a drop does the same, without touching the picker or the button. The
+  // shim treats a drop on a form that has a file input as choosing one, so
+  // this costs the program nothing and needs no new attribute.
+  posts.length = 0;
+  await page.goto('http://127.0.0.1:8405/', { waitUntil: 'load' });
+  await sleep(900);
+  // Read the hover state back from the SAME call that set it: the drop below
+  // submits the form, and a navigation takes any page global with it.
+  const dragging = await page.evaluate(() => {
+    const form = document.querySelector('.room-add');
+    const dt = new DataTransfer();
+    dt.items.add(new File(['x'], 'hover.txt', { type: 'text/plain' }));
+    form.dispatchEvent(new DragEvent('dragover', { bubbles: true, dataTransfer: dt }));
+    return form.hasAttribute('data-ash-dropping');
+  });
+  check('enclave: dragging over the form says so, for the stylesheet', dragging);
+  await page.evaluate(() => {
+    const form = document.querySelector('.room-add');
+    const dt = new DataTransfer();
+    dt.items.add(new File(['dropped bytes'], 'dropped.txt', { type: 'text/plain' }));
+    form.dispatchEvent(new DragEvent('drop', { bubbles: true, dataTransfer: dt }));
+  });
+  await sleep(1200);
+  // The drop navigated; come back to a live page before measuring it.
+  await page.goto('http://127.0.0.1:8405/', { waitUntil: 'load' });
+  await sleep(700);
+  const dropped = posts.find(p => p.url.endsWith('/mesh/share'));
+  check('enclave: dropping a file submits it, with nothing clicked',
+    !!dropped && dropped.type.startsWith('multipart/form-data'),
+    dropped ? dropped.type.split(';')[0] : 'no POST');
+
+  // The conversation scrolls inside its pane rather than growing the page —
+  // the composer stays where it is put. `min-height: 0`, measured.
+  const geometry = await page.evaluate(() => {
+    const de = document.documentElement;
+    const speak = document.querySelector('.speak').getBoundingClientRect();
+    return { grows: de.scrollHeight > de.clientHeight + 1, bottom: Math.round(speak.bottom), h: window.innerHeight };
+  });
+  check('enclave: the page does not grow and the composer stays put',
+    !geometry.grows && Math.abs(geometry.bottom - geometry.h) <= 1,
+    `page ${geometry.grows ? 'grows' : 'fits'}, composer at ${geometry.bottom} of ${geometry.h}`);
+
+  if (SHOTS) await page.screenshot({ path: `${SHOTS}/enclave.png` });
   await ctx.close(); srv.kill();
 }
 

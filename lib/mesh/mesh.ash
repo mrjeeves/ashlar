@@ -380,43 +380,63 @@ part shelf {
   }
 }
 
-// Putting a file in the room, and taking it back down. A browser cannot hand
-// a server a path it can open — a file input yields a made-up one — so the
-// person at the machine names the file. Naming it is a field and a button;
-// there is a whole interface here and no reason to make anyone memorise a
-// command. Classes: `room-give`, `room-mine`, `room-mine-name`,
-// `room-mine-off`, `room-add`, `room-add-in`.
+// Putting a file in the room, and taking it back down.
+//
+// A file picker and a drop zone, which is what a person expects and what this
+// had no business making anybody type. The form is a NATIVE post (§9.2): no
+// handler, no socket, no client application code — the browser sends the file,
+// the runtime writes it under the project's own runtime state and hands the
+// route `{ name, size, path }`, and the path is what `offer` already takes.
+// Dropping a file on the form does the same thing, because the shim treats a
+// drop on a form with a file input as choosing one; the picker works with the
+// shim switched off, which is why the drop is the part that lives there.
+// Classes: `room-give`, `room-mine`, `room-mine-name`, `room-mine-off`,
+// `room-add`, `room-pick`, `room-drop`.
 part giving {
-  state draft: text = ""
   view = () => el("div", { class: "room-give" }, mine() + [box()])
   mine = () => map(Sharing.paths, (p: text) => el("div", { class: "room-mine" }, [
-    el("span", { class: "room-mine-name", title: p }, [p]),
+    el("span", { class: "room-mine-name", title: p }, [named(p)]),
     el("button", {
       class: "room-mine-off",
       title: "take it back down",
       onclick: (e: std.Event) => Sharing.drop_one(p),
     }, ["×"]),
   ]))
-  box = () => el("form", { class: "room-add", onsubmit: put_up }, [
-    el("input", {
-      class: "room-add-in",
-      name: "path",
-      value: draft,
-      placeholder: "add a file by path",
-      autocomplete: "off",
-      oninput: typed,
-    }, []),
-    el("button", { type: "submit", title: "put it in the room" }, ["add"]),
-  ])
-  typed = (e: std.Event) => {
-    draft = text(e.data.value ?? "")
+  // The last segment, because a column this narrow shows a name and not a
+  // path, and the whole path is the title.
+  named = (path: text) => {
+    let cut = split(path, "/")
+    return cut[len(cut) - 1] ?? path
   }
-  put_up = () => {
-    let path = draft
-    draft = ""
-    if path != "" {
-      Sharing.add(path)
+  box = () => el("form", {
+    class: "room-add",
+    action: "/mesh/share",
+    method: "post",
+    enctype: "multipart/form-data",
+  }, [
+    el("label", { class: "room-pick" }, [
+      el("input", { type: "file", name: "file" }, []),
+      el("span", {}, ["choose a file"]),
+    ]),
+    el("button", { type: "submit" }, ["add"]),
+    el("p", { class: "room-drop" }, ["or drop one here"]),
+  ])
+}
+
+// Where that form posts. The library owns the route because the library owns
+// the control; an app that would rather place its own writes its own and calls
+// `Sharing.add`.
+part share {
+  route = "/mesh/share"
+  handle pipe = (req: std.Request) => {
+    let sent = fields(req.data) ?? fail(400, "choose a file")
+    let file = fields(sent["file"] ?? none) ?? fail(400, "choose a file")
+    let where_ = text(file["path"] ?? "")
+    if where_ == "" {
+      return fail(400, "that had no file in it")
     }
+    Sharing.add(where_)
+    return redirect(text(req.headers["referer"] ?? "/"))
   }
 }
 

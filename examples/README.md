@@ -51,12 +51,20 @@ contents and will happily push a composer off the bottom of the screen; and
 the pane is fed newest-first and turned upside down by the stylesheet, which
 is what keeps a chat pinned to its newest line with no client code at all.
 
-Putting a file in the room is a **control**, in the shelf where the files are:
-a field for the path and a button, and an × on each of your own to take it
-back down. A browser cannot hand a server a path it can open — a file input
-yields a made-up one — so the person at the machine names the file. It was a
-slash command for one round, which is a command line wearing a chat's
-clothes: nothing on the page said it existed.
+Putting a file in the room is a **file picker and a drop zone**, in the shelf
+where the files are, with an × on each of your own to take it back down. The
+form is a native post (§9.2): no handler, no socket, no client application
+code — the browser sends the file, the runtime writes it under the project's
+runtime state and hands the route `{name, size, path}`, and a path is what the
+mesh's `offer` already took. Dropping a file on the form does the same thing,
+because the shim treats a drop on a form with a file input as choosing one; the
+picker works with the shim switched off, which is why the drop is the part that
+lives there.
+
+It was `/share <path>` for one round — a command line wearing a chat's clothes,
+on the excuse that a browser cannot hand a server a path it can open. True, and
+beside the point: a picker hands over the file. What was actually missing was
+`multipart/form-data` in the runtime (ADR-0026).
 
 None of that is the language. The `mesh` space is `foreign` (§9.10) and derives
 to `ashlar mesh worker`, which drives the control socket the mesh node already

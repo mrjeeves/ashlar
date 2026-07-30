@@ -150,6 +150,45 @@ fn start(root: PathBuf) -> (u16, Arc<AtomicBool>, std::thread::JoinHandle<()>) {
     (port, stop, join)
 }
 
+/// A `multipart/form-data` POST — a browser's file picker, over the wire.
+///
+/// Written out by hand because that is the shape a form with
+/// `<input type="file">` actually sends, and the runtime dropped exactly this
+/// body on the floor until it learned to decode it: it fell through to the
+/// JSON arm, failed to parse, and handed the program `none`.
+fn post_file(
+    port: u16,
+    path: &str,
+    field: &str,
+    filename: &str,
+    bytes: &str,
+    referer: Option<&str>,
+) -> (u16, String) {
+    let boundary = "----ashlarTestBoundary";
+    let body = format!(
+        "--{b}\r\nContent-Disposition: form-data; name=\"{f}\"; filename=\"{n}\"\r\n\
+         Content-Type: application/octet-stream\r\n\r\n{d}\r\n--{b}--\r\n",
+        b = boundary,
+        f = field,
+        n = filename,
+        d = bytes
+    );
+    let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let head = format!(
+        "POST {} HTTP/1.1\r\nhost: t\r\ncontent-type: multipart/form-data; boundary={}\r\n{}content-length: {}\r\n\r\n",
+        path,
+        boundary,
+        referer.map(|r| format!("referer: {}\r\n", r)).unwrap_or_default(),
+        body.len()
+    );
+    s.write_all(head.as_bytes()).unwrap();
+    s.write_all(body.as_bytes()).unwrap();
+    let mut buf = String::new();
+    s.read_to_string(&mut buf).unwrap();
+    let status: u16 = buf.split_whitespace().nth(1).and_then(|v| v.parse().ok()).unwrap_or(0);
+    (status, buf)
+}
+
 fn req(port: u16, method: &str, path: &str, body: Option<&str>, cookie: Option<&str>) -> (u16, String, String) {
     let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
     let body = body.unwrap_or("");
@@ -2114,54 +2153,66 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
     let (status, _, body) = req(port, "GET", "/room/notes.txt", None, None);
     assert_eq!((status, body.trim()), (200, "hi"), "and it serves");
 
-    // Putting a file in the room is a CONTROL, not a command typed into the
-    // conversation. It was `/share <path>` for one round, which is a command
-    // line wearing a chat's clothes: nothing on the page said it existed, and
-    // the only way to learn it was `/help`. A browser still cannot hand a
-    // server a path it can open — a file input yields a made-up one — so the
-    // person at the machine names the file; naming it is a field and a button.
+    // Putting a file in the room is a CONTROL — a picker and a drop zone —
+    // not a command typed into the conversation. It was `/share <path>` for
+    // one round, which is a command line wearing a chat's clothes: nothing on
+    // the page said it existed, and the only way to learn it was `/help`.
     let (_, _, page_now) = req(port, "GET", "/", None, None);
     assert!(
-        !page_now.contains("/help") && !page_now.contains("/share") && !page_now.contains("/clear"),
+        !page_now.contains("/help") && !page_now.contains("or /"),
         "no commands to memorise anywhere on the page: {}",
         page_now
     );
     assert!(
-        page_now.contains("add a file by path"),
-        "the shelf carries the control instead: {}",
+        page_now.contains("type=\"file\"") && page_now.contains("multipart/form-data"),
+        "the shelf carries a file picker, in a native form: {}",
         page_now
     );
-    let (add_inst, add_typed) = event_on_class(&page_now, "room-add-in", "oninput").unwrap();
-    ws_send(
-        &mut ws,
-        &format!(
-            "{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"oninput\",\"value\":\"/tmp/plans.md\"}}}}",
-            add_inst, add_typed
-        ),
-    );
-    let typed_in = unescape(&ws_expect(&mut ws, "/tmp/plans.md", 8));
-    let (add_inst, add_go) = event_on_class(&typed_in, "room-add", "onsubmit").unwrap();
-    ws_send(
-        &mut ws,
-        &format!(
-            "{{\"event\":{{\"instance\":\"{}\",\"h\":\"{}\",\"name\":\"onsubmit\"}}}}",
-            add_inst, add_go
-        ),
-    );
-    let up = unescape(&ws_expect(&mut ws, "room-mine", 8));
     assert!(
-        up.contains("/tmp/plans.md"),
-        "what this machine put up is listed where it can be taken back down: {}",
-        up
+        page_now.contains("or drop one here"),
+        "and says the form is a drop zone — the shim wires the drop, the \
+         picker needs no shim at all: {}",
+        page_now
     );
+
+    // Pick a file, the way a browser sends one. This is the whole path: the
+    // runtime decodes the multipart body, writes the bytes under the
+    // project's own runtime state, and hands the route `{name,size,path}` —
+    // and a path is what `offer` already took.
+    let (status, _) = post_file(
+        port,
+        "/mesh/share",
+        "file",
+        "plans.md",
+        "everything we said we would do",
+        Some("/"),
+    );
+    assert_eq!(status, 302, "a native form post redirects back to the page");
     {
         let st = node.state.lock().unwrap();
         assert!(
             st.minted.iter().any(|m| m == "plans.md"),
-            "and the node was asked to mint a token for it: {:?}",
+            "the node was asked to mint a token for the picked file: {:?}",
             st.minted
         );
     }
+    let (_, _, after_up) = req(port, "GET", "/", None, None);
+    assert!(
+        after_up.contains("room-mine") && after_up.contains("plans.md"),
+        "and it is listed where it can be taken back down: {}",
+        after_up
+    );
+    // The bytes really are on disk, under the project, with the name the
+    // client chose reduced to something safe to write.
+    // One directory per upload, and the file keeps its own name inside it —
+    // so what a peer sees in the room is `plans.md` and not the uniqueness.
+    let kept: Vec<String> = std::fs::read_dir(dir.join(ashlar::http::UPLOAD_DIR))
+        .expect("the runtime kept what was uploaded")
+        .flatten()
+        .flat_map(|e| std::fs::read_dir(e.path()).into_iter().flatten().flatten())
+        .map(|f| f.file_name().to_string_lossy().to_string())
+        .collect();
+    assert_eq!(kept, vec!["plans.md".to_string()], "saved under its own name");
 
     drop(ws);
     {
