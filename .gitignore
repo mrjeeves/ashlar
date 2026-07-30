@@ -10,6 +10,10 @@ examples/*/foreign/*.so
 # Per-example logs from showcase/serve.sh
 .showcase-logs/
 
+# Bytes a client uploaded (§9.2). Runtime state, like .ashlar-state.json —
+# the program decides what to keep; the tree keeps none of it.
+.ashlar-uploads/
+
 # The mesh worker writes the room down beside the project's other runtime
 # state, keyed by the network's name. It is state, not source — the same
 # rule .ashlar-state.json is under.

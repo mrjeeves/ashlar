@@ -212,9 +212,8 @@ part; a second is a compile error whose fix merges the blocks.
 ### Composition order
 
 Layers flatten in **use order**: if space B uses space A, directly or
-transitively, B's layer sits on A's. The result is deterministic and computed
-from declarations alone; file layout never affects it. A cycle in the use graph
-is a compile error naming the cycle.
+transitively, B's layer sits on A's. The result is computed from
+declarations alone. A cycle in the use graph is a compile error naming it.
 
 If two spaces layer the same part and neither uses the other, the compiler
 orders them by space name and emits `W001` naming both layers and the `use`
@@ -383,7 +382,7 @@ Access:
 
 Division by zero and `!` on `none` are the two runtime faults expressions can
 raise; both carry the source location and fail the surrounding request or task
-(§9.2). They are undetectable at build time: both depend on runtime values. Field access on a `data` value is the third thing left to runtime and
+(§9.2). Field access on a `data` value is the third thing left to runtime and
 the only silent one: a runtime union has no fields to check, so `e.data.valeu`
 answers `none` rather than failing the build.
 
@@ -512,7 +511,10 @@ part messages {
 
 `std.Request` has `path: text`, `method: text` (lowercase),
 `params: {text: text}`, `data: data` (the decoded JSON or form body, `none` if
-absent), `headers: {text: text}`, `user: std.User?` (§9.6).
+absent), `headers: {text: text}`, `user: std.User?` (§9.6). A
+`multipart/form-data` body decodes like any form, except a part carrying a
+filename: the runtime writes those bytes under the project and the field is
+`{name, size, path}`, so a file picker needs no client code.
 
 The same handler serves HTTP and WebSocket; transport is not visible in handler
 code. Over HTTP the path is the URL; over the built-in socket a client sends
@@ -761,12 +763,12 @@ non-zero exit is a fault carrying its stderr. The other three transports carry o
 may export `ashlar_free(char*)` to take its buffer back.
 
 Reachability is not a build-time fact, so `ashlar foreign check` proves it on
-demand against the bindings in force, before a request finds out. Foreign calls may block; the
+demand against the bindings in force; `ashlar run` asks at startup and warns. Foreign calls may block; the
 runtime schedules around them.
 
 One space derives to a co-process instead of a library, and it is this
-toolchain: `mesh` — who is on the private network this machine joined, what
-they say, what they pass around, and the sites they serve. `ashlar mesh worker` speaks the
+toolchain: `mesh` — the private network this machine joined, who is on it, and
+what they say. `ashlar mesh worker` speaks the
 control socket the mesh already exposes to its own clients. `ashlar run --mesh` publishes
 the port it is serving through it, reaching that network and nobody else;
 `ashlar mesh` says what it answers, and `ashlar mesh install` brings one to a

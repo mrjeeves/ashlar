@@ -98,7 +98,17 @@ part talk {
   start stack = () => {
     return { joined: now() }
   }
-  view = () => el("div", { class: "talk" }, [sift()] + lines())
+  // The filter stays put; only the conversation scrolls. The scroller is
+  // its own element because a pane that scrolls must be the one that is
+  // ALLOWED to be shorter than its contents, and the row above it must not
+  // be. Newest-first, because the stylesheet turns the scroller upside down:
+  // that is what pins a chat to its newest line with no client code, and it
+  // is why a line arriving over the socket does not scroll the reader away.
+  view = () => el("div", { class: "talk" }, [
+    sift(),
+    el("div", { class: "talk-scroll" }, newest_first(lines())),
+  ])
+  newest_first = (xs: [std.Element]) => map(range(len(xs)), (i: number) => xs[len(xs) - 1 - i]!)
   // Filtering is local: it reads what this page already holds, sends
   // nothing, and asks the mesh for nothing.
   sift = () => el("div", { class: "sift" }, [
@@ -186,38 +196,35 @@ part talk {
 }
 
 // What this machine is currently putting up. `offer` states the WHOLE list
-// every time, so adding one file means restating the others — which is why
-// the list is held here rather than recomputed from the shelf: the shelf is
-// everyone's offers, and only these are this machine's to withdraw.
+// every time, so adding one file means restating the others — which is why the
+// list is held here rather than recomputed from the shelf: the shelf is
+// everyone's offers, and only these are this machine's to withdraw. Keyed by
+// PATH, because a path is what `offer` takes and what a person can take back
+// down without guessing which of two files with one basename they meant.
 part Sharing {
   state paths: [text] = []
   add = (path: text) => {
-    paths = [...paths, path]
-    let up = offer(paths)
-    return text(len(up)) + " up from here"
+    if not contains(paths, path) {
+      paths = [...paths, path]
+      offer(paths)
+    }
   }
-  clear = () => {
-    paths = []
+  drop_one = (path: text) => {
+    paths = filter(paths, (p: text) => p != path)
     offer(paths)
-    return "took mine back down"
   }
 }
 
-// The line you type in — and the two things you can type that are not a
-// line. A room needs a way to put a file in it, and a browser cannot hand a
-// server a path it can open, so the command is the honest interface: the
-// file stays where it is and its owner says which one.
+// The line you type in. Nothing else: putting a file in the room is a control
+// in the shelf, not a command typed into a conversation.
 part speak {
   state draft: text = ""
-  state hint: text = ""
-  view = () => el("div", { class: "speak-wrap" }, tip() + [box()])
-  tip = () => (if hint == "" { [] } else { [el("p", { class: "speak-hint" }, [hint])] })
-  box = () => el("form", { class: "speak", onsubmit: send }, [
+  view = () => el("form", { class: "speak", onsubmit: send }, [
     el("input", {
       class: "line-in",
       name: "line",
       value: draft,
-      placeholder: "say something — or /help",
+      placeholder: "say something",
       autocomplete: "off",
       oninput: typed,
     }, []),
@@ -231,23 +238,9 @@ part speak {
   send = () => {
     let line = draft
     draft = ""
-    if line == "" {
-      return
+    if line != "" {
+      say(line)
     }
-    if line == "/help" {
-      hint = "/share <path> puts a file in the room · /clear takes yours back down"
-      return
-    }
-    if line == "/clear" {
-      hint = Sharing.clear()
-      return
-    }
-    if slice(line, 0, 7) == "/share " {
-      hint = Sharing.add(slice(line, 7, len(line)))
-      return
-    }
-    hint = ""
-    say(line)
   }
 }
 
@@ -344,6 +337,7 @@ part Offer {
   name: text
   size: number
   url: text
+  mine: bool
 }
 
 // `offer` states this machine's WHOLE current list, so offering fewer paths is
@@ -360,26 +354,89 @@ part held {
   files = "room"
 }
 
-// The shelf: everything the room is currently offering, in one place, and a
-// way to pull one here. A file nobody has fetched yet is a button; once its
-// bytes are local it is a link. The conversation shows a file where it was
-// dropped; this is the standing list, which is what makes taking one back
-// down visible. Classes: `room-files`, `side-title`, `mesh-shelf`,
+// The shelf: what the room is offering, and the controls for this machine's
+// own part of it. A file nobody has fetched yet is a button; once its bytes
+// are local it is a link. The conversation shows a file where it was dropped;
+// this is the standing list, which is what makes putting one up and taking it
+// back down visible. Classes: `room-files`, `side-title`, `mesh-shelf`,
 // `mesh-offer`, `mesh-offer-who`, `mesh-empty`.
 part shelf {
   view = () => el("div", { class: "room-files" }, [
     el("p", { class: "side-title" }, ["On the shelf"]),
     el("div", { class: "mesh-shelf" }, items()),
+    el(giving, {}),
   ])
+  // Everybody else's. This machine's own are below, where they can be taken
+  // down — the same file in two lists would be two answers to one question.
   items = () => {
-    let all = offered()
+    let all = filter(offered(), (o: mesh.Offer) => not o.mine)
     if len(all) == 0 {
-      return [el("p", { class: "mesh-empty" }, ["Nothing yet. Type /share and a path to put a file in the room."])]
+      return [el("p", { class: "mesh-empty" }, ["Nothing from anybody else yet."])]
     }
     return map(all, (o: mesh.Offer) => el("div", { class: "mesh-offer" }, [
       el("span", { class: "mesh-offer-who" }, [o.who]),
       if o.url == "" { el("button", { onclick: (e: std.Event) => fetch(o.peer, o.token, o.name) }, [o.name]) } else { el("a", { href: o.url }, [o.name]) },
     ]))
+  }
+}
+
+// Putting a file in the room, and taking it back down.
+//
+// A file picker and a drop zone, which is what a person expects and what this
+// had no business making anybody type. The form is a NATIVE post (§9.2): no
+// handler, no socket, no client application code — the browser sends the file,
+// the runtime writes it under the project's own runtime state and hands the
+// route `{ name, size, path }`, and the path is what `offer` already takes.
+// Dropping a file on the form does the same thing, because the shim treats a
+// drop on a form with a file input as choosing one; the picker works with the
+// shim switched off, which is why the drop is the part that lives there.
+// Classes: `room-give`, `room-mine`, `room-mine-name`, `room-mine-off`,
+// `room-add`, `room-pick`, `room-drop`.
+part giving {
+  view = () => el("div", { class: "room-give" }, mine() + [box()])
+  mine = () => map(Sharing.paths, (p: text) => el("div", { class: "room-mine" }, [
+    el("span", { class: "room-mine-name", title: p }, [named(p)]),
+    el("button", {
+      class: "room-mine-off",
+      title: "take it back down",
+      onclick: (e: std.Event) => Sharing.drop_one(p),
+    }, ["×"]),
+  ]))
+  // The last segment, because a column this narrow shows a name and not a
+  // path, and the whole path is the title.
+  named = (path: text) => {
+    let cut = split(path, "/")
+    return cut[len(cut) - 1] ?? path
+  }
+  box = () => el("form", {
+    class: "room-add",
+    action: "/mesh/share",
+    method: "post",
+    enctype: "multipart/form-data",
+  }, [
+    el("label", { class: "room-pick" }, [
+      el("input", { type: "file", name: "file" }, []),
+      el("span", {}, ["choose a file"]),
+    ]),
+    el("button", { type: "submit" }, ["add"]),
+    el("p", { class: "room-drop" }, ["or drop one here"]),
+  ])
+}
+
+// Where that form posts. The library owns the route because the library owns
+// the control; an app that would rather place its own writes its own and calls
+// `Sharing.add`.
+part share {
+  route = "/mesh/share"
+  handle pipe = (req: std.Request) => {
+    let sent = fields(req.data) ?? fail(400, "choose a file")
+    let file = fields(sent["file"] ?? none) ?? fail(400, "choose a file")
+    let where_ = text(file["path"] ?? "")
+    if where_ == "" {
+      return fail(400, "that had no file in it")
+    }
+    Sharing.add(where_)
+    return redirect(text(req.headers["referer"] ?? "/"))
   }
 }
 

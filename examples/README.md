@@ -42,9 +42,29 @@ out for itself from the roster, so they cost no traffic and no two members can
 disagree about who was there; a file appears where it was put, with its size
 and a button that fetches it; the first line said since you opened the page is
 marked; and a filter narrows the conversation without sending anything
-anywhere. Type `/help` for the two things you can say that are not a line —
-`/share <path>` puts a file in the room, `/clear` takes yours back down. What
-was said survives the site restarting.
+anywhere. What was said survives the site restarting.
+
+The conversation **scrolls inside its own pane** — the page does not grow and
+the composer stays where you left it. That is `min-height: 0` on the panes
+that scroll, because a flex or grid item defaults to being as tall as its
+contents and will happily push a composer off the bottom of the screen; and
+the pane is fed newest-first and turned upside down by the stylesheet, which
+is what keeps a chat pinned to its newest line with no client code at all.
+
+Putting a file in the room is a **file picker and a drop zone**, in the shelf
+where the files are, with an × on each of your own to take it back down. The
+form is a native post (§9.2): no handler, no socket, no client application
+code — the browser sends the file, the runtime writes it under the project's
+runtime state and hands the route `{name, size, path}`, and a path is what the
+mesh's `offer` already took. Dropping a file on the form does the same thing,
+because the shim treats a drop on a form with a file input as choosing one; the
+picker works with the shim switched off, which is why the drop is the part that
+lives there.
+
+It was `/share <path>` for one round — a command line wearing a chat's clothes,
+on the excuse that a browser cannot hand a server a path it can open. True, and
+beside the point: a picker hands over the file. What was actually missing was
+`multipart/form-data` in the runtime (ADR-0026).
 
 None of that is the language. The `mesh` space is `foreign` (§9.10) and derives
 to `ashlar mesh worker`, which drives the control socket the mesh node already

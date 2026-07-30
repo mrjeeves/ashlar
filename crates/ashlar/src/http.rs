@@ -129,6 +129,158 @@ pub struct HttpRequest {
     pub body: Vec<u8>,
 }
 
+/// The boundary of a `multipart/form-data` content type, if that is what it is.
+fn multipart_boundary(content_type: &str) -> Option<String> {
+    let lower = content_type.to_ascii_lowercase();
+    if !lower.starts_with("multipart/form-data") {
+        return None;
+    }
+    let at = lower.find("boundary=")? + "boundary=".len();
+    let raw = content_type[at..].trim();
+    let raw = raw.split(';').next().unwrap_or(raw).trim();
+    let raw = raw.trim_matches('"');
+    if raw.is_empty() {
+        None
+    } else {
+        Some(raw.to_string())
+    }
+}
+
+fn find_sub(hay: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() || hay.len() < needle.len() {
+        return None;
+    }
+    (0..=hay.len() - needle.len()).find(|&i| &hay[i..i + needle.len()] == needle)
+}
+
+/// One quoted parameter of a header line: `name="x"`.
+fn header_param(line: &str, key: &str) -> Option<String> {
+    let lower = line.to_ascii_lowercase();
+    let mut from = 0;
+    while let Some(p) = lower[from..].find(key) {
+        let at = from + p + key.len();
+        let rest = line[at..].trim_start();
+        if let Some(rest) = rest.strip_prefix('=') {
+            let rest = rest.trim_start();
+            return Some(match rest.strip_prefix('"') {
+                Some(q) => q.split('"').next().unwrap_or("").to_string(),
+                None => rest.split(';').next().unwrap_or("").trim().to_string(),
+            });
+        }
+        from = at;
+    }
+    None
+}
+
+/// A basename safe to write: the last path segment, and only characters that
+/// cannot climb out of a directory or surprise a shell. A client chooses this
+/// text, so it is never trusted as a path.
+fn safe_basename(named: &str) -> String {
+    let base = named.rsplit(['/', '\\']).next().unwrap_or(named);
+    let kept: String = base
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() || c == '.' || c == '-' || c == '_' { c } else { '_' })
+        .collect();
+    let kept = kept.trim_matches('.').to_string();
+    if kept.is_empty() {
+        "upload".to_string()
+    } else {
+        kept
+    }
+}
+
+/// Where the runtime keeps bytes a client uploaded. Runtime state, beside
+/// `.ashlar-state.json`, and gitignored for the same reason.
+pub const UPLOAD_DIR: &str = ".ashlar-uploads";
+
+/// `multipart/form-data` -> a map (§9.2). A part with no `filename` is text,
+/// exactly like a urlencoded field; a part WITH one is a file, which the
+/// runtime writes to disk and presents as `{ name, size, path }`.
+///
+/// `data` has no byte shape and should not grow one for this. What a program
+/// does with an upload is hand it on — to a foreign store, to a `files`
+/// directory, to the mesh — and every one of those takes a path. So the
+/// runtime does the one thing only it can, which is get the bytes onto disk
+/// under the project's own runtime state, and the program gets a name it can
+/// use. The original `name` is the client's text and is never a path.
+fn decode_multipart(root: &std::path::Path, boundary: &str, body: &[u8]) -> V {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let sep = format!("--{}", boundary).into_bytes();
+    let mut out: BTreeMap<String, V> = BTreeMap::new();
+    let mut at = match find_sub(body, &sep) {
+        Some(i) => i + sep.len(),
+        None => return V::None,
+    };
+    loop {
+        // `--` here is the closing delimiter; anything else is CRLF then a part.
+        if body[at..].starts_with(b"--") {
+            break;
+        }
+        let rest = &body[at..];
+        let start = if rest.starts_with(b"\r\n") { 2 } else { 0 };
+        let rest = &rest[start..];
+        let end = match find_sub(rest, &sep) {
+            Some(i) => i,
+            None => break,
+        };
+        // The delimiter is preceded by CRLF that belongs to the framing.
+        let part = &rest[..end.saturating_sub(2)];
+        at += start + end + sep.len();
+        let split = match find_sub(part, b"\r\n\r\n") {
+            Some(i) => i,
+            None => continue,
+        };
+        let head = String::from_utf8_lossy(&part[..split]).to_string();
+        let content = &part[split + 4..];
+        let disposition = head
+            .lines()
+            .find(|l| l.to_ascii_lowercase().starts_with("content-disposition:"))
+            .unwrap_or("");
+        let field = match header_param(disposition, "name") {
+            Some(n) if !n.is_empty() => n,
+            _ => continue,
+        };
+        match header_param(disposition, "filename") {
+            Some(named) if !named.is_empty() => {
+                // A directory per upload, and the file keeps ITS OWN NAME
+                // inside it. The uniqueness has to live somewhere, and it must
+                // not be in the basename: whatever is handed on carries that
+                // name onward — to the mesh, to a `files` mount — and a peer
+                // should see `plans.md`, not `1785369999557064730-0-plans.md`.
+                let stamp = std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0);
+                let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let dir = root.join(UPLOAD_DIR).join(format!("{}-{}", stamp, n));
+                if std::fs::create_dir_all(&dir).is_err() {
+                    continue;
+                }
+                let path = dir.join(safe_basename(&named));
+                if std::fs::write(&path, content).is_err() {
+                    continue;
+                }
+                let where_ = std::fs::canonicalize(&path).unwrap_or(path);
+                let mut file = BTreeMap::new();
+                file.insert("name".to_string(), V::Text(safe_basename(&named)));
+                file.insert("size".to_string(), V::Number(content.len() as f64));
+                file.insert(
+                    "path".to_string(),
+                    V::Text(where_.to_string_lossy().to_string()),
+                );
+                out.insert(field, V::Map(file));
+            }
+            _ => {
+                out.insert(
+                    field,
+                    V::Text(String::from_utf8_lossy(content).trim_end().to_string()),
+                );
+            }
+        }
+    }
+    V::Map(out)
+}
+
 /// `application/x-www-form-urlencoded` -> a map of text values (§9.2):
 /// `a=1&b=hi%20there` decodes keys and values with `+` and `%XX` rules.
 fn decode_form(body: &str) -> V {
@@ -838,6 +990,22 @@ function fire(kind,e){var t=e.target.closest('[data-ash-h]');
  var inst=t.closest('[data-ash-instance]').getAttribute('data-ash-instance');
  if(v!==null){var k=fieldKey(inst,e.target);if(k)sent[k]=v;}
  send({event:{instance:inst,h:t.getAttribute('data-ash-h'),name:kind,value:v,caret:c}});}
+// Dropping a file on a form that has a file input is the same act as
+// choosing one — so drag and drop costs the program nothing and no new
+// attribute: the form already says where the file goes. Without this shim
+// the picker still works, which is the point of doing it here.
+function dropForm(e){var t=e.target;if(!t||!t.closest)return null;
+ var f=t.closest('form');return (f&&f.querySelector('input[type=file]'))?f:null;}
+document.addEventListener('dragover',function(e){var f=dropForm(e);
+ if(f){e.preventDefault();f.setAttribute('data-ash-dropping','');}});
+document.addEventListener('dragleave',function(e){var f=dropForm(e);
+ if(f)f.removeAttribute('data-ash-dropping');});
+document.addEventListener('drop',function(e){var f=dropForm(e);
+ if(!f)return;e.preventDefault();f.removeAttribute('data-ash-dropping');
+ var i=f.querySelector('input[type=file]');
+ if(e.dataTransfer&&e.dataTransfer.files&&e.dataTransfer.files.length){
+  try{i.files=e.dataTransfer.files;}catch(_){return;}
+  if(f.requestSubmit)f.requestSubmit();else f.submit();}});
 document.addEventListener('click',function(e){fire('onclick',e)});
 document.addEventListener('input',function(e){fire('oninput',e)});
 document.addEventListener('submit',function(e){fire('onsubmit',e)});
@@ -2080,14 +2248,21 @@ fn handle_request(
     }
 
     // §9.2: `data` is the decoded JSON or form body, `none` when absent.
-    let form = req
+    let content_type = req
         .headers
         .get("content-type")
-        .map(|c| c.starts_with("application/x-www-form-urlencoded"))
-        .unwrap_or(false);
+        .map(|c| c.as_str())
+        .unwrap_or("");
     let data = if req.body.is_empty() {
         V::None
-    } else if form {
+    } else if let Some(boundary) = multipart_boundary(content_type) {
+        // A form carrying a file. The most ordinary thing on the web, and
+        // until now the one body shape the runtime dropped on the floor: it
+        // fell through to the JSON arm, failed to parse, and handed the
+        // program `none` — so a page could offer a file picker and never
+        // receive what was picked.
+        decode_multipart(root, &boundary, &req.body)
+    } else if content_type.starts_with("application/x-www-form-urlencoded") {
         String::from_utf8(req.body.clone())
             .ok()
             .map(|s| decode_form(&s))

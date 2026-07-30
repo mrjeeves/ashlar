@@ -150,6 +150,45 @@ fn start(root: PathBuf) -> (u16, Arc<AtomicBool>, std::thread::JoinHandle<()>) {
     (port, stop, join)
 }
 
+/// A `multipart/form-data` POST — a browser's file picker, over the wire.
+///
+/// Written out by hand because that is the shape a form with
+/// `<input type="file">` actually sends, and the runtime dropped exactly this
+/// body on the floor until it learned to decode it: it fell through to the
+/// JSON arm, failed to parse, and handed the program `none`.
+fn post_file(
+    port: u16,
+    path: &str,
+    field: &str,
+    filename: &str,
+    bytes: &str,
+    referer: Option<&str>,
+) -> (u16, String) {
+    let boundary = "----ashlarTestBoundary";
+    let body = format!(
+        "--{b}\r\nContent-Disposition: form-data; name=\"{f}\"; filename=\"{n}\"\r\n\
+         Content-Type: application/octet-stream\r\n\r\n{d}\r\n--{b}--\r\n",
+        b = boundary,
+        f = field,
+        n = filename,
+        d = bytes
+    );
+    let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let head = format!(
+        "POST {} HTTP/1.1\r\nhost: t\r\ncontent-type: multipart/form-data; boundary={}\r\n{}content-length: {}\r\n\r\n",
+        path,
+        boundary,
+        referer.map(|r| format!("referer: {}\r\n", r)).unwrap_or_default(),
+        body.len()
+    );
+    s.write_all(head.as_bytes()).unwrap();
+    s.write_all(body.as_bytes()).unwrap();
+    let mut buf = String::new();
+    s.read_to_string(&mut buf).unwrap();
+    let status: u16 = buf.split_whitespace().nth(1).and_then(|v| v.parse().ok()).unwrap_or(0);
+    (status, buf)
+}
+
 fn req(port: u16, method: &str, path: &str, body: Option<&str>, cookie: Option<&str>) -> (u16, String, String) {
     let mut s = TcpStream::connect(("127.0.0.1", port)).unwrap();
     let body = body.unwrap_or("");
@@ -205,12 +244,42 @@ fn attr_of(html: &str, attr: &str) -> Option<String> {
 /// nearest ancestor. A sibling instance that closed before the element
 /// must not win, so this walks real tag nesting (the renderer closes
 /// every element explicitly).
+/// The handler pair for the element carrying `class`, addressed by NAME.
+///
+/// `event_target`'s index is fine when a page has one form; it is a trap when
+/// a page grows a second, because adding a control silently re-points every
+/// later index at a different element — which is exactly what happened when
+/// the shelf gained an add-a-file field and the test that meant "the box you
+/// talk in" started typing into the conversation's filter. Anything a test
+/// means specifically should say so.
+fn event_on_class(html: &str, class: &str, kind: &str) -> Option<(String, String)> {
+    let marker = format!("class=\"{}\"", class);
+    let on = format!("data-ash-on=\"{}\"", kind);
+    let mut from = 0;
+    while let Some(p) = html[from..].find(&marker) {
+        let start = from + p;
+        let gt = html[start..].find('>')? + start;
+        // Both must be on the SAME opening tag, or this is a different
+        // element that merely shares a class name with the one meant.
+        if let Some(k) = html[start..=gt].find(&on) {
+            return handler_at(html, start + k + on.len());
+        }
+        from = gt + 1;
+    }
+    None
+}
+
 fn event_target(html: &str, kind: &str, nth: usize) -> Option<(String, String)> {
     let marker = format!("data-ash-on=\"{}\"", kind);
     let mut at = 0;
     for _ in 0..=nth {
         at = html[at..].find(&marker)? + at + marker.len();
     }
+    handler_at(html, at)
+}
+
+/// The (instance, handler) pair for the `data-ash-on` marker ending at `at`.
+fn handler_at(html: &str, at: usize) -> Option<(String, String)> {
     let h = attr_of(&html[at..], "data-ash-h")?;
     let open_at = html[..at].rfind('<')?;
     // The handler element's own opening tag may carry the instance
@@ -2006,9 +2075,10 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
     // node was asked to transmit is what the person typed — to the room the
     // mesh's name derives, not to a room somebody had to be given.
     let (_, _, page) = req(port, "GET", "/", None, None);
-    // The room's first `oninput` is the conversation's own filter, which
-    // sends nothing anywhere; the second is the line you talk on.
-    let (inst, typed) = event_target(&page, "oninput", 1).unwrap();
+    // By NAME, not by position: the page also carries the conversation's
+    // filter and the shelf's add-a-file control, and an index would quietly
+    // start typing into one of those the next time a control is added.
+    let (inst, typed) = event_on_class(&page, "line-in", "oninput").unwrap();
     ws_send(
         &mut ws,
         &format!(
@@ -2017,7 +2087,7 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
         ),
     );
     let after = ws_expect(&mut ws, "here", 8);
-    let (inst, submit) = event_target(&after, "onsubmit", 0).unwrap();
+    let (inst, submit) = event_on_class(&after, "speak", "onsubmit").unwrap();
     ws_send(
         &mut ws,
         &format!(
@@ -2083,13 +2153,81 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
     let (status, _, body) = req(port, "GET", "/room/notes.txt", None, None);
     assert_eq!((status, body.trim()), (200, "hi"), "and it serves");
 
+    // Putting a file in the room is a CONTROL — a picker and a drop zone —
+    // not a command typed into the conversation. It was `/share <path>` for
+    // one round, which is a command line wearing a chat's clothes: nothing on
+    // the page said it existed, and the only way to learn it was `/help`.
+    let (_, _, page_now) = req(port, "GET", "/", None, None);
+    assert!(
+        !page_now.contains("/help") && !page_now.contains("or /"),
+        "no commands to memorise anywhere on the page: {}",
+        page_now
+    );
+    assert!(
+        page_now.contains("type=\"file\"") && page_now.contains("multipart/form-data"),
+        "the shelf carries a file picker, in a native form: {}",
+        page_now
+    );
+    assert!(
+        page_now.contains("or drop one here"),
+        "and says the form is a drop zone — the shim wires the drop, the \
+         picker needs no shim at all: {}",
+        page_now
+    );
+
+    // Pick a file, the way a browser sends one. This is the whole path: the
+    // runtime decodes the multipart body, writes the bytes under the
+    // project's own runtime state, and hands the route `{name,size,path}` —
+    // and a path is what `offer` already took.
+    let (status, _) = post_file(
+        port,
+        "/mesh/share",
+        "file",
+        "plans.md",
+        "everything we said we would do",
+        Some("/"),
+    );
+    assert_eq!(status, 302, "a native form post redirects back to the page");
+    {
+        let st = node.state.lock().unwrap();
+        assert!(
+            st.minted.iter().any(|m| m == "plans.md"),
+            "the node was asked to mint a token for the picked file: {:?}",
+            st.minted
+        );
+    }
+    let (_, _, after_up) = req(port, "GET", "/", None, None);
+    assert!(
+        after_up.contains("room-mine") && after_up.contains("plans.md"),
+        "and it is listed where it can be taken back down: {}",
+        after_up
+    );
+    // The bytes really are on disk, under the project, with the name the
+    // client chose reduced to something safe to write.
+    // One directory per upload, and the file keeps its own name inside it —
+    // so what a peer sees in the room is `plans.md` and not the uniqueness.
+    let kept: Vec<String> = std::fs::read_dir(dir.join(ashlar::http::UPLOAD_DIR))
+        .expect("the runtime kept what was uploaded")
+        .flatten()
+        .flat_map(|e| std::fs::read_dir(e.path()).into_iter().flatten().flatten())
+        .map(|f| f.file_name().to_string_lossy().to_string())
+        .collect();
+    assert_eq!(kept, vec!["plans.md".to_string()], "saved under its own name");
+
     drop(ws);
     {
         let st = node.state.lock().unwrap();
+        // One line said, and one share announced — both to the room the mesh's
+        // own name derives, with no host to mint one or be offline. (The
+        // second entry arrived when putting a file up became a control on the
+        // page: the room has to be told, and there is nobody to aggregate it.)
         assert_eq!(
             st.sent,
-            vec![format!("chat|{}|here", room)],
-            "one line, to the room the mesh's own name derives"
+            vec![
+                format!("chat|{}|here", room),
+                format!("share_list|{}|", room)
+            ],
+            "what was transmitted, in order"
         );
     }
 
@@ -2097,6 +2235,23 @@ fn t_examples_enclave_shows_who_else_is_on_the_mesh() {
     assert!(
         page.contains("anyone about?"),
         "what was heard is on the page: {}",
+        page
+    );
+    // NEWEST FIRST, inside the pane that scrolls. Both halves matter and
+    // neither is arbitrary: the stylesheet turns `.talk-scroll` upside down
+    // (`column-reverse`), which is what pins a chat to its newest line with
+    // no client code — so the document order has to be the reverse of the
+    // reading order or the room reads backwards. And the lines live in that
+    // pane rather than in `.talk` itself, because a pane that scrolls must
+    // be allowed to be shorter than its contents; when they were siblings
+    // the conversation grew the page instead and pushed the composer off
+    // the bottom of it.
+    let pane = page.find("talk-scroll").expect("the conversation scrolls in its own pane");
+    let newer = page.find("<span>here</span>").expect("the line this machine said");
+    let older = page.find("<span>anyone about?</span>").unwrap();
+    assert!(
+        pane < newer && newer < older,
+        "the newest line comes first in the pane, because the pane is reversed: {}",
         page
     );
     assert!(
@@ -2574,6 +2729,25 @@ fn t_examples_showcase_launchers_agree_on_every_port() {
         launched, on_disk,
         "the showcase must launch exactly the examples that exist"
     );
+
+    // Neither launcher may choose an interpreter by LOOKING for it. Windows
+    // ships `python3` as an app-execution alias — a real PATH entry that
+    // resolves and then exits 9009 when run — so `command -v` / `Get-Command`
+    // is not evidence that a program works, and a launcher that trusted it
+    // handed `abacus` and `ledger` bindings that could not answer. Both must
+    // RUN the candidate.
+    for (name, text) in [("serve.sh", read("showcase/serve.sh")), ("serve.ps1", read("showcase/serve.ps1"))] {
+        assert!(
+            text.contains("import json, sqlite3, sys"),
+            "{} must prove its Python by running it, not by finding it on PATH",
+            name
+        );
+        assert!(
+            text.contains("foreign check"),
+            "{} must prove the binding it chose before starting anything on it",
+            name
+        );
+    }
 
     // Ports are distinct, or two examples fight over one socket.
     let mut ports: Vec<u16> = sh.values().copied().collect();

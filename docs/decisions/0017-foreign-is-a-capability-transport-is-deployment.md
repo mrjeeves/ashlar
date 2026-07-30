@@ -261,6 +261,23 @@ That is what "transport is deployment" was always supposed to buy. Reading it
 as "one capability, one implementation, chosen once" is what left an example
 broken on a whole platform.
 
+**Presence is not proof.** The first cut of the launcher chose its interpreter
+with `command -v` / `Get-Command`, and on Windows that is a trap with a name:
+`python3` ships as an app-execution alias — a real PATH entry that resolves,
+and then exits 9009 the moment anything runs it. So the launcher confidently
+handed BOTH examples a binding that could not answer, and the first anybody
+heard of it was a 500 page. Both launchers now RUN each candidate
+(`-c "import json, sqlite3, sys"`, which also catches a Python too old for what
+the workers need) and then prove the binding they chose with `ashlar foreign
+check` before starting anything on it. The tool that answers "is this
+reachable" existed the whole time; what was missing was asking it.
+
+**And `ashlar run` asks at startup.** Reachability is not a build-time fact, so
+this cannot be an error and does not stop the server — a program whose
+capability is genuinely absent still faults at the call site. What it stops is
+finding out from a 500. One warning per unreachable space, naming the
+correction, before the first request rather than after one went wrong.
+
 **A transport that cannot work here must say so, not look nowhere.** The
 diagnostic is now built by one function over the list of paths tried, so the
 empty list — which is exactly the no-loader case — is a different sentence:

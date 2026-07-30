@@ -167,6 +167,12 @@ pub struct Offer {
     pub size: f64,
     /// Where this machine can open it, once fetched. Empty until then.
     pub url: String,
+    /// Whether THIS machine put it up. Decided here rather than in Ashlar,
+    /// because presence carries a peer's id in display form and the roster
+    /// answers the bare key — comparing them needs `canonical`, and a page
+    /// that guessed would offer to take down somebody else's file. `Said`
+    /// carries `mine` for the same reason.
+    pub mine: bool,
 }
 
 impl Offer {
@@ -178,6 +184,7 @@ impl Offer {
             ("name", V::Text(self.name.clone())),
             ("size", V::Number(self.size)),
             ("url", V::Text(self.url.clone())),
+            ("mine", V::Bool(self.mine)),
         ])
     }
 }
@@ -656,7 +663,8 @@ impl Session {
                 });
             }
         }
-        self.node.offered_by(&me, &minted);
+        // This machine's own list, so the page can offer to take it back down.
+        self.node.offered_by(&me, &minted, true);
         Ok(V::List(self.node.shelf()))
     }
 
@@ -1702,7 +1710,7 @@ impl Node {
     /// Record what a member says it is offering. Replacement semantics per
     /// member, which is what the protocol states: the list a member sends is
     /// its whole current list, so a file it stopped offering drops off.
-    fn offered_by(&self, peer: &str, files: &[V]) {
+    fn offered_by(&self, peer: &str, files: &[V], mine_own: bool) {
         let who = self.who(peer);
         let mine = canonical(peer);
         if let Ok(mut shelf) = self.offers.lock() {
@@ -1724,6 +1732,7 @@ impl Node {
                         },
                         url: String::new(),
                         token,
+                        mine: mine_own,
                     },
                 );
             }
@@ -2072,7 +2081,7 @@ impl Node {
                         });
                     }
                 }
-                self.offered_by(&from, &files);
+                self.offered_by(&from, &files, false);
                 Some(SAID_SHAPE)
             }
             _ => None,

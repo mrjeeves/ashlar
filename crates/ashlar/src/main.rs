@@ -949,6 +949,45 @@ mod cli {
     /// unpublished is a site; a process that refused to serve because a
     /// daemon was missing is an outage, and the reason is one line above the
     /// address either way.
+    /// Declared foreign names, grouped by the space that owns them.
+    fn foreign_by_space(
+        result: &ashlar::CheckResult,
+    ) -> std::collections::BTreeMap<String, Vec<String>> {
+        let mut by_space: std::collections::BTreeMap<String, Vec<String>> =
+            std::collections::BTreeMap::new();
+        for info in result.program.foreigns.values() {
+            let name = result.program.files[info.file_idx].ast.foreigns[info.foreign_idx]
+                .name
+                .clone();
+            by_space.entry(info.space.clone()).or_default().push(name);
+        }
+        by_space
+    }
+
+    /// Say, at startup, which declared capability this machine cannot reach.
+    ///
+    /// Reachability is not a build-time fact, so this cannot be an error and
+    /// does not stop the server: the site still serves, and a program whose
+    /// capability is genuinely absent still faults at the call site (§9.10).
+    /// What it stops is finding out from a 500 page. `ashlar foreign check`
+    /// has always been able to answer this; the only thing missing was asking
+    /// it before the first request rather than after one went wrong.
+    ///
+    /// A warning, never a refusal — a dependency that is missing is the
+    /// operator's problem to see, not the runtime's to have an opinion about.
+    fn warn_unreachable_foreign(root: &Path) {
+        let result = ashlar::check_project(root);
+        if result.has_errors() {
+            return; // the build will report this properly in a moment
+        }
+        for (space, names) in foreign_by_space(&result) {
+            let reach = ashlar::foreign::check_space(root, &space, &names);
+            for problem in &reach.problems {
+                eprintln!("warning: `{}` is not reachable: {}", space, problem);
+            }
+        }
+    }
+
     fn run_serve(
         path: &str,
         part: Option<String>,
@@ -986,6 +1025,7 @@ mod cli {
                 eprintln!("serving {} on http://127.0.0.1:{}", root_part, port);
             }
         };
+        warn_unreachable_foreign(&root);
         let outcome = ashlar::http::serve(root.clone(), part, port, on_bind, stop);
         // Leaving the mesh is the counterpart of joining it, and it runs on
         // the way out of a clean shutdown and a failed one alike: the daemon
@@ -1086,15 +1126,7 @@ mod cli {
             return 1;
         }
 
-        // Declared foreign names, grouped by the space that owns them.
-        let mut by_space: std::collections::BTreeMap<String, Vec<String>> =
-            std::collections::BTreeMap::new();
-        for info in result.program.foreigns.values() {
-            let name = result.program.files[info.file_idx].ast.foreigns[info.foreign_idx]
-                .name
-                .clone();
-            by_space.entry(info.space.clone()).or_default().push(name);
-        }
+        let mut by_space = foreign_by_space(&result);
         if let Some(space) = only {
             by_space.retain(|s, _| s == space);
             if by_space.is_empty() {

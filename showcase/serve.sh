@@ -90,9 +90,16 @@ build_ledger_shim() {
 # One Python, whatever it is called here. Two examples reach a co-process and
 # the interpreter's name differs by machine — which is exactly the kind of fact
 # a binding file exists to carry, rather than source (§9.10, ADR-0017).
+#
+# RUN each candidate rather than looking it up. Being on PATH is not evidence
+# that a program works: Windows ships `python3` as an app-execution alias that
+# exists, resolves, and then exits 9009 the moment anything runs it — which is
+# exactly how a launcher that used `command -v` handed two examples a binding
+# that could not answer. The probe imports what both workers actually need, so
+# a Python too old to have them is caught here too.
 PY=""
 for candidate in python3 python; do
-  if command -v "$candidate" >/dev/null 2>&1; then PY="$candidate"; break; fi
+  if "$candidate" -c "import json, sqlite3, sys" >/dev/null 2>&1; then PY="$candidate"; break; fi
 done
 
 LOGS=".showcase-logs"
@@ -106,8 +113,27 @@ if [ -n "$PY" ] && [ "$PY" != "python3" ]; then
   printf '{ "abacus": { "via": "worker", "run": ["%s", "foreign/abacus.py"] } }\n' "$PY" \
     > "$LOGS/abacus.foreign.json"
   ABACUS_FOREIGN="$PWD/$LOGS/abacus.foreign.json"
-  echo "note: python3 is not on PATH; abacus will use \`$PY\`."
+  echo "note: \`python3\` does not run here; abacus will use \`$PY\`."
 fi
+
+# Prove the binding rather than assume it — `ashlar foreign check` makes the
+# worker speak the protocol, which is the whole reason it exists. A launcher
+# that reports a start it never checked is worse than one that reports nothing.
+prove() {
+  name="$1"
+  bind="$2"
+  if [ -n "$bind" ]; then
+    said="$(ASHLAR_FOREIGN="$bind" "$BIN" foreign check "examples/$name" 2>&1)" && return 0
+  else
+    said="$("$BIN" foreign check "examples/$name" 2>&1)" && return 0
+  fi
+  echo
+  echo "  \`$name\`'s capability is not reachable, so its page will serve and"
+  echo "  then fault at the boundary:"
+  printf '%s\n' "$said" | sed 's/^/    /'
+  echo
+  return 1
+}
 
 LEDGER_FOREIGN=""
 if build_ledger_shim; then
@@ -140,7 +166,7 @@ fi
 
 if [ -z "$PY" ]; then
   echo
-  echo "  No Python on PATH, so \`abacus\` will serve and then fault at its"
+  echo "  No working Python here, so \`abacus\` will serve and then fault at its"
   echo "  boundary — its worker is Python. Install Python 3 and re-run."
   echo
 fi
@@ -152,6 +178,9 @@ if [ ! -S "${MYOWNMESH_HOME:-$HOME/.myownmesh}/allmystuff-node.sock" ] \
   echo "  the mesh THIS machine is on, not a demo of one."
   echo
 fi
+
+prove abacus "$ABACUS_FOREIGN" || true
+prove ledger "$LEDGER_FOREIGN" || true
 
 PIDS=()
 NAMES=()
